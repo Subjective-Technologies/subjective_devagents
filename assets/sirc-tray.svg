@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Sirc neon tray icon">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="72%">
+      <stop offset="0%" stop-color="#20363a"/>
+      <stop offset="58%" stop-color="#10141d"/>
+      <stop offset="100%" stop-color="#080a0f"/>
+    </radialGradient>
+    <linearGradient id="stroke" x1="30" y1="30" x2="226" y2="226">
+      <stop offset="0%" stop-color="#55ffe1"/>
+      <stop offset="48%" stop-color="#7b61ff"/>
+      <stop offset="100%" stop-color="#ff3df2"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="14" y="14" width="228" height="228" rx="48" fill="url(#bg)"/>
+  <rect x="22" y="22" width="212" height="212" rx="40" fill="none" stroke="url(#stroke)" stroke-width="7" filter="url(#glow)"/>
+  <path d="M58 68h140c16 0 29 13 29 29v47c0 16-13 29-29 29h-57l-42 31v-31H58c-16 0-29-13-29-29V97c0-16 13-29 29-29Z" fill="#111721" stroke="#48f9dc" stroke-width="5" filter="url(#glow)"/>
+  <text x="128" y="139" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="56" font-weight="800" letter-spacing="0" fill="#f8ffff" stroke="#58ffe4" stroke-width="1.4" paint-order="stroke" filter="url(#glow)">Sirc</text>
+</svg>

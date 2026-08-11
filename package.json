@@ -1,0 +1,20 @@
+{
+  "name": "subjective-chat",
+  "version": "0.1.0",
+  "description": "Dark desktop IRC client for the #subjective channel with inline DCC image transfers.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/mobile-bridge.js",
+    "mobile:prepare": "mkdir -p mobile-www/assets && cp mobile/index.html mobile-www/index.html && cp src/styles.css src/renderer.js src/mobile-bridge.js mobile-www/ && cp assets/* mobile-www/assets/",
+    "mobile:sync": "npm run mobile:prepare && npx cap sync android",
+    "mobile:apk": "npm run mobile:sync && cd android && GRADLE_USER_HOME=../.gradle ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.3.1",
+    "@capacitor/cli": "^8.3.1",
+    "@capacitor/core": "^8.3.1",
+    "dotenv": "^16.4.7",
+    "electron": "^41.4.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "appId": "chat.subjective.mobile",
+  "appName": "Subjective Chat",
+  "webDir": "mobile-www",
+  "bundledWebRuntime": false,
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true
+    }
+  }
+}
