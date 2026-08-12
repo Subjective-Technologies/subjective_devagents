@@ -1,0 +1,17 @@
+{
+  "description": "Interactive Claude CLI conversation pipeline for Subjective Chat.",
+  "name": "subjective_chat_claude",
+  "nodes": [
+    {
+      "class": "SubjectiveClaudeCliDataSource",
+      "connection_name": "subjective_chat_claude",
+      "inputs": {},
+      "node_id": "claude",
+      "send_to_context": true
+    }
+  ],
+  "version": 2,
+  "workbench": {
+    "connections": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "compile_success": true,
+  "compile_summary": {
+    "errors": 0,
+    "infos": 0,
+    "warnings": 1
+  },
+  "compiled_at": "2026-08-11T21:21:38Z",
+  "nodes": [
+    {
+      "class_name": "SubjectiveClaudeCliDataSource",
+      "dependencies": [],
+      "module": null,
+      "node_id": "claude",
+      "plugin_name": "SubjectiveClaudeCliDataSource",
+      "plugin_version": null,
+      "requires_python": null,
+      "resolution_status": "plugin",
+      "warnings": []
+    }
+  ],
+  "pipeline_hash_sha256": "b9dff5769e182ff466a11dcccbdd9122b7e7be2fcd9dd8b2d77f609cee8757ca",
+  "pipeline_name": "subjective_chat_claude",
+  "runtime_requirements": {
+    "python_binary_builder_later": "nuitka",
+    "requires_datasource_service": true,
+    "requires_fastapi": true,
+    "requires_redis": true,
+    "requires_uv_environment": true
+  },
+  "schema_version": "subjective.pipeline_lock.v1"
+}

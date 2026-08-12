@@ -1,0 +1,28 @@
+{
+  "electron": {
+    "bundled_now": false,
+    "expected": true,
+    "notes": "Electron packaging is handled by subjective_desktop/worktwins desktop packaging in a later slice."
+  },
+  "python_packaging": {
+    "future_builder": "nuitka",
+    "native_binaries_created_in_this_slice": false,
+    "pyinstaller_allowed": false
+  },
+  "schema_version": "subjective.runtime_manifest.v1",
+  "services": {
+    "datasource_service": {
+      "bundled_now": false,
+      "required": true
+    },
+    "fastapi": {
+      "bundled_now": false,
+      "required": true
+    },
+    "redis": {
+      "bundled_now": false,
+      "required": true
+    }
+  },
+  "target": "local-electron"
+}

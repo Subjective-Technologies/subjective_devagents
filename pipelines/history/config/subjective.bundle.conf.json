@@ -1,0 +1,6 @@
+{
+  "notes": "Runtime config is a placeholder. User-specific secrets and local paths must be supplied at install/run time.",
+  "pipeline": "../pipelines/subjective_chat_history.pipe",
+  "schema_version": "subjective.bundle_config.v1",
+  "secrets_included": false
+}

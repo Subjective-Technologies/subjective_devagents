@@ -1,0 +1,32 @@
+{
+  "compile_success": true,
+  "compile_summary": {
+    "errors": 0,
+    "infos": 0,
+    "warnings": 1
+  },
+  "compiled_at": "2026-08-11T16:48:15Z",
+  "nodes": [
+    {
+      "class_name": "SubjectiveLocalchatsDataSource",
+      "dependencies": [],
+      "module": null,
+      "node_id": "local_chats",
+      "plugin_name": "SubjectiveLocalchatsDataSource",
+      "plugin_version": null,
+      "requires_python": null,
+      "resolution_status": "plugin",
+      "warnings": []
+    }
+  ],
+  "pipeline_hash_sha256": "d0fd5abcdd91b557ea2d9d359352024f2389ef2b4b7c07a026f32badc7667bbc",
+  "pipeline_name": "subjective_chat_history",
+  "runtime_requirements": {
+    "python_binary_builder_later": "nuitka",
+    "requires_datasource_service": true,
+    "requires_fastapi": true,
+    "requires_redis": true,
+    "requires_uv_environment": true
+  },
+  "schema_version": "subjective.pipeline_lock.v1"
+}

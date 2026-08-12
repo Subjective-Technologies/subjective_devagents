@@ -11,7 +11,10 @@ const bookmarksButton = document.getElementById('bookmarksButton');
 const serverLabel = document.getElementById('serverLabel');
 const topChannel = document.getElementById('topChannel');
 const identityLabel = document.getElementById('identityLabel');
+const conversationBrowser = document.getElementById('conversationBrowser');
 const conversationList = document.getElementById('conversationList');
+const conversationSearch = document.getElementById('conversationSearch');
+const conversationSearchCount = document.getElementById('conversationSearchCount');
 const userList = document.getElementById('userList');
 const userCount = document.getElementById('userCount');
 const accentGrid = document.getElementById('accentGrid');
@@ -44,6 +47,22 @@ const accentPanel = document.getElementById('accentPanel');
 const usersPane = document.getElementById('usersPane');
 const topActions = document.getElementById('topActions');
 const topbarMeta = document.getElementById('topbarMeta');
+const createLlmButton = document.getElementById('createLlmButton');
+const llmDialog = document.getElementById('llmDialog');
+const llmForm = document.getElementById('llmForm');
+const llmCloseButton = document.getElementById('llmCloseButton');
+const llmNameInput = document.getElementById('llmNameInput');
+const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
+const llmProviderSelect = document.getElementById('llmProviderSelect');
+const llmStatusText = document.getElementById('llmStatusText');
+const topProviderIcon = document.getElementById('topProviderIcon');
+const richMessages = window.SubjectiveMessageRenderer || {
+  detectPromptActions: () => [],
+  normalizeToolMessages: (messages) => (messages || []).map((message) => ({ type: 'message', message })),
+  renderCode: (value) => `<pre><code>${escapeHtml(value)}</code></pre>`,
+  renderCommand: (value) => `<pre><code>${escapeHtml(value)}</code></pre>`,
+  renderMessage: (value) => `<p>${escapeHtml(value).replace(/\r?\n/g, '<br>')}</p>`
+};
 
 let config = {};
 let activeTarget = '';
@@ -164,7 +183,7 @@ function mountNode(node, slot) {
 
 function mountMobileLayout() {
   if (!isMobileLayout() || mobileMounted) return;
-  mountNode(conversationList, mobileTabsSlot);
+  mountNode(conversationBrowser || conversationList, mobileTabsSlot);
   mountNode(usersPane, mobileUsersSlot);
   mountNode(accentPanel, mobileAppearanceSlot);
   mountNode(topbarMeta, mobileTopbarMetaSlot);
@@ -216,8 +235,12 @@ function currentConnection() {
 
 function updateConnectionLabels() {
   serverLabel.textContent = `${config.host}:${config.port}`;
-  identityLabel.textContent = config.nick;
-  topChannel.textContent = activeTarget || config.channel;
+  const conversation = conversations.get(activeTarget);
+  identityLabel.textContent = conversation?.kind === 'llm'
+    ? `${conversation.provider} · ${conversation.workspace}`
+    : config.nick;
+  topChannel.textContent = conversation?.label || activeTarget || config.channel;
+  topChannel.title = conversation?.label || activeTarget || config.channel;
   if (mobileDrawerLabel) mobileDrawerLabel.textContent = `${config.nick} @ ${config.channel}`;
 }
 
@@ -325,9 +348,20 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
-function ensureConversation(target, label = target, kind = target.startsWith('#') ? 'channel' : 'dm') {
+function ensureConversation(target, label = target, kind = target.startsWith('#') ? 'channel' : 'dm', metadata = {}) {
   if (!conversations.has(target)) {
-    conversations.set(target, { target, label, kind, events: [], unread: 0 });
+    conversations.set(target, { target, label, kind, events: [], unread: 0, updatedAt: 0, sortAt: 0, ...metadata });
+  } else if (metadata && Object.keys(metadata).length) {
+    const conversation = conversations.get(target);
+    const latestTimestamp = Math.max(Number(conversation.updatedAt || 0), Number(metadata.updatedAt || 0));
+    const latestSortTimestamp = Math.max(Number(conversation.sortAt || 0), Number(metadata.sortAt || 0));
+    Object.assign(conversation, metadata, {
+      target,
+      label,
+      kind,
+      updatedAt: latestTimestamp,
+      sortAt: latestSortTimestamp
+    });
   }
   renderConversations();
   return conversations.get(target);
@@ -338,9 +372,37 @@ function setActiveTarget(target) {
   activeTarget = target;
   conversation.unread = 0;
   topChannel.textContent = conversation.label;
-  input.placeholder = `Message ${conversation.label}`;
+  topChannel.title = conversation.label;
+  input.disabled = conversation.kind === 'llm' && (!conversation.writable || conversation.busy);
+  input.placeholder = conversation.kind === 'llm' && !conversation.writable
+    ? `${conversation.provider} history is read-only`
+    : (conversation.busy ? `${providerName(conversation.provider)} is working…` : (conversation.kind === 'llm' ? `Message ${providerName(conversation.provider)}` : `Message ${conversation.label}`));
+  identityLabel.textContent = conversation.kind === 'llm'
+    ? `${conversation.provider} · ${conversation.workspace}`
+    : config.nick;
+  if (topProviderIcon) {
+    topProviderIcon.hidden = !conversation.icon;
+    topProviderIcon.src = conversation.icon || '';
+    topProviderIcon.alt = conversation.icon ? `${conversation.provider} icon` : '';
+  }
+  sendImageButton.hidden = conversation.kind === 'llm';
   renderConversations();
   renderTranscript();
+  renderUsers();
+  if (conversation.kind === 'llm' && !conversation.hydrated && !conversation.loading) {
+    conversation.loading = true;
+    renderTranscript();
+    window.subjectiveChat.getLlmConversation(target).then((result) => {
+      conversation.loading = false;
+      if (result?.ok) upsertLlmConversation(result.conversation);
+      else addEvent('system', { target, text: result?.error || 'Could not load conversation history.' });
+    });
+  }
+  if (conversation.kind === 'llm' && window.subjectiveChat.activateLlmConversation) {
+    window.subjectiveChat.activateLlmConversation(target).then((result) => {
+      if (result?.channel) identityLabel.textContent = `${conversation.provider} · ${result.channel} · ${conversation.workspace}`;
+    });
+  }
 }
 
 function openDirectMessage(nick) {
@@ -350,35 +412,332 @@ function openDirectMessage(nick) {
 
 function addEvent(kind, data) {
   const target = data.target || activeTarget || config.channel;
-  const conversation = ensureConversation(target, target, target.startsWith('#') ? 'channel' : 'dm');
+  const existing = conversations.get(target);
+  const conversation = ensureConversation(target, existing?.label || target, existing?.kind || (target.startsWith('#') ? 'channel' : 'dm'));
   conversation.events.push({ kind, data: { ...data, target } });
+  if (kind === 'message' || kind === 'image') {
+    const messageTimestamp = Number(data.time || Date.now());
+    conversation.updatedAt = Math.max(Number(conversation.updatedAt || 0), messageTimestamp);
+    conversation.sortAt = Math.max(Number(conversation.sortAt || 0), messageTimestamp);
+  }
   if (target !== activeTarget) conversation.unread += 1;
   if (target === activeTarget) renderTranscript();
   renderConversations();
 }
 
+const THINKING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const THINKING_VERBS = ['Thinking', 'Processing', 'Percolating', 'Pondering', 'Noodling', 'Computing', 'Deliberating', 'Ruminating'];
+const THINKING_FRAME_MS = 90;
+const THINKING_VERB_MS = 4000;
+let thinkingTimer = null;
+let thinkingFrame = 0;
+
+function tickThinkingRow() {
+  const row = transcript.querySelector('.thinking-entry');
+  if (!row) {
+    stopThinkingAnimation();
+    return;
+  }
+  thinkingFrame += 1;
+  const elapsed = Math.max(0, Date.now() - Number(row.dataset.since || Date.now()));
+  row.querySelector('.thinking-spinner').textContent = THINKING_FRAMES[thinkingFrame % THINKING_FRAMES.length];
+  row.querySelector('.thinking-verb').textContent = THINKING_VERBS[Math.floor(elapsed / THINKING_VERB_MS) % THINKING_VERBS.length];
+  row.querySelector('.thinking-elapsed').textContent = `${Math.floor(elapsed / 1000)}s`;
+}
+
+function stopThinkingAnimation() {
+  if (!thinkingTimer) return;
+  window.clearInterval(thinkingTimer);
+  thinkingTimer = null;
+}
+
+function startThinkingAnimation() {
+  if (thinkingTimer) return;
+  thinkingTimer = window.setInterval(tickThinkingRow, THINKING_FRAME_MS);
+}
+
+function renderThinkingRow(conversation) {
+  const item = document.createElement('article');
+  item.className = 'entry thinking-entry';
+  item.dataset.since = String(conversation.busySince || Date.now());
+  const avatar = conversation.icon
+    ? `<img class="avatar provider-avatar" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(providerName(conversation.provider))}">`
+    : `<div class="avatar">${initials(providerName(conversation.provider))}</div>`;
+  item.innerHTML = `
+    ${avatar}
+    <div class="thinking-bubble" role="status" aria-live="polite">
+      <span class="thinking-spinner" aria-hidden="true">${THINKING_FRAMES[0]}</span>
+      <span class="thinking-verb">${THINKING_VERBS[0]}</span>
+      <span class="thinking-ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="thinking-elapsed">0s</span>
+    </div>
+  `;
+  return item;
+}
+
 function renderTranscript() {
   transcript.replaceChildren();
   const conversation = ensureConversation(activeTarget || config.channel);
-  for (const event of conversation.events) {
-    transcript.appendChild(renderEntry(event.kind, event.data));
+  if (conversation.kind === 'llm' && conversation.loading) {
+    transcript.appendChild(renderEntry('system', { text: 'Loading conversation history…' }));
+    stopThinkingAnimation();
+    return;
+  }
+  const finalEventIndex = conversation.events.length - 1;
+  for (const [index, event] of conversation.events.entries()) {
+    transcript.appendChild(renderEntry(event.kind, event.data, {
+      conversation,
+      actionable: index === finalEventIndex && Boolean(event.data.assistant)
+    }));
+  }
+  if (conversation.kind === 'llm' && conversation.busy) {
+    transcript.appendChild(renderThinkingRow(conversation));
+    startThinkingAnimation();
+  } else {
+    stopThinkingAnimation();
   }
   transcript.scrollTop = transcript.scrollHeight;
 }
 
-function renderEntry(kind, data) {
+async function copyText(value) {
+  const text = String(value || '');
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const fallback = document.createElement('textarea');
+  fallback.value = text;
+  fallback.setAttribute('readonly', '');
+  fallback.style.position = 'fixed';
+  fallback.style.opacity = '0';
+  document.body.appendChild(fallback);
+  fallback.select();
+  document.execCommand('copy');
+  fallback.remove();
+}
+
+let commandConfirmationDialog;
+
+function commandDialog() {
+  if (commandConfirmationDialog) return commandConfirmationDialog;
+  commandConfirmationDialog = document.createElement('dialog');
+  commandConfirmationDialog.className = 'command-confirm-dialog';
+  commandConfirmationDialog.innerHTML = `
+    <form method="dialog" class="command-confirm-form">
+      <div class="command-confirm-head">
+        <div>
+          <span class="eyebrow">Command approval</span>
+          <h3>Run with agent?</h3>
+        </div>
+        <button type="button" class="plain-icon command-confirm-close" aria-label="Close">×</button>
+      </div>
+      <p class="command-confirm-copy"></p>
+      <pre><code></code></pre>
+      <div class="command-confirm-actions">
+        <button type="button" class="secondary-button command-confirm-cancel">Cancel</button>
+        <button type="submit" class="primary-button">Run</button>
+      </div>
+    </form>
+  `;
+  document.body.appendChild(commandConfirmationDialog);
+  return commandConfirmationDialog;
+}
+
+function confirmAgentCommand(command, conversation) {
+  const dialog = commandDialog();
+  dialog.querySelector('h3').textContent = `Run with ${conversation.provider || 'agent'}?`;
+  dialog.querySelector('.command-confirm-copy').textContent = `Workspace: ${conversation.workspace || 'current workspace'}`;
+  dialog.querySelector('code').textContent = command;
+  return new Promise((resolve) => {
+    let settled = false;
+    const close = (accepted) => {
+      if (settled) return;
+      settled = true;
+      dialog.close();
+      resolve(accepted);
+    };
+    dialog.querySelector('.command-confirm-close').onclick = () => close(false);
+    dialog.querySelector('.command-confirm-cancel').onclick = () => close(false);
+    dialog.querySelector('form').onsubmit = (event) => {
+      event.preventDefault();
+      close(true);
+    };
+    dialog.oncancel = (event) => {
+      event.preventDefault();
+      close(false);
+    };
+    dialog.showModal ? dialog.showModal() : dialog.setAttribute('open', '');
+  });
+}
+
+async function sendAgentAction(conversation, reply, controls) {
+  if (!conversation?.writable || !window.subjectiveChat.sendLlmMessage) return false;
+  for (const button of controls.querySelectorAll('button')) button.disabled = true;
+  controls.classList.add('pending');
+  try {
+    const result = await window.subjectiveChat.sendLlmMessage(conversation.target, reply);
+    if (!result?.ok) {
+      addEvent('system', {
+        target: conversation.target,
+        text: result?.error || `${conversation.provider} did not accept the response.`
+      });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    addEvent('system', { target: conversation.target, text: `Action failed: ${error.message}` });
+    return false;
+  } finally {
+    controls.classList.remove('pending');
+    for (const button of controls.querySelectorAll('button')) button.disabled = Boolean(conversation.busy);
+  }
+}
+
+function appendPromptActions(content, data, context) {
+  if (!data.assistant || !context.actionable) return;
+  const actions = richMessages.detectPromptActions(data.text);
+  if (!actions.length) return;
+  const controls = document.createElement('div');
+  controls.className = 'prompt-actions';
+  controls.setAttribute('role', 'group');
+  controls.setAttribute('aria-label', 'Answer agent question');
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = action.primary ? 'prompt-action primary' : 'prompt-action';
+    if (action.custom) button.classList.add('prompt-action-custom');
+    button.textContent = action.label;
+    button.disabled = !context.conversation.writable || Boolean(context.conversation.busy);
+    if (!context.conversation.writable) button.title = 'Historical conversation is read-only';
+    button.addEventListener('click', () => {
+      // "Something else..." doesn't have a canned reply to send - it just hands focus to
+      // the composer so the user can type their own answer instead of picking one of the
+      // detected options.
+      if (action.custom) {
+        if (context.conversation.target === activeTarget) input.focus();
+        return;
+      }
+      sendAgentAction(context.conversation, action.reply, controls);
+    });
+    controls.appendChild(button);
+  }
+  content.appendChild(controls);
+}
+
+function wireRichMessage(content, data, context) {
+  content.addEventListener('click', async (event) => {
+    const localPath = event.target.closest('[data-local-path]');
+    if (localPath) {
+      event.preventDefault();
+      const result = window.subjectiveChat.revealPath
+        ? await window.subjectiveChat.revealPath(localPath.dataset.localPath)
+        : { ok: false, error: 'Show in folder is unavailable.' };
+      if (!result?.ok) {
+        addEvent('system', {
+          target: context.conversation.target,
+          text: result?.error || 'Could not open containing folder.'
+        });
+      }
+      return;
+    }
+
+    const codeButton = event.target.closest('[data-code-action]');
+    if (codeButton) {
+      const card = codeButton.closest('.code-card');
+      if (codeButton.dataset.codeAction === 'wrap') {
+        const wrapped = card?.classList.toggle('wrapped');
+        codeButton.classList.toggle('active', Boolean(wrapped));
+        return;
+      }
+      const code = card?.querySelector('code')?.textContent || '';
+      if (!code) return;
+      if (codeButton.dataset.codeAction === 'copy') {
+        const original = codeButton.textContent;
+        try {
+          await copyText(code);
+          codeButton.textContent = 'Copied';
+        } catch (error) {
+          rendererLog('error', 'Code copy failed', { message: error.message });
+          codeButton.textContent = 'Copy failed';
+        }
+        window.setTimeout(() => { codeButton.textContent = original; }, 1400);
+        return;
+      }
+      if (!context.conversation.writable || context.conversation.busy) return;
+      if (!await confirmAgentCommand(code, context.conversation)) return;
+      await sendAgentAction(
+        context.conversation,
+        `Run this command in the current workspace and report its output:\n\n<command>\n${code}\n</command>`,
+        card.querySelector('.code-actions')
+      );
+      return;
+    }
+
+    const link = event.target.closest('a[href]');
+    if (!link) return;
+    event.preventDefault();
+    const url = link.getAttribute('href');
+    if (window.subjectiveChat.openExternal) await window.subjectiveChat.openExternal(url);
+  });
+
+  for (const runButton of content.querySelectorAll('[data-code-action="run"]')) {
+    runButton.disabled = !context.conversation.writable || Boolean(context.conversation.busy);
+    if (!context.conversation.writable) runButton.title = 'Open a writable agent conversation to run commands';
+  }
+  appendPromptActions(content, data, context);
+}
+
+function renderEntry(kind, data, context = {}) {
   const item = document.createElement('article');
   item.className = `entry ${kind}`;
 
   if (kind === 'message') {
     item.classList.toggle('mine', Boolean(data.mine));
+    const avatar = data.icon
+      ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
+      : `<div class="avatar">${initials(data.from)}</div>`;
     item.innerHTML = `
-      <div class="avatar">${initials(data.from)}</div>
+      ${avatar}
       <div class="bubble">
         <div class="meta"><span>${escapeHtml(data.from)}</span><time>${timeLabel(data.time)}</time></div>
-        <div class="text">${linkify(escapeHtml(data.text))}</div>
+        <div class="text rich-text">${richMessages.renderMessage(data.text)}</div>
       </div>
     `;
+    wireRichMessage(item.querySelector('.rich-text'), data, context);
+  } else if (kind === 'command') {
+    item.classList.add('command-entry');
+    const avatar = data.icon
+      ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
+      : `<div class="avatar">${initials(data.from || 'CMD')}</div>`;
+    item.innerHTML = `
+      ${avatar}
+      <div class="bubble command-bubble">
+        <div class="meta command-meta">
+          <span>${escapeHtml(data.from || 'Command')}</span>
+          <span class="command-shell">${escapeHtml(data.shell || 'shell')}</span>
+          <time>${timeLabel(data.time)}</time>
+        </div>
+        <div class="text rich-text command-content">${richMessages.renderCommand(data.command, data.shell)}</div>
+      </div>
+    `;
+    wireRichMessage(item.querySelector('.rich-text'), data, context);
+  } else if (kind === 'code') {
+    item.classList.add('command-entry', 'code-entry');
+    const avatar = data.icon
+      ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
+      : `<div class="avatar">${initials(data.from || 'CODE')}</div>`;
+    item.innerHTML = `
+      ${avatar}
+      <div class="bubble command-bubble code-bubble">
+        <div class="meta command-meta">
+          <span>${escapeHtml(data.from || 'Tool')}</span>
+          <span class="command-shell">${escapeHtml(data.label || 'Output')}</span>
+          <time>${timeLabel(data.time)}</time>
+        </div>
+        <div class="text rich-text command-content">${richMessages.renderCode(data.code, data.language)}</div>
+      </div>
+    `;
+    wireRichMessage(item.querySelector('.rich-text'), data, context);
   } else if (kind === 'image') {
     item.classList.toggle('mine', data.direction === 'outgoing');
     item.innerHTML = `
@@ -400,27 +759,176 @@ function renderEntry(kind, data) {
   return item;
 }
 
+function conversationTimestamp(conversation) {
+  const eventTimestamp = (conversation.events || []).reduce(
+    (latest, event) => Math.max(latest, Number(event.data?.time || 0)),
+    0
+  );
+  const metadataTimestamp = Number(
+    conversation.sortAt || conversation.updatedAt || conversation.createdAt || 0
+  );
+  return Math.max(metadataTimestamp, eventTimestamp);
+}
+
+function conversationSearchText(conversation) {
+  return [
+    conversation.label,
+    conversation.provider,
+    conversation.description,
+    conversation.workspace,
+    conversation.ircChannel,
+    ...(conversation.events || []).map((event) => `${event.data?.from || ''} ${event.data?.text || event.data?.command || ''}`)
+  ].join(' ').toLocaleLowerCase();
+}
+
+// IRC channels/DMs are listed above AI chats, most-recent-first within each group.
+function conversationGroupRank(conversation) {
+  return conversation.kind === 'llm' ? 1 : 0;
+}
+
 function renderConversations() {
   conversationList.replaceChildren();
-  for (const conversation of conversations.values()) {
+  const ordered = [...conversations.values()].sort((left, right) => {
+    const groupDifference = conversationGroupRank(left) - conversationGroupRank(right);
+    if (groupDifference) return groupDifference;
+    const timestampDifference = conversationTimestamp(right) - conversationTimestamp(left);
+    if (timestampDifference) return timestampDifference;
+    return String(left.label || '').localeCompare(String(right.label || ''));
+  });
+  const query = String(conversationSearch?.value || '').trim().toLocaleLowerCase();
+  const visible = query
+    ? ordered.filter((conversation) => conversationSearchText(conversation).includes(query))
+    : ordered;
+  if (conversationSearchCount) {
+    conversationSearchCount.textContent = query ? `${visible.length}/${ordered.length}` : String(ordered.length);
+  }
+  if (!visible.length) {
+    const empty = document.createElement('div');
+    empty.className = 'conversation-empty';
+    empty.textContent = query ? `No chats matching “${conversationSearch.value.trim()}”` : 'No conversations yet';
+    conversationList.appendChild(empty);
+    return;
+  }
+  for (const conversation of visible) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'conversation-row';
+    button.title = conversation.label;
+    button.dataset.target = conversation.target;
     button.classList.toggle('active', conversation.target === activeTarget);
+    button.classList.toggle('busy', Boolean(conversation.busy));
+    const icon = conversation.icon
+      ? `<img class="conversation-provider-icon" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(conversation.provider)}">`
+      : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
     button.innerHTML = `
-      <span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>
-      <span>${escapeHtml(conversation.label.replace(/^#/, ''))}</span>
+      ${icon}
+      <span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span>
       ${conversation.unread ? `<b>${conversation.unread}</b>` : ''}
     `;
     button.addEventListener('click', () => setActiveTarget(conversation.target));
+    if (conversation.kind === 'llm') {
+      button.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        window.subjectiveChat.showConversationContextMenu(conversation.target, event.clientX, event.clientY);
+      });
+      button.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        beginRenameConversation(conversation.target);
+      });
+    }
     conversationList.appendChild(button);
   }
 }
 
+// Inline chat rename: swap the label for a text field in place. Triggered by double-click
+// on a chat row or the "Rename…" context-menu entry (which arrives as an app event).
+function beginRenameConversation(target) {
+  if (!window.subjectiveChat.renameLlmConversation) return;
+  const conversation = conversations.get(target);
+  if (!conversation || conversation.kind !== 'llm') return;
+  const row = conversationList.querySelector(`.conversation-row[data-target="${CSS.escape(target)}"]`);
+  if (!row) return;
+  const labelSpan = row.querySelector('.conversation-label');
+  if (!labelSpan || row.querySelector('.conversation-rename-input')) return;
+
+  const field = document.createElement('input');
+  field.type = 'text';
+  field.className = 'conversation-rename-input';
+  field.value = conversation.label.replace(/^#/, '');
+  field.maxLength = 200;
+  labelSpan.replaceWith(field);
+  field.focus();
+  field.select();
+
+  let settled = false;
+  const cancel = () => {
+    if (settled) return;
+    settled = true;
+    renderConversations();
+  };
+  const commit = async () => {
+    if (settled) return;
+    settled = true;
+    const name = field.value.trim();
+    if (!name || name === conversation.label.replace(/^#/, '')) {
+      renderConversations();
+      return;
+    }
+    const result = await window.subjectiveChat.renameLlmConversation(target, name);
+    // On success the label is applied via the 'llm-conversation-renamed' event; either way
+    // re-render to drop the inline input and restore the row.
+    if (!result?.ok) {
+      rendererLog('error', 'Failed to rename conversation', { target, error: result?.error });
+    }
+    renderConversations();
+  };
+
+  field.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commit();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancel();
+    }
+  });
+  field.addEventListener('blur', commit);
+  field.addEventListener('click', (event) => event.stopPropagation());
+  field.addEventListener('dblclick', (event) => event.stopPropagation());
+}
+
+if (conversationSearch) {
+  conversationSearch.addEventListener('input', renderConversations);
+  conversationSearch.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && conversationSearch.value) {
+      event.preventDefault();
+      conversationSearch.value = '';
+      renderConversations();
+    }
+    if (event.key === 'Enter') {
+      const firstResult = conversationList.querySelector('.conversation-row');
+      if (firstResult) {
+        event.preventDefault();
+        firstResult.click();
+      }
+    }
+  });
+}
+
+window.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k' && conversationSearch) {
+    event.preventDefault();
+    conversationSearch.focus();
+    conversationSearch.select();
+  }
+});
+
 function renderUsers() {
-  userCount.textContent = String(users.length);
+  const conversation = conversations.get(activeTarget);
+  const visibleUsers = conversation?.kind === 'llm' ? (conversation.participants || []) : users;
+  userCount.textContent = String(visibleUsers.length);
   userList.replaceChildren();
-  for (const user of users) {
+  for (const user of visibleUsers) {
     const row = document.createElement('div');
     row.className = 'user-row';
     row.innerHTML = `
@@ -430,8 +938,14 @@ function renderUsers() {
       </button>
       <button type="button" class="dm-button" title="Direct message">DM</button>
     `;
-    row.querySelector('.user-name').addEventListener('click', () => openDirectMessage(user.nick));
-    row.querySelector('.dm-button').addEventListener('click', () => openDirectMessage(user.nick));
+    const dmButton = row.querySelector('.dm-button');
+    if (conversation?.kind === 'llm') {
+      dmButton.hidden = true;
+      row.querySelector('.user-name').disabled = true;
+    } else {
+      row.querySelector('.user-name').addEventListener('click', () => openDirectMessage(user.nick));
+      dmButton.addEventListener('click', () => openDirectMessage(user.nick));
+    }
     userList.appendChild(row);
   }
 }
@@ -470,10 +984,6 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-function linkify(value) {
-  return value.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>');
-}
-
 async function sendPastedImage(file) {
   const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
   const fileName = file.name || `pasted-${Date.now()}.${extensionFor(file.type)}`;
@@ -487,6 +997,44 @@ async function sendPastedImage(file) {
   if (!result.ok) addEvent('system', { target: activeTarget, text: 'Image was not sent.' });
 }
 
+async function llmAttachment(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return {
+    filename: file.name || `attachment-${Date.now()}.${extensionFor(file.type)}`,
+    mime_type: file.type || 'application/octet-stream',
+    content: btoa(binary)
+  };
+}
+
+// LLM composer optimistic echo: show the user's own bubble - and start the thinking row -
+// the instant Send is clicked, instead of waiting on the full agent round-trip. Previously
+// both only appeared once the 'llm-message' event for the sent text came back from main,
+// which meant a slow reply (or any hiccup in that event reaching this window) left the
+// composed message looking like it vanished into nothing. Reconciled against the
+// authoritative 'llm-message' echo once it arrives (see the onEvent switch below) so the
+// bubble isn't shown twice.
+function addOptimisticLlmEcho(conversation, text) {
+  conversation.pendingEchoes = conversation.pendingEchoes || [];
+  conversation.pendingEchoes.push(text);
+  conversation.busy = true;
+  conversation.busySince = conversation.busySince || Date.now();
+  if (conversation.target === activeTarget) {
+    input.disabled = true;
+    input.placeholder = `${providerName(conversation.provider)} is working…`;
+  }
+  addEvent('message', {
+    target: conversation.target,
+    from: config.nick || 'You',
+    text,
+    time: Date.now(),
+    mine: true,
+    assistant: false,
+    optimistic: true
+  });
+}
+
 async function sendTextMessages(lines) {
   for (const text of lines) {
     const outgoing = normalizeLiteralSlash(text).trim();
@@ -498,8 +1046,15 @@ async function sendTextMessages(lines) {
         if (result?.focusTarget) setActiveTarget(result.focusTarget);
         if (!result?.ok) addEvent('system', { target: activeTarget, text: 'Command was not accepted.' });
       } else {
-        const result = await window.subjectiveChat.sendMessage(activeTarget, outgoing);
-        if (!result.ok) addEvent('system', { target: activeTarget, text: 'Message was not sent. The IRC connection is not ready.' });
+        const conversation = conversations.get(activeTarget);
+        if (conversation?.kind === 'llm') {
+          addOptimisticLlmEcho(conversation, outgoing);
+          const result = await window.subjectiveChat.sendLlmMessage(activeTarget, outgoing);
+          if (!result.ok && !result.status) addEvent('system', { target: activeTarget, text: 'Message was not sent.' });
+        } else {
+          const result = await window.subjectiveChat.sendMessage(activeTarget, outgoing);
+          if (!result.ok) addEvent('system', { target: activeTarget, text: 'Message was not sent. The IRC connection is not ready.' });
+        }
       }
     } catch (error) {
       rendererLog('error', 'Failed to send message from composer', { message: error.message, stack: error.stack });
@@ -586,6 +1141,17 @@ composer.addEventListener('submit', async (event) => {
   input.value = '';
   hideCommandPalette();
   clearPendingImages();
+  const conversation = conversations.get(activeTarget);
+  if (conversation?.kind === 'llm' && images.length) {
+    try {
+      const files = await Promise.all(images.map(llmAttachment));
+      addOptimisticLlmEcho(conversation, lines.join('\n') || 'Review attached image.');
+      await window.subjectiveChat.sendLlmMessage(activeTarget, lines.join('\n') || 'Review attached image.', files);
+    } catch (error) {
+      addEvent('system', { target: activeTarget, text: `Attachment send failed: ${error.message}` });
+    }
+    return;
+  }
   await sendTextMessages(lines);
   for (const file of images) await sendPastedImage(file);
 });
@@ -653,6 +1219,151 @@ connectButton.addEventListener('click', async () => {
 
 sendImageButton.addEventListener('click', () => {
   window.subjectiveChat.sendImage(activeTarget);
+});
+
+const PROVIDER_DISPLAY_NAMES = Object.freeze({
+  chatgpt: 'ChatGPT',
+  claude: 'Claude',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  gemini: 'Gemini',
+  grok: 'Grok'
+});
+
+function providerName(provider) {
+  const key = String(provider || '').toLowerCase();
+  return PROVIDER_DISPLAY_NAMES[key] || String(provider || 'Agent');
+}
+
+function llmMessageEvent(message, conversation) {
+  const role = String(message.role || 'system');
+  const assistant = role !== 'user';
+  return {
+    kind: 'message',
+    data: {
+      from: assistant
+        ? providerName(conversation.provider)
+        : (message.from || config.nick || 'You'),
+      text: message.text,
+      time: message.time,
+      mine: !assistant,
+      icon: assistant ? conversation.icon : '',
+      assistant
+    }
+  };
+}
+
+function llmCommandEvent(entry, conversation) {
+  const message = entry.message || {};
+  return {
+    kind: 'command',
+    data: {
+      from: providerName(conversation.provider),
+      command: entry.command,
+      shell: entry.shell || 'shell',
+      time: message.time || message.timestamp,
+      icon: conversation.icon,
+      assistant: false
+    }
+  };
+}
+
+function llmCodeEvent(entry, conversation) {
+  const message = entry.message || {};
+  return {
+    kind: 'code',
+    data: {
+      from: providerName(conversation.provider),
+      code: entry.code,
+      language: entry.language || 'text',
+      label: entry.label || 'Output',
+      time: message.time || message.timestamp,
+      icon: conversation.icon,
+      assistant: false
+    }
+  };
+}
+
+function upsertLlmConversation(payload) {
+  if (!payload?.target) return null;
+  const conversation = ensureConversation(payload.target, payload.label, 'llm', payload);
+  if (payload.loaded !== false) {
+    conversation.events = richMessages.normalizeToolMessages(payload.messages || []).map((entry) => {
+      if (entry.type === 'command') return llmCommandEvent(entry, conversation);
+      if (entry.type === 'code') return llmCodeEvent(entry, conversation);
+      return llmMessageEvent(entry.message, conversation);
+    });
+    conversation.hydrated = true;
+  }
+  if (conversation.target === activeTarget) {
+    renderTranscript();
+    renderUsers();
+  }
+  renderConversations();
+  return conversation;
+}
+
+async function loadLlmConversations() {
+  if (!window.subjectiveChat.listLlmConversations) return;
+  const result = await window.subjectiveChat.listLlmConversations();
+  if (!result?.ok) {
+    rendererLog('error', 'Failed to load LLM conversations', { error: result?.error });
+    return;
+  }
+  for (const conversation of result.conversations || []) upsertLlmConversation(conversation);
+}
+
+function selectedLlmProvider() {
+  return String(llmProviderSelect?.value || 'codex');
+}
+
+function llmProviderLabel(provider) {
+  return provider === 'claude' ? 'Claude' : 'Codex';
+}
+
+async function refreshLlmStatus() {
+  const provider = selectedLlmProvider();
+  const label = llmProviderLabel(provider);
+  llmStatusText.textContent = `Checking ${label} datasource…`;
+  llmStatusText.dataset.ready = 'false';
+  const status = await window.subjectiveChat.getLlmStatus(provider);
+  if (selectedLlmProvider() !== provider) return;
+  llmStatusText.textContent = status.ok
+    ? `Ready · ${status.cli_version || `${label} CLI`} · existing login`
+    : `${status.status || 'Unavailable'} · ${status.error || `${label} CLI login required`}`;
+  llmStatusText.dataset.ready = status.ok ? 'true' : 'false';
+}
+
+async function openLlmDialog() {
+  if (!llmDialog) return;
+  llmDialog.showModal ? llmDialog.showModal() : llmDialog.setAttribute('open', '');
+  llmNameInput.focus();
+  await refreshLlmStatus();
+}
+
+if (createLlmButton) createLlmButton.addEventListener('click', openLlmDialog);
+if (llmProviderSelect) llmProviderSelect.addEventListener('change', refreshLlmStatus);
+if (llmCloseButton) llmCloseButton.addEventListener('click', () => llmDialog.close());
+if (llmDialog) llmDialog.addEventListener('click', (event) => {
+  if (event.target === llmDialog) llmDialog.close();
+});
+if (llmForm) llmForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const provider = selectedLlmProvider();
+  const result = await window.subjectiveChat.createLlmConversation({
+    name: llmNameInput.value,
+    workspace: llmWorkspaceInput.value,
+    provider
+  });
+  if (!result?.ok) {
+    llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;
+    llmStatusText.dataset.ready = 'false';
+    return;
+  }
+  const conversation = upsertLlmConversation(result.conversation);
+  llmDialog.close();
+  llmNameInput.value = '';
+  setActiveTarget(conversation.target);
 });
 
 settingsButton.addEventListener('click', openSettings);
@@ -724,7 +1435,7 @@ window.subjectiveChat.onEvent((event) => {
       break;
     case 'users':
       users = event.users;
-      renderUsers();
+      if (conversations.get(activeTarget)?.kind !== 'llm') renderUsers();
       break;
     case 'system':
       addEvent('system', event);
@@ -732,6 +1443,67 @@ window.subjectiveChat.onEvent((event) => {
     case 'message':
       addEvent('message', event);
       break;
+    case 'llm-conversation':
+      upsertLlmConversation(event.conversation);
+      break;
+    case 'llm-history-refreshed':
+      loadLlmConversations();
+      break;
+    case 'conversation-rename-request':
+      beginRenameConversation(event.target);
+      break;
+    case 'llm-conversation-renamed': {
+      const conversation = conversations.get(event.target);
+      if (conversation) {
+        conversation.label = event.label;
+        if (event.target === activeTarget) {
+          topChannel.textContent = event.label;
+          topChannel.title = event.label;
+        }
+        renderConversations();
+      }
+      break;
+    }
+    case 'llm-switch-user':
+      // The new sibling conversation was already added via the llm-conversation event
+      // just before this one; switch the view over to it now that it exists.
+      if (conversations.has(event.target)) setActiveTarget(event.target);
+      break;
+    case 'llm-message': {
+      const conversation = conversations.get(event.target);
+      if (conversation) {
+        const entry = llmMessageEvent({ ...event.message, from: event.from }, conversation);
+        // This is the authoritative echo of a message we may have already shown
+        // optimistically (see addOptimisticLlmEcho) - drop our placeholder bubble so the
+        // confirmed one takes its place instead of appearing twice.
+        if (!entry.data.assistant && conversation.pendingEchoes?.length) {
+          const echoIndex = conversation.pendingEchoes.indexOf(entry.data.text);
+          if (echoIndex !== -1) {
+            conversation.pendingEchoes.splice(echoIndex, 1);
+            const optimisticIndex = conversation.events.findIndex((item) => item.data.optimistic && item.data.text === entry.data.text);
+            if (optimisticIndex !== -1) conversation.events.splice(optimisticIndex, 1);
+          }
+        }
+        addEvent(entry.kind, { ...entry.data, target: event.target });
+      }
+      break;
+    }
+    case 'llm-busy': {
+      const conversation = conversations.get(event.target);
+      if (conversation) {
+        conversation.busy = event.busy;
+        conversation.busySince = event.busy ? Date.now() : 0;
+        if (event.target === activeTarget) {
+          input.disabled = event.busy;
+          input.placeholder = event.busy ? `${providerName(conversation.provider)} is working…` : `Message ${providerName(conversation.provider)}`;
+          // Agent replies arrive before busy clears, so re-render to re-enable
+          // the Allow/Deny and Run controls on the freshly rendered answer.
+          renderTranscript();
+        }
+        renderConversations();
+      }
+      break;
+    }
     case 'join':
       addEvent('system', { target: event.target, text: `${event.nick} joined ${event.channel}` });
       break;
@@ -753,11 +1525,12 @@ window.subjectiveChat.onEvent((event) => {
   }
 });
 
-window.subjectiveChat.getConfig().then((appConfig) => {
+window.subjectiveChat.getConfig().then(async (appConfig) => {
   updateConfig(appConfig);
   activeTarget = config.channel;
   ensureConversation(config.channel, config.channel, 'channel');
   setActiveTarget(config.channel);
+  await loadLlmConversations();
   mountMobileLayout();
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;

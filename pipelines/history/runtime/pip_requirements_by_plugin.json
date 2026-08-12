@@ -1,0 +1,15 @@
+{
+  "merged": [
+    "brainboost-configuration-package @ git+https://github.com/Subjective-Technologies/brainboost_configuration_package.git",
+    "brainboost-data-source-logger-package @ git+https://github.com/Subjective-Technologies/brainboost_data_source_logger_package.git",
+    "subjective-abstract-data-source-package @ git+https://github.com/Subjective-Technologies/subjective-abstract-data-source-package.git"
+  ],
+  "per_plugin": {
+    "subjective_localchats_datasource": [
+      "subjective-abstract-data-source-package @ git+https://github.com/Subjective-Technologies/subjective-abstract-data-source-package.git",
+      "brainboost-data-source-logger-package @ git+https://github.com/Subjective-Technologies/brainboost_data_source_logger_package.git",
+      "brainboost-configuration-package @ git+https://github.com/Subjective-Technologies/brainboost_configuration_package.git"
+    ]
+  },
+  "schema_version": "subjective.bundle_requirements.v1"
+}

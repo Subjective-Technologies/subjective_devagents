@@ -1,0 +1,17 @@
+{
+  "name": "subjective_chat_history",
+  "description": "Local CLI and IDE conversation discovery pipeline for Subjective Chat.",
+  "version": 2,
+  "nodes": [
+    {
+      "node_id": "local_chats",
+      "class": "SubjectiveLocalchatsDataSource",
+      "connection_name": "subjective_chat_local_chats",
+      "inputs": {},
+      "send_to_context": false
+    }
+  ],
+  "workbench": {
+    "connections": []
+  }
+}

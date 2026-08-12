@@ -5,9 +5,31 @@ const net = require('net');
 const tls = require('tls');
 const os = require('os');
 const dotenv = require('dotenv');
-const { pathToFileURL } = require('url');
+const { fileURLToPath, pathToFileURL } = require('url');
+const { LlmService, providerLabel } = require('./llmService');
+const { listSystemUsers, isValidUsername } = require('./systemUsers');
+const { SuSessionManager } = require('./suSessionManager');
+const terminalWindow = require('./terminalWindow');
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+const applicationHome = process.env.SUBJECTIVE_CHAT_HOME || path.join(os.homedir(), '.subjective_chat');
+app.setPath('userData', applicationHome);
+const remoteDebuggingPort = Number(process.env.SUBJECTIVE_CHAT_REMOTE_DEBUGGING_PORT || 0);
+if (Number.isInteger(remoteDebuggingPort) && remoteDebuggingPort > 0 && remoteDebuggingPort <= 65535) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(remoteDebuggingPort));
+}
+
+function logTimestamp(date = new Date()) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+    String(date.getHours()).padStart(2, '0'),
+    String(date.getMinutes()).padStart(2, '0'),
+    String(date.getSeconds()).padStart(2, '0')
+  ].join('_');
+}
 
 const defaultConnection = {
   name: 'Subjective LAN',
@@ -28,13 +50,13 @@ const config = {
   realname: process.env.IRC_REALNAME || process.env.IRC_NICK || 'Tomasso',
   dccPublicHost: process.env.DCC_PUBLIC_HOST || '',
   downloadDir: process.env.DCC_DOWNLOAD_DIR ? path.resolve(__dirname, '..', process.env.DCC_DOWNLOAD_DIR) : path.join(os.homedir(), 'Downloads'),
-  sentDir: path.resolve(__dirname, '..', 'sent')
+  sentDir: path.join(applicationHome, 'sent')
 };
 
 let bookmarks = [];
 
-const logDir = path.join(__dirname, '..', 'logs');
-const mainLogPath = path.join(logDir, 'main.log');
+const logDir = path.join(applicationHome, 'logs');
+const mainLogPath = path.join(logDir, `${logTimestamp()}-subjective_chat-log.log`);
 
 let mainWindow;
 let tray;
@@ -52,6 +74,9 @@ let namesBuffer = [];
 let quitTimer;
 let namesRefreshTimer;
 let nickRetryTimer;
+let llmService;
+let suSessionManager;
+const activeLlmIrcChannels = new Map();
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -505,6 +530,137 @@ function writeIrc(command) {
   return true;
 }
 
+function sendIrcText(target, text) {
+  const clean = String(text || '').replace(/[\r\n]+/g, ' ').trim();
+  if (!clean) return false;
+  const chunks = clean.match(/.{1,380}(?:\s+|$)|.{1,380}/g) || [clean];
+  let sent = false;
+  for (const chunk of chunks) sent = writeIrc(`PRIVMSG ${target} :${chunk.trim()}`) || sent;
+  return sent;
+}
+
+function activateLlmIrcChannel(conversation) {
+  if (!conversation?.ircChannel) return { ok: false, error: 'Conversation has no IRC channel.' };
+  activeLlmIrcChannels.set(conversation.ircChannel.toLowerCase(), conversation.target);
+  if (connected) {
+    writeIrc(`JOIN ${conversation.ircChannel}`);
+    writeIrc(`NAMES ${conversation.ircChannel}`);
+  }
+  return { ok: true, channel: conversation.ircChannel, connected };
+}
+
+// "Continue as <username>" entry point, called from the conversation context menu (see
+// buildConversationContextMenu). If that user's background session is already ready,
+// switches over immediately with no prompt. Otherwise opens the visible su/login
+// terminal and lets ensureSession()'s state machine (see suSessionManager.js) drive it -
+// this function returns as soon as that decision is made, it does not block on the whole
+// (possibly minutes-long, human-interactive) connect flow.
+function continueConversationAsUser(target, username) {
+  if (!llmService.findConversation(target)) return { ok: false, error: 'Conversation was not found.' };
+  if (!isValidUsername(username)) return { ok: false, error: 'Invalid username.' };
+
+  const existing = suSessionManager.getStatus(username);
+  if (existing.status === 'ready') {
+    return { ok: true, ...switchConversationOwner(target, username) };
+  }
+
+  // Reopen/reattach the viewer if a connect is already in flight (e.g. the person closed
+  // the terminal window early) rather than spawning a second `su` for the same user.
+  terminalWindow.openTerminalWindow(username, { parent: mainWindow, suSessionManager });
+  suSessionManager.ensureSession(username)
+    .then(() => switchConversationOwner(target, username))
+    .catch((error) => {
+      log('error', 'Failed to connect as OS user', { username, message: error.message });
+    });
+  return { ok: true, status: existing.status || 'connecting' };
+}
+
+function switchConversationOwner(target, username) {
+  try {
+    const sibling = llmService.createSiblingForUser(target, username);
+    activateLlmIrcChannel(sibling);
+    emit('llm-conversation', { conversation: sibling });
+    emit('llm-switch-user', { sourceTarget: target, target: sibling.target, osUser: username });
+    return { conversation: sibling };
+  } catch (error) {
+    log('error', 'Failed to create sibling conversation for OS user', { username, message: error.message });
+    emit('system', { target, text: `Could not continue as ${username}: ${error.message}` });
+    return { error: error.message };
+  }
+}
+
+async function buildConversationContextMenu(target) {
+  const conversation = llmService.findConversation(target);
+  if (!conversation || conversation.kind !== 'llm') {
+    return Menu.buildFromTemplate([{ label: 'Rename…', enabled: false }]);
+  }
+
+  // Rename is available for every chat, including read-only history conversations.
+  const items = [
+    { label: 'Rename…', click: () => emit('conversation-rename-request', { target }) },
+    { type: 'separator' }
+  ];
+
+  if (!conversation.writable) {
+    items.push({ label: 'Continue as…', enabled: false });
+    return Menu.buildFromTemplate(items);
+  }
+
+  const usersResult = await listSystemUsers();
+  const users = usersResult.ok ? usersResult.users : [];
+  const statuses = new Map(suSessionManager.listStatuses().map((entry) => [entry.username, entry]));
+
+  const submenu = users.map((user) => {
+    const status = statuses.get(user.username);
+    const dot = status?.status === 'ready' ? '●' : status ? '◐' : '○';
+    return { label: `${dot} ${user.username}`, click: () => continueConversationAsUser(target, user.username) };
+  });
+  if (!submenu.length) submenu.push({ label: 'No other Linux users found on this computer', enabled: false });
+
+  const activeSessions = [...statuses.values()].filter((entry) => entry.status !== 'idle' && entry.status !== 'disconnected');
+  if (activeSessions.length) {
+    submenu.push({ type: 'separator' });
+    for (const entry of activeSessions) {
+      submenu.push({
+        label: `Disconnect ${entry.username}`,
+        click: () => {
+          suSessionManager.disconnect(entry.username);
+          terminalWindow.closeTerminalWindow(entry.username);
+        }
+      });
+    }
+  }
+
+  items.push({ label: 'Continue as…', submenu });
+  return Menu.buildFromTemplate(items);
+}
+
+async function answerLlmMessage(target, text, from = currentNick, mirrorToIrc = true) {
+  const conversation = llmService.findConversation(target);
+  if (!conversation) return { ok: false, status: 'not_found', error: 'Conversation was not found.' };
+  const provider = conversation.provider || 'codex';
+  const label = providerLabel(provider);
+  emit('llm-busy', { target, busy: true });
+  try {
+    const response = await llmService.sendMessage(target, text, []);
+    if (response.userMessage) {
+      emit('llm-message', { target, message: response.userMessage, provider, from });
+    }
+    if (response.ok) {
+      emit('llm-message', { target, message: response.assistantMessage, provider });
+      emit('llm-conversation', { conversation: response.conversation });
+      if (mirrorToIrc && conversation.ircChannel) sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
+    } else {
+      const errorText = `${label} error (${response.status || 'error'}): ${response.error || 'Unknown error'}`;
+      emit('system', { target, text: errorText });
+      if (mirrorToIrc && conversation.ircChannel) sendIrcText(conversation.ircChannel, errorText);
+    }
+    return response;
+  } finally {
+    emit('llm-busy', { target, busy: false });
+  }
+}
+
 function reconnectNow() {
   manualDisconnect = false;
   clearTimeout(reconnectTimer);
@@ -740,6 +896,7 @@ function handleIrcLine(line) {
     log('info', 'IRC registration complete, joining channel', { channel: config.channel });
     writeIrc(`JOIN ${config.channel}`);
     writeIrc(`NAMES ${config.channel}`);
+    for (const channel of activeLlmIrcChannels.keys()) writeIrc(`JOIN ${channel}`);
     emit('system', { target: config.channel, text: `Joined ${config.channel}` });
     return;
   }
@@ -818,6 +975,16 @@ function handleIrcLine(line) {
 
     if (text.startsWith('\x01') && text.endsWith('\x01')) {
       handleCtcp(from, target, text.slice(1, -1));
+      return;
+    }
+
+    const llmTarget = activeLlmIrcChannels.get(String(target).toLowerCase());
+    if (llmTarget) {
+      if (from.toLowerCase() !== currentNick.toLowerCase()) {
+        answerLlmMessage(llmTarget, text, from, true).catch((error) => {
+          log('error', 'Failed to answer IRC LLM channel message', { target: llmTarget, from, message: error.message });
+        });
+      }
       return;
     }
 
@@ -1073,6 +1240,25 @@ async function chooseAndSendImage(target) {
 app.whenReady().then(() => {
   log('info', 'App ready', { electron: process.versions.electron, node: process.versions.node });
   loadSettings();
+  suSessionManager = new SuSessionManager();
+  suSessionManager.on('status', (event) => {
+    log('info', 'Switch-user session status changed', event);
+    const payload = { type: 'status', ...event };
+    const termWin = terminalWindow.getTerminalWindow(event.username);
+    if (termWin) termWin.webContents.send('switchuser:event', payload);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('switchuser:event', payload);
+  });
+  suSessionManager.on('provider-status', (event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('switchuser:event', { type: 'provider-status', ...event });
+  });
+  llmService = new LlmService({
+    root: path.resolve(__dirname, '..'),
+    appHome: applicationHome,
+    suSessionManager
+  });
+  for (const conversation of llmService.listConversations().filter((item) => item.activeOnIrc)) {
+    activeLlmIrcChannels.set(conversation.ircChannel.toLowerCase(), conversation.target);
+  }
   createWindow();
   createTray();
 
@@ -1111,6 +1297,149 @@ app.whenReady().then(() => {
     return { ok: Boolean(result?.ok), focusTarget: result?.focusTarget || '' };
   });
 
+  ipcMain.handle('llm:list-conversations', () => {
+    try {
+      return { ok: true, conversations: llmService.listConversations() };
+    } catch (error) {
+      log('error', 'Failed to list LLM conversations', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message, conversations: [] };
+    }
+  });
+
+  ipcMain.handle('llm:get-conversation', (_event, payload) => {
+    try {
+      const conversation = llmService.findConversation(String(payload?.target || ''), { includeMessages: true });
+      return conversation ? { ok: true, conversation } : { ok: false, error: 'Conversation was not found.' };
+    } catch (error) {
+      log('error', 'Failed to load LLM conversation', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('llm:create-conversation', (_event, payload) => {
+    try {
+      const conversation = llmService.createConversation(payload || {});
+      activateLlmIrcChannel(conversation);
+      log('info', 'Created Codex conversation', { target: conversation.target, workspace: conversation.workspace });
+      emit('llm-conversation', { conversation });
+      return { ok: true, conversation };
+    } catch (error) {
+      log('error', 'Failed to create Codex conversation', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('llm:rename-conversation', (_event, payload) => {
+    try {
+      const result = llmService.renameConversation(String(payload?.target || ''), String(payload?.name || ''));
+      if (result.ok && result.conversation) {
+        log('info', 'Renamed conversation', { target: result.conversation.target, label: result.conversation.label });
+        // Label-only event: a full llm-conversation would make the renderer rebuild the
+        // open transcript from this sparse payload, wiping the hydrated message view.
+        emit('llm-conversation-renamed', { target: result.conversation.target, label: result.conversation.label });
+      }
+      return result;
+    } catch (error) {
+      log('error', 'Failed to rename LLM conversation', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('llm:activate-conversation', (_event, payload) => {
+    const conversation = llmService.findConversation(String(payload?.target || ''));
+    if (!conversation) return { ok: false, error: 'Conversation was not found.' };
+    llmService.markActive(conversation.target);
+    return activateLlmIrcChannel(conversation);
+  });
+
+  ipcMain.handle('llm:status', async (_event, payload) => {
+    const result = await llmService.status(payload?.provider);
+    return { ok: Boolean(result.success), ...result };
+  });
+
+  ipcMain.handle('llm:send-message', async (_event, payload) => {
+    const target = String(payload?.target || '');
+    const text = String(payload?.text || '').trim();
+    log('info', 'Sending LLM message', { target, length: text.length });
+    const conversation = llmService.findConversation(target);
+    if (conversation?.ircChannel) sendIrcText(conversation.ircChannel, text);
+    if (payload?.files?.length) {
+      const provider = conversation?.provider || 'codex';
+      const label = providerLabel(provider);
+      emit('llm-busy', { target, busy: true });
+      try {
+        const response = await llmService.sendMessage(target, text, payload.files);
+        if (response.userMessage) emit('llm-message', { target, message: response.userMessage, provider, from: currentNick });
+        if (response.ok) {
+          emit('llm-message', { target, message: response.assistantMessage, provider });
+          emit('llm-conversation', { conversation: response.conversation });
+          if (conversation?.ircChannel) sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
+        } else {
+          emit('system', { target, text: `${label} error (${response.status || 'error'}): ${response.error || 'Unknown error'}` });
+        }
+        return response;
+      } finally {
+        emit('llm-busy', { target, busy: false });
+      }
+    }
+    try {
+      const response = await answerLlmMessage(target, text, currentNick, true);
+      if (response.ok) {
+        log('info', 'LLM message completed', { target, sessionId: response.conversation.sessionId });
+      }
+      if (!response.ok) {
+        log('error', 'LLM message failed', { target, status: response.status, error: response.error });
+      }
+      return response;
+    } catch (error) {
+      log('error', 'LLM message crashed', { target, message: error.message, stack: error.stack });
+      return { ok: false, status: 'error', error: error.message };
+    }
+  });
+
+  ipcMain.handle('system:list-users', async () => {
+    try {
+      return await listSystemUsers();
+    } catch (error) {
+      log('error', 'Failed to list system users', { message: error.message });
+      return { ok: false, users: [], error: error.message };
+    }
+  });
+
+  ipcMain.handle('switchuser:status', (_event, payload) => {
+    const username = payload?.username ? String(payload.username) : '';
+    if (username) return { ok: true, status: suSessionManager.getStatus(username) };
+    return { ok: true, statuses: suSessionManager.listStatuses() };
+  });
+
+  ipcMain.handle('switchuser:continue-as', (_event, payload) => {
+    return continueConversationAsUser(String(payload?.target || ''), String(payload?.username || ''));
+  });
+
+  ipcMain.handle('switchuser:disconnect', (_event, payload) => {
+    const username = String(payload?.username || '');
+    suSessionManager.disconnect(username);
+    terminalWindow.closeTerminalWindow(username);
+    return { ok: true };
+  });
+
+  ipcMain.handle('switchuser:pty-input', (_event, payload) => {
+    suSessionManager.writeInput(String(payload?.username || ''), String(payload?.data || ''));
+    return { ok: true };
+  });
+
+  ipcMain.handle('switchuser:pty-resize', (_event, payload) => {
+    suSessionManager.resize(String(payload?.username || ''), Number(payload?.cols) || 0, Number(payload?.rows) || 0);
+    return { ok: true };
+  });
+
+  ipcMain.handle('conversation:context-menu', async (_event, payload) => {
+    const target = String(payload?.target || '');
+    const menu = await buildConversationContextMenu(target);
+    menu.popup({ window: mainWindow, x: Number.isFinite(payload?.x) ? payload.x : undefined, y: Number.isFinite(payload?.y) ? payload.y : undefined });
+    return { ok: true };
+  });
+
   ipcMain.handle('dcc:send-image', (_event, payload) => chooseAndSendImage(payload?.target || config.channel));
 
   ipcMain.handle('dcc:send-image-data', (_event, payload) => {
@@ -1128,6 +1457,49 @@ app.whenReady().then(() => {
     return { ok: true };
   });
 
+  ipcMain.handle('file:reveal', async (_event, payload) => {
+    const reference = String(payload?.filePath || '').trim();
+    try {
+      let filePath = reference.startsWith('file:///') ? fileURLToPath(reference) : decodeURIComponent(reference);
+      if (!path.isAbsolute(filePath) && !path.win32.isAbsolute(filePath)) {
+        return { ok: false, error: 'Only absolute local paths can be opened.' };
+      }
+      if (!fs.existsSync(filePath)) filePath = filePath.replace(/:\d+(?::\d+)?$/, '');
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        if (stats.isDirectory()) {
+          const error = await shell.openPath(filePath);
+          return error ? { ok: false, error } : { ok: true, path: filePath, directory: true };
+        }
+        shell.showItemInFolder(filePath);
+        return { ok: true, path: filePath, directory: false };
+      }
+      const parent = path.dirname(filePath);
+      if (parent !== filePath && fs.existsSync(parent) && fs.statSync(parent).isDirectory()) {
+        const error = await shell.openPath(parent);
+        return error ? { ok: false, error } : { ok: true, path: parent, directory: true, targetMissing: true };
+      }
+      return { ok: false, error: `Path does not exist: ${filePath}` };
+    } catch (error) {
+      log('error', 'Show in folder failed', { reference, message: error.message });
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('shell:open-external', async (_event, payload) => {
+    try {
+      const target = new URL(String(payload?.url || ''));
+      if (!['http:', 'https:', 'mailto:'].includes(target.protocol)) {
+        return { ok: false, error: 'Unsupported link protocol.' };
+      }
+      await shell.openExternal(target.toString());
+      return { ok: true };
+    } catch (error) {
+      log('error', 'External link failed', { url: payload?.url, message: error.message });
+      return { ok: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('app:log', (_event, payload) => {
     log(payload.level || 'info', payload.message || 'Renderer log', payload.details || {});
     return { ok: true };
@@ -1136,6 +1508,18 @@ app.whenReady().then(() => {
   mainWindow.webContents.once('did-finish-load', () => {
     emit('status', { state: 'idle', text: 'Ready' });
     connectIrc();
+    llmService.refreshHistory().then((result) => {
+      if (!result.success) {
+        log('error', 'Local chat history pipeline failed', { status: result.status, error: result.error });
+        emit('system', { target: config.channel, text: `History refresh failed: ${result.error || result.status || 'unknown error'}` });
+        return;
+      }
+      const count = llmService.listConversations().length;
+      log('info', 'Local chat history pipeline completed', { count });
+      emit('llm-history-refreshed', { count });
+    }).catch((error) => {
+      log('error', 'Local chat history pipeline crashed', { message: error.message, stack: error.stack });
+    });
   });
 });
 
@@ -1146,6 +1530,11 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (event) => {
+  // Unconditional, and safe to run every time before-quit fires (including a re-entrant
+  // call from the IRC shutdown path below): disconnect() and closeAllTerminalWindows()
+  // are both no-ops once there is nothing left to clean up.
+  suSessionManager?.disconnectAll();
+  terminalWindow.closeAllTerminalWindows();
   if (!isQuitting && socket) {
     event.preventDefault();
     isQuitting = true;

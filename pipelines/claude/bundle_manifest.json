@@ -1,0 +1,41 @@
+{
+  "app_id": "subjective_chat",
+  "bundle_id": "claude",
+  "contents": {
+    "bundled_plugins": [
+      "subjective_claude_cli_datasource"
+    ],
+    "connection_count": 0,
+    "connections_included": false,
+    "plugin_source_included": true
+  },
+  "created_at": "2026-08-11T21:21:38Z",
+  "created_by": "subjective_control_lib",
+  "future_build": {
+    "electron_packaging_expected": true,
+    "native_executable_generated": false,
+    "python_binary_builder": "nuitka"
+  },
+  "paths": {
+    "bundle_root": "/subjective/clients/desktop/subjective_chat/pipelines/claude",
+    "pipeline": "pipelines/subjective_chat_claude.pipe",
+    "pipeline_lock": "pipeline.lock.json",
+    "plugins_manifest": "plugins/plugins_manifest.json",
+    "plugins_source_root": "plugins/",
+    "requirements_breakdown": "runtime/pip_requirements_by_plugin.json",
+    "requirements_lock": "runtime/requirements.lock",
+    "run_py": "run.py",
+    "runtime_manifest": "runtime/runtime_manifest.json",
+    "workspace": "workspace/"
+  },
+  "pipeline_name": "subjective_chat_claude",
+  "schema_version": "subjective.pipeline_bundle.v1",
+  "secrets_policy": {
+    "embedded_connections": false,
+    "embedded_credentials": false,
+    "notes": "Bundle contains schemas/defaults only. User secrets and local context data are excluded."
+  },
+  "status": "created",
+  "target": "local-electron",
+  "warnings": []
+}

@@ -26,6 +26,15 @@
     sendImage: (target) => plugin ? plugin.sendImage({ target }) : missingPluginResult(),
     sendImageData: (payload) => plugin ? plugin.sendImageData(payload) : missingPluginResult(),
     openFile: (filePath) => plugin ? plugin.openFile({ filePath }) : Promise.resolve({ ok: true }),
+    revealPath: (filePath) => plugin?.revealPath
+      ? plugin.revealPath({ filePath })
+      : Promise.resolve({ ok: false, error: 'Show in folder requires Subjective Chat desktop.' }),
+    openExternal: (url) => {
+      const target = String(url || '');
+      if (!/^https?:\/\//i.test(target) && !/^mailto:/i.test(target)) return Promise.resolve({ ok: false });
+      window.open(target, '_blank', 'noopener,noreferrer');
+      return Promise.resolve({ ok: true });
+    },
     log: (level, message, details) => plugin ? plugin.log({ level, message, details }) : Promise.resolve({ ok: true }),
     saveConfig: (payload) => plugin ? plugin.saveConfig(payload) : missingPluginResult(),
     getConfig: () => plugin

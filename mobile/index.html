@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./assets/vendor/highlight-atom-one-dark.min.css">
   </head>
   <body data-accent="gold">
     <main class="app-shell">
@@ -22,7 +23,16 @@
           <div class="panel-head">
             <span class="panel-title">Conversations</span>
           </div>
-          <div id="conversationList" class="conversation-list"></div>
+          <div id="conversationBrowser" class="conversation-browser">
+            <div class="conversation-search-row">
+              <label class="conversation-search">
+                <span aria-hidden="true">⌕</span>
+                <input id="conversationSearch" type="search" autocomplete="off" placeholder="Search chats…" aria-label="Search conversations">
+              </label>
+              <small id="conversationSearchCount" class="conversation-search-count"></small>
+            </div>
+            <div id="conversationList" class="conversation-list"></div>
+          </div>
         </section>
 
         <section class="panel" id="accentPanel">
@@ -168,7 +178,10 @@
         </div>
       </form>
     </dialog>
+    <script src="./assets/vendor/markdown-it.min.js"></script>
+    <script src="./assets/vendor/highlight.min.js"></script>
     <script src="./mobile-bridge.js"></script>
+    <script src="./messageRenderer.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

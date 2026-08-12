@@ -1,0 +1,17 @@
+{
+  "name": "subjective_chat_codex",
+  "description": "Interactive Codex CLI conversation pipeline for Subjective Chat.",
+  "version": 2,
+  "nodes": [
+    {
+      "node_id": "codex",
+      "class": "SubjectiveCodexDataSource",
+      "connection_name": "subjective_chat_codex",
+      "inputs": {},
+      "send_to_context": true
+    }
+  ],
+  "workbench": {
+    "connections": []
+  }
+}

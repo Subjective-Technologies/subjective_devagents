@@ -1,4 +1,5 @@
 node_modules/
+.venv/
 .gradle/
 mobile-www/
 received/
@@ -9,3 +10,5 @@ logs/
 .DS_Store
 .agents/
 .codex/
+__pycache__/
+*.pyc

@@ -5,8 +5,11 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/mobile-bridge.js",
-    "mobile:prepare": "mkdir -p mobile-www/assets && cp mobile/index.html mobile-www/index.html && cp src/styles.css src/renderer.js src/mobile-bridge.js mobile-www/ && cp assets/* mobile-www/assets/",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/messageRenderer.js && node --check src/renderer.js && node --check src/mobile-bridge.js && node --check src/llmService.js && node --check src/systemUsers.js && node --check src/suSessionManager.js && node --check src/terminalWindow.js && node --check src/terminalPreload.js",
+    "test": "node --test tests/*.test.js && python3 -m unittest discover -s tests -p '*_test.py'",
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "vendor:xterm": "mkdir -p assets/vendor && cp node_modules/@xterm/xterm/lib/xterm.js assets/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css assets/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js assets/vendor/xterm-addon-fit.js && cp node_modules/@xterm/xterm/LICENSE assets/vendor/xterm.LICENSE",
+    "mobile:prepare": "mkdir -p mobile-www/assets && cp mobile/index.html mobile-www/index.html && cp src/styles.css src/messageRenderer.js src/renderer.js src/mobile-bridge.js mobile-www/ && cp -R assets/. mobile-www/assets/",
     "mobile:sync": "npm run mobile:prepare && npx cap sync android",
     "mobile:apk": "npm run mobile:sync && cd android && GRADLE_USER_HOME=../.gradle ./gradlew assembleDebug"
   },
@@ -14,7 +17,15 @@
     "@capacitor/android": "^8.3.1",
     "@capacitor/cli": "^8.3.1",
     "@capacitor/core": "^8.3.1",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "dotenv": "^16.4.7",
-    "electron": "^41.4.0"
+    "electron": "^41.4.0",
+    "highlight.js": "^11.11.2",
+    "markdown-it": "^15.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.2"
   }
 }

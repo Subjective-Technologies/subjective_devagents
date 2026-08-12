@@ -1,0 +1,32 @@
+{
+  "compile_success": true,
+  "compile_summary": {
+    "errors": 0,
+    "infos": 0,
+    "warnings": 1
+  },
+  "compiled_at": "2026-08-11T16:48:15Z",
+  "nodes": [
+    {
+      "class_name": "SubjectiveCodexDataSource",
+      "dependencies": [],
+      "module": null,
+      "node_id": "codex",
+      "plugin_name": "SubjectiveCodexDataSource",
+      "plugin_version": null,
+      "requires_python": null,
+      "resolution_status": "plugin",
+      "warnings": []
+    }
+  ],
+  "pipeline_hash_sha256": "552f8b7aabf6a3734afd424bc8a260b0b38a4262ab527ea503ca7ab6ffe1bf87",
+  "pipeline_name": "subjective_chat_codex",
+  "runtime_requirements": {
+    "python_binary_builder_later": "nuitka",
+    "requires_datasource_service": true,
+    "requires_fastapi": true,
+    "requires_redis": true,
+    "requires_uv_environment": true
+  },
+  "schema_version": "subjective.pipeline_lock.v1"
+}

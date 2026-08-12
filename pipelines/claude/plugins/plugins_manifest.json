@@ -1,0 +1,33 @@
+{
+  "copied_plugins": [
+    "subjective_claude_cli_datasource"
+  ],
+  "copy_plugin_source": true,
+  "merged_requirements": [
+    "brainboost-configuration-package @ git+https://github.com/Subjective-Technologies/brainboost_configuration_package.git",
+    "brainboost-data-source-logger-package @ git+https://github.com/Subjective-Technologies/brainboost_data_source_logger_package.git",
+    "subjective-abstract-data-source-package @ git+https://github.com/Subjective-Technologies/subjective-abstract-data-source-package.git"
+  ],
+  "per_plugin_requirements": {
+    "subjective_claude_cli_datasource": [
+      "subjective-abstract-data-source-package @ git+https://github.com/Subjective-Technologies/subjective-abstract-data-source-package.git",
+      "brainboost-data-source-logger-package @ git+https://github.com/Subjective-Technologies/brainboost_data_source_logger_package.git",
+      "brainboost-configuration-package @ git+https://github.com/Subjective-Technologies/brainboost_configuration_package.git"
+    ]
+  },
+  "plugins": [
+    {
+      "class_names": [
+        "SubjectiveClaudeCliDataSource"
+      ],
+      "dependencies": [],
+      "name": "SubjectiveClaudeCliDataSource",
+      "requires_python": null,
+      "source_path": "/home/golden/.Subjective/com_subjective_userdata/com_subjective_plugins/subjective_claude_cli_datasource",
+      "status": "resolved",
+      "version": null,
+      "warnings": []
+    }
+  ],
+  "schema_version": "subjective.plugins_manifest.v1"
+}
