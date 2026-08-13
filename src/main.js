@@ -635,6 +635,17 @@ async function buildConversationContextMenu(target) {
   return Menu.buildFromTemplate(items);
 }
 
+// A timed-out turn leaves nothing behind to resume: the CLI only prints its session id
+// once the whole turn finishes, so a kill mid-turn means the next message starts a
+// brand-new session with zero memory of the attempt that timed out. Say that plainly at
+// the moment it happens, so "did it finish?" later doesn't read as the agent forgetting
+// work it actually completed - it never got the chance to.
+function llmErrorText(label, response) {
+  const base = `${label} error (${response.status || 'error'}): ${response.error || 'Unknown error'}`;
+  if (response.status !== 'timeout') return base;
+  return `${base} ${label} has no memory of this attempt - your next message starts a brand-new session from scratch.`;
+}
+
 async function answerLlmMessage(target, text, from = currentNick, mirrorToIrc = true) {
   const conversation = llmService.findConversation(target);
   if (!conversation) return { ok: false, status: 'not_found', error: 'Conversation was not found.' };
@@ -651,7 +662,7 @@ async function answerLlmMessage(target, text, from = currentNick, mirrorToIrc = 
       emit('llm-conversation', { conversation: response.conversation });
       if (mirrorToIrc && conversation.ircChannel) sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
     } else {
-      const errorText = `${label} error (${response.status || 'error'}): ${response.error || 'Unknown error'}`;
+      const errorText = llmErrorText(label, response);
       emit('system', { target, text: errorText });
       if (mirrorToIrc && conversation.ircChannel) sendIrcText(conversation.ircChannel, errorText);
     }
@@ -1375,7 +1386,7 @@ app.whenReady().then(() => {
           emit('llm-conversation', { conversation: response.conversation });
           if (conversation?.ircChannel) sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
         } else {
-          emit('system', { target, text: `${label} error (${response.status || 'error'}): ${response.error || 'Unknown error'}` });
+          emit('system', { target, text: llmErrorText(label, response) });
         }
         return response;
       } finally {
