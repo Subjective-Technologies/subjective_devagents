@@ -1,0 +1,20 @@
+/* Web-only layout override: the desktop app keeps Conversations in the left sidebar
+   (src/index.html, unchanged) - this web build moves it into content-grid, to the right of
+   Users, without touching styles.css (shared with the desktop app and the mobile build) or
+   any renderer.js logic. Every element keeps its original id/class, so renderer.js's
+   DOM lookups and styles.css's existing per-element rules (#conversationsPanel,
+   .conversation-list, etc.) keep working unchanged - this file only repositions the grid
+   cells and gives the panel its own right-hand-pane chrome (border/background/padding)
+   now that it's no longer inside .sidebar. */
+
+.content-grid {
+  grid-template-columns: minmax(0, 1fr) 230px 280px;
+}
+
+#conversationsPanel {
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: #050505;
+  padding: 16px 14px;
+  min-height: 0;
+  overflow: hidden;
+}
