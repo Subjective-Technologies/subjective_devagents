@@ -1,0 +1,55 @@
+/* DOM stand-in for Electron's native Menu.buildFromTemplate()/.popup() - see
+   webBridge.js showConversationContextMenu(). Kept separate from styles.css since it has
+   no Electron-app equivalent to share styling with. */
+.web-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #14161d;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.web-context-menu-item {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #e6e6e6;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.web-context-menu-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.web-context-menu-item:disabled {
+  color: #6b7280;
+  cursor: default;
+}
+
+.web-context-menu-label {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8a97ad;
+}
+
+.web-context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: rgba(255, 255, 255, 0.1);
+}

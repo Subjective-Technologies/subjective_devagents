@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subjective Chat</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
+    <link rel="stylesheet" href="/contextMenu.css">
+  </head>
+  <body data-accent="gold">
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-mark" src="/assets/subjective-logo.svg" alt="Subjective">
+          <div>
+            <h1>Subjective Chat</h1>
+            <p id="serverLabel">IRC</p>
+          </div>
+        </div>
+
+        <section class="panel" id="conversationsPanel">
+          <div class="panel-head">
+            <span class="panel-title">Conversations</span>
+            <button type="button" id="createLlmButton" class="panel-add" title="New agent conversation" aria-label="New agent conversation">+</button>
+          </div>
+          <div id="conversationBrowser" class="conversation-browser">
+            <div class="conversation-search-row">
+              <label class="conversation-search">
+                <span aria-hidden="true">⌕</span>
+                <input id="conversationSearch" type="search" autocomplete="off" placeholder="Search chats…" aria-label="Search conversations">
+              </label>
+              <small id="conversationSearchCount" class="conversation-search-count"></small>
+            </div>
+            <div id="conversationList" class="conversation-list"></div>
+          </div>
+        </section>
+
+        <section class="panel" id="accentPanel">
+          <div class="panel-head">
+            <span class="panel-title">Accent</span>
+          </div>
+          <div class="accent-grid" id="accentGrid">
+            <button type="button" class="accent-swatch gold active" data-accent="gold" title="Gold"></button>
+            <button type="button" class="accent-swatch purple" data-accent="purple" title="Purple"></button>
+            <button type="button" class="accent-swatch pink" data-accent="pink" title="Pink"></button>
+            <button type="button" class="accent-swatch green" data-accent="green" title="Green"></button>
+          </div>
+        </section>
+
+      </aside>
+
+      <section class="chat-pane">
+        <header class="topbar">
+          <div class="topbar-main">
+            <div>
+              <div class="channel-heading">
+                <img id="topProviderIcon" class="provider-icon" alt="" hidden>
+                <h2 id="topChannel">#subjective</h2>
+              </div>
+              <p id="identityLabel">Tomasso</p>
+            </div>
+            <div class="top-actions" id="topActions">
+              <button id="settingsButton" class="icon-button subtle" title="Connection settings" aria-label="Connection settings">⚙</button>
+              <button id="bookmarksButton" class="icon-button subtle" title="Bookmarks" aria-label="Bookmarks">☆</button>
+              <button id="sendImageButton" class="icon-button" title="Send image with DCC" aria-label="Send image with DCC">+</button>
+            </div>
+          </div>
+          <div class="topbar-meta" id="topbarMeta">
+            <div class="status-pill" id="statusPill">
+              <span class="dot"></span>
+              <span id="statusText">Starting</span>
+            </div>
+            <button id="connectButton" class="secondary-button">Reconnect</button>
+          </div>
+        </header>
+
+        <section class="content-grid">
+          <div class="chat-main">
+            <div id="transcript" class="transcript" aria-live="polite"></div>
+            <form id="composer" class="composer">
+              <div id="pendingImages" class="pending-images" hidden></div>
+              <textarea id="messageInput" rows="2" autocomplete="off" placeholder="Message #subjective"></textarea>
+              <div id="commandPalette" class="command-palette" hidden></div>
+              <button type="submit">Send</button>
+            </form>
+          </div>
+
+          <aside class="users-pane" id="usersPane">
+            <div class="users-head">
+              <span>Users</span>
+              <small id="userCount">0</small>
+            </div>
+            <div id="userList" class="user-list"></div>
+          </aside>
+        </section>
+      </section>
+    </main>
+    <dialog id="settingsDialog" class="settings-dialog">
+      <form id="settingsForm" class="settings-form">
+        <div class="settings-head">
+          <div>
+            <h3>Connection</h3>
+            <p>IRC server and identity</p>
+          </div>
+          <button type="button" id="settingsCloseButton" class="plain-icon" aria-label="Close settings">×</button>
+        </div>
+
+        <label>
+          <span>Bookmark</span>
+          <select id="bookmarkSelect"></select>
+        </label>
+
+        <div class="settings-grid">
+          <label>
+            <span>Name</span>
+            <input id="connectionNameInput" name="name" autocomplete="off">
+          </label>
+          <label>
+            <span>Host</span>
+            <input id="hostInput" name="host" autocomplete="off" required>
+          </label>
+          <label>
+            <span>Port</span>
+            <input id="portInput" name="port" type="number" min="1" max="65535" required>
+          </label>
+          <label>
+            <span>Channel</span>
+            <input id="channelInput" name="channel" autocomplete="off" required>
+          </label>
+          <label>
+            <span>Nickname</span>
+            <input id="nickInput" name="nick" autocomplete="off" required>
+          </label>
+          <label>
+            <span>Real name</span>
+            <input id="realnameInput" name="realname" autocomplete="off">
+          </label>
+        </div>
+
+        <label class="checkbox-row">
+          <input id="tlsInput" name="tls" type="checkbox">
+          <span>Use TLS</span>
+        </label>
+
+        <div class="settings-actions">
+          <button type="button" id="saveBookmarkButton" class="secondary-button">Save Bookmark</button>
+          <button type="submit" class="primary-button">Connect</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="llmDialog" class="settings-dialog">
+      <form id="llmForm" class="settings-form">
+        <div class="settings-head">
+          <div>
+            <h3>New agent conversation</h3>
+            <p>Creates virtual channel backed by the selected CLI datasource and its local login.</p>
+          </div>
+          <button type="button" id="llmCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <label>
+          <span>Agent</span>
+          <select id="llmProviderSelect">
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+          </select>
+        </label>
+        <label>
+          <span>Channel name</span>
+          <input id="llmNameInput" autocomplete="off" placeholder="Implement authentication" required>
+        </label>
+        <label>
+          <span>Workspace</span>
+          <input id="llmWorkspaceInput" autocomplete="off" value="/subjective" required>
+        </label>
+        <div id="llmStatusText" class="llm-status">Checking Codex datasource…</div>
+        <div class="settings-actions">
+          <button type="submit" class="primary-button">Create channel</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="/assets/vendor/markdown-it.min.js"></script>
+    <script src="/assets/vendor/highlight.min.js"></script>
+    <script src="/webBridge.js"></script>
+    <script src="/messageRenderer.js"></script>
+    <script src="/renderer.js"></script>
+  </body>
+</html>

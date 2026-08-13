@@ -248,3 +248,32 @@ test('attachViewer called before the session exists still receives pty output on
   manager.writeInput('bob', 'right-password\n');
   await connectPromise;
 });
+
+// Regression test: two independent UIs (e.g. the desktop app's native terminal window and
+// a browser tab's in-page terminal panel) can watch the same live "Continue as..." session
+// at once, and detaching one must not silence the other.
+test('attachViewer supports multiple simultaneous viewers; detaching one leaves the other receiving data', async () => {
+  const { pty } = makeFakeSuPty({ username: 'bob' });
+  const manager = managerWithFakePty(pty);
+
+  const first = [];
+  const second = [];
+  const onFirst = (chunk) => first.push(chunk);
+  const onSecond = (chunk) => second.push(chunk);
+  manager.attachViewer('bob', onFirst);
+  manager.attachViewer('bob', onSecond);
+  const connectPromise = manager.ensureSession('bob');
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(first.some((chunk) => chunk.includes('Password:')));
+  assert.ok(second.some((chunk) => chunk.includes('Password:')));
+
+  manager.detachViewer('bob', onFirst);
+  first.length = 0;
+  second.length = 0;
+  manager.writeInput('bob', 'right-password\n');
+  await connectPromise;
+
+  assert.equal(first.length, 0, 'detached viewer must receive nothing further');
+  assert.ok(second.length > 0, 'the still-attached viewer must keep receiving data');
+});

@@ -29,15 +29,17 @@ function openTerminalWindow(username, { parent, suSessionManager } = {}) {
   });
   windows.set(username, win);
 
-  if (suSessionManager) {
-    suSessionManager.attachViewer(username, (chunk) => {
-      if (!win.isDestroyed()) win.webContents.send('switchuser:event', { type: 'pty-data', username, chunk });
-    });
-  }
+  // Named so the exact same function reference can be removed on close - attachViewer now
+  // supports multiple simultaneous viewers (e.g. a browser tab watching the same session
+  // too), so detachViewer needs to know precisely which one this window owns.
+  const viewer = (chunk) => {
+    if (!win.isDestroyed()) win.webContents.send('switchuser:event', { type: 'pty-data', username, chunk });
+  };
+  if (suSessionManager) suSessionManager.attachViewer(username, viewer);
 
   win.on('closed', () => {
     windows.delete(username);
-    suSessionManager?.detachViewer(username);
+    suSessionManager?.detachViewer(username, viewer);
   });
 
   win.loadFile(path.join(__dirname, 'terminal.html'), { query: { username } });

@@ -68,7 +68,7 @@ class SuSessionManager extends EventEmitter {
     // ensureSession in the same tick, but the window's own "ready" callback can race
     // ahead of it too) - stash the callback here and apply it in _createSession so pty
     // output (including the password prompt) is never silently dropped on the floor.
-    this.pendingViewers = new Map(); // username -> onData callback
+    this.pendingViewers = new Map(); // username -> Set<onData callback>
     this.ptyFactory = options.ptyFactory || null;
     this.bridgeServerPath = options.bridgeServerPath || path.join(__dirname, 'pipeline_bridge_server.py');
     this.pythonPath = options.pythonPath || 'python3';
@@ -165,21 +165,28 @@ class SuSessionManager extends EventEmitter {
 
   // Marks a session as visible (a terminal window is showing its pty) or not. The pty
   // itself is never affected by this - only whether pty output is currently being
-  // forwarded anywhere for a human to see.
+  // forwarded anywhere for a human to see. Multiple viewers can be attached at once (e.g.
+  // the desktop app's native terminal window and a browser tab's in-page terminal panel
+  // both watching the same live "Continue as..." session) - each gets every chunk.
   attachViewer(username, onData) {
     const session = this.sessions.get(username);
     if (session) {
-      session.viewer = onData;
-    } else {
-      // No session yet - remember this for whenever _createSession runs.
-      this.pendingViewers.set(username, onData);
+      session.viewers.add(onData);
+      return;
     }
+    // No session yet - remember this for whenever _createSession runs.
+    if (!this.pendingViewers.has(username)) this.pendingViewers.set(username, new Set());
+    this.pendingViewers.get(username).add(onData);
   }
 
-  detachViewer(username) {
-    this.pendingViewers.delete(username);
+  detachViewer(username, onData) {
+    const pending = this.pendingViewers.get(username);
+    if (pending) {
+      pending.delete(onData);
+      if (pending.size === 0) this.pendingViewers.delete(username);
+    }
     const session = this.sessions.get(username);
-    if (session) session.viewer = null;
+    if (session) session.viewers.delete(onData);
   }
 
   writeInput(username, data) {
@@ -228,7 +235,7 @@ class SuSessionManager extends EventEmitter {
   }
 
   _createSession(username) {
-    const pendingViewer = this.pendingViewers.get(username) || null;
+    const pendingViewers = this.pendingViewers.get(username);
     this.pendingViewers.delete(username);
     return {
       username,
@@ -241,7 +248,7 @@ class SuSessionManager extends EventEmitter {
       waiters: new Set(),
       flagWaiters: new Set(),
       passwordLineSubmitted: false,
-      viewer: pendingViewer,
+      viewers: pendingViewers || new Set(),
       exited: false,
       exitError: '',
       queue: Promise.resolve(),
@@ -539,8 +546,8 @@ class SuSessionManager extends EventEmitter {
       session.buffer = session.buffer.slice(drop);
       session.bufferStart += drop;
     }
-    if (session.viewer) {
-      try { session.viewer(text); } catch (_error) { /* viewer window may be closing */ }
+    for (const viewer of session.viewers) {
+      try { viewer(text); } catch (_error) { /* viewer window may be closing */ }
     }
     for (const waiter of [...session.waiters]) waiter.check();
   }
