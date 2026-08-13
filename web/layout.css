@@ -1,20 +1,34 @@
-/* Web-only layout override: the desktop app keeps Conversations in the left sidebar
-   (src/index.html, unchanged) - this web build moves it into content-grid, to the right of
-   Users, without touching styles.css (shared with the desktop app and the mobile build) or
-   any renderer.js logic. Every element keeps its original id/class, so renderer.js's
-   DOM lookups and styles.css's existing per-element rules (#conversationsPanel,
-   .conversation-list, etc.) keep working unchanged - this file only repositions the grid
-   cells and gives the panel its own right-hand-pane chrome (border/background/padding)
-   now that it's no longer inside .sidebar. */
+/* Web-only layout override: the desktop app keeps Conversations and Accent in the left
+   sidebar (src/index.html, unchanged) - this web build moves both into content-grid,
+   after Users, stacked in a new .right-rail wrapper (Conversations filling the space,
+   Accent as a fixed-height footer below it). Doesn't touch styles.css (shared with the
+   desktop app and the mobile build) or any renderer.js logic - every element keeps its
+   original id/class, so renderer.js's DOM lookups and styles.css's existing per-element
+   rules (#conversationsPanel, .conversation-list, .accent-grid, etc.) keep working
+   unchanged. This file only repositions the grid cells and gives .right-rail the
+   right-hand-pane chrome (border/background/padding) .sidebar used to provide. */
 
 .content-grid {
   grid-template-columns: minmax(0, 1fr) 230px 280px;
 }
 
-#conversationsPanel {
+.right-rail {
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   background: #050505;
   padding: 16px 14px;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#conversationsPanel {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+#accentPanel {
+  flex: 0 0 auto;
 }

@@ -20,19 +20,6 @@
             <p id="serverLabel">IRC</p>
           </div>
         </div>
-
-        <section class="panel" id="accentPanel">
-          <div class="panel-head">
-            <span class="panel-title">Accent</span>
-          </div>
-          <div class="accent-grid" id="accentGrid">
-            <button type="button" class="accent-swatch gold active" data-accent="gold" title="Gold"></button>
-            <button type="button" class="accent-swatch purple" data-accent="purple" title="Purple"></button>
-            <button type="button" class="accent-swatch pink" data-accent="pink" title="Pink"></button>
-            <button type="button" class="accent-swatch green" data-accent="green" title="Green"></button>
-          </div>
-        </section>
-
       </aside>
 
       <section class="chat-pane">
@@ -79,22 +66,36 @@
             <div id="userList" class="user-list"></div>
           </aside>
 
-          <section class="panel" id="conversationsPanel">
-            <div class="panel-head">
-              <span class="panel-title">Conversations</span>
-              <button type="button" id="createLlmButton" class="panel-add" title="New agent conversation" aria-label="New agent conversation">+</button>
-            </div>
-            <div id="conversationBrowser" class="conversation-browser">
-              <div class="conversation-search-row">
-                <label class="conversation-search">
-                  <span aria-hidden="true">⌕</span>
-                  <input id="conversationSearch" type="search" autocomplete="off" placeholder="Search chats…" aria-label="Search conversations">
-                </label>
-                <small id="conversationSearchCount" class="conversation-search-count"></small>
+          <aside class="right-rail">
+            <section class="panel" id="conversationsPanel">
+              <div class="panel-head">
+                <span class="panel-title">Conversations</span>
+                <button type="button" id="createLlmButton" class="panel-add" title="New agent conversation" aria-label="New agent conversation">+</button>
               </div>
-              <div id="conversationList" class="conversation-list"></div>
-            </div>
-          </section>
+              <div id="conversationBrowser" class="conversation-browser">
+                <div class="conversation-search-row">
+                  <label class="conversation-search">
+                    <span aria-hidden="true">⌕</span>
+                    <input id="conversationSearch" type="search" autocomplete="off" placeholder="Search chats…" aria-label="Search conversations">
+                  </label>
+                  <small id="conversationSearchCount" class="conversation-search-count"></small>
+                </div>
+                <div id="conversationList" class="conversation-list"></div>
+              </div>
+            </section>
+
+            <section class="panel" id="accentPanel">
+              <div class="panel-head">
+                <span class="panel-title">Accent</span>
+              </div>
+              <div class="accent-grid" id="accentGrid">
+                <button type="button" class="accent-swatch gold active" data-accent="gold" title="Gold"></button>
+                <button type="button" class="accent-swatch purple" data-accent="purple" title="Purple"></button>
+                <button type="button" class="accent-swatch pink" data-accent="pink" title="Pink"></button>
+                <button type="button" class="accent-swatch green" data-accent="green" title="Green"></button>
+              </div>
+            </section>
+          </aside>
         </section>
       </section>
     </main>
