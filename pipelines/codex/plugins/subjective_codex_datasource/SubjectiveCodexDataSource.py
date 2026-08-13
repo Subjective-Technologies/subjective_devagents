@@ -272,6 +272,7 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
             new_session = normalized["new_session"]
             requested_working_directory = normalized["working_directory"]
             requested_sandbox_mode = normalized["sandbox_mode"]
+            requested_timeout = normalized["timeout"]
 
             if not prompt and not attachments:
                 return self._error_result("invalid_request", "Message is empty.")
@@ -304,6 +305,12 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
                         f"Unsupported sandbox mode: {requested_sandbox_mode}",
                     )
                 self.sandbox_mode = requested_sandbox_mode
+            if requested_timeout:
+                # Caller (Subjective Chat) knows how big the ask is - a "generate a whole
+                # new app" turn legitimately needs far more than the connection's default
+                # 10 minutes. Capped at 1h so a bad value can't wedge the subprocess call
+                # open indefinitely.
+                self.timeout = min(requested_timeout, 3600)
 
             with self._prepared_attachments(attachments) as prepared:
                 effective_prompt = prompt
@@ -547,8 +554,10 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
                 message.get("working_directory") or message.get("workspace") or ""
             ).strip()
             sandbox_mode = str(message.get("sandbox_mode") or "").strip()
+            timeout = self._coerce_optional_int(message.get("timeout"), minimum=10)
         else:
             prompt = str(message or "")
+            timeout = None
 
         all_files = list(embedded_files)
         if isinstance(files, list):
@@ -560,6 +569,7 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
             "new_session": new_session,
             "working_directory": working_directory,
             "sandbox_mode": sandbox_mode,
+            "timeout": timeout,
         }
 
     @contextmanager
@@ -787,3 +797,15 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
         except (TypeError, ValueError):
             parsed = default
         return max(minimum, parsed)
+
+    @staticmethod
+    def _coerce_optional_int(value: Any, *, minimum: int) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed < minimum:
+            return None
+        return parsed

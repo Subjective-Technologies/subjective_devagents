@@ -46,6 +46,15 @@ const WRITABLE_PROVIDERS = Object.freeze({
 });
 const DEFAULT_PROVIDER = 'codex';
 
+// A single agent turn ("generate a whole new app", not just "fix this typo") can
+// legitimately run far longer than the datasource's own 10-minute connection default -
+// send an explicit per-turn timeout through the request so the CLI subprocess itself is
+// given this budget (see SubjectiveClaudeCliDataSource/SubjectiveCodexDataSource
+// handle_message), and give the outer process wrapper a little more than that so it never
+// cuts the run off before the datasource's own timeout has a chance to report cleanly.
+const AGENT_TURN_TIMEOUT_SECONDS = 1800;
+const AGENT_TURN_WRAPPER_TIMEOUT_SECONDS = AGENT_TURN_TIMEOUT_SECONDS + 60;
+
 function providerKey(provider) {
   return String(provider || 'unknown').trim().toLowerCase().replace(/[\s_]+/g, '-');
 }
@@ -509,7 +518,8 @@ class LlmService {
         files,
         session_id: conversation.sessionId,
         new_session: !conversation.sessionId,
-        working_directory: conversation.workspace
+        working_directory: conversation.workspace,
+        timeout: AGENT_TURN_TIMEOUT_SECONDS
       };
       // Codex sandboxes per request; Claude takes an equivalent permission mode.
       if (provider.bundle === 'claude') {
@@ -519,8 +529,8 @@ class LlmService {
       }
       const runtimePath = this._runtimeFor(source.provider);
       const pipelineResponse = runningAsOtherUser
-        ? await this._runPipelineForUser(conversation.osUser, runtimePath, request, 660)
-        : await this._runPipeline(runtimePath, request, 660);
+        ? await this._runPipelineForUser(conversation.osUser, runtimePath, request, AGENT_TURN_WRAPPER_TIMEOUT_SECONDS)
+        : await this._runPipeline(runtimePath, request, AGENT_TURN_WRAPPER_TIMEOUT_SECONDS);
       const result = this._pipelineResult(pipelineResponse);
       if (!result.success) return { ok: false, ...result, userMessage };
       conversation.sessionId = String(result.session_id || conversation.sessionId || '');

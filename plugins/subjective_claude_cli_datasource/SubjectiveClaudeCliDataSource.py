@@ -316,6 +316,7 @@ class SubjectiveClaudeCliDataSource(SubjectiveDataSource):
             new_session = normalized["new_session"]
             requested_working_directory = normalized["working_directory"]
             requested_permission_mode = normalized["permission_mode"]
+            requested_timeout = normalized["timeout"]
 
             if not prompt and not attachments:
                 return self._error_result("invalid_request", "Message is empty.")
@@ -344,6 +345,12 @@ class SubjectiveClaudeCliDataSource(SubjectiveDataSource):
                         f"Unsupported permission mode: {requested_permission_mode}",
                     )
                 self.permission_mode = requested_permission_mode
+            if requested_timeout:
+                # Caller (Subjective Chat) knows how big the ask is - a "generate a whole
+                # new app" turn legitimately needs far more than the connection's default
+                # 10 minutes. Capped at 1h so a bad value can't wedge the subprocess call
+                # open indefinitely.
+                self.timeout = min(requested_timeout, 3600)
 
             with self._prepared_attachments(attachments) as prepared:
                 effective_prompt = prompt
@@ -720,8 +727,10 @@ class SubjectiveClaudeCliDataSource(SubjectiveDataSource):
             permission_mode = str(
                 message.get("permission_mode") or message.get("sandbox_mode") or ""
             ).strip()
+            timeout = self._coerce_optional_int(message.get("timeout"), minimum=10)
         else:
             prompt = str(message or "")
+            timeout = None
 
         all_files = list(embedded_files)
         if isinstance(files, list):
@@ -733,6 +742,7 @@ class SubjectiveClaudeCliDataSource(SubjectiveDataSource):
             "new_session": new_session,
             "working_directory": working_directory,
             "permission_mode": permission_mode,
+            "timeout": timeout,
         }
 
     @contextmanager

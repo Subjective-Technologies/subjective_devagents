@@ -219,6 +219,42 @@ class SubjectiveCodexDataSourceTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["status"], "timeout")
 
+    @patch("SubjectiveCodexDataSource.subprocess.run")
+    def test_per_message_timeout_overrides_the_connection_default(self, run):
+        # A big agentic ask can legitimately run past the connection's 10-minute default -
+        # the caller (Subjective Chat) can request a longer per-turn budget explicitly.
+        instance = self.datasource()
+        self.assertEqual(instance.timeout, 600)
+        self.ready(instance)
+        run.return_value = completed(
+            [],
+            stdout=event_lines(
+                {"type": "thread.started", "thread_id": "thread-1"},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}},
+            ),
+        )
+
+        instance.handle_message({"content": "build the whole thing", "timeout": 1800})
+
+        self.assertEqual(instance.timeout, 1800)
+        self.assertEqual(run.call_args.kwargs["timeout"], 1800)
+
+    @patch("SubjectiveCodexDataSource.subprocess.run")
+    def test_per_message_timeout_is_capped_so_it_cannot_wedge_the_subprocess_open(self, run):
+        instance = self.datasource()
+        self.ready(instance)
+        run.return_value = completed(
+            [],
+            stdout=event_lines(
+                {"type": "thread.started", "thread_id": "thread-1"},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}},
+            ),
+        )
+
+        instance.handle_message({"content": "hello", "timeout": 999999})
+
+        self.assertEqual(instance.timeout, 3600)
+
     def test_text_and_image_attachments_are_normalized(self):
         instance = self.datasource()
         files = [
@@ -237,6 +273,33 @@ class SubjectiveCodexDataSourceTests(unittest.TestCase):
             self.assertEqual(prepared["text_blocks"][0]["text"], "important context")
             self.assertEqual(len(prepared["image_paths"]), 1)
             self.assertTrue(os.path.isfile(prepared["image_paths"][0]))
+
+    @patch("SubjectiveCodexDataSource.subprocess.run")
+    def test_request_can_select_workspace_and_sandbox(self, run):
+        instance = self.datasource(working_directory="/tmp", sandbox_mode="read-only")
+        self.ready(instance)
+        run.return_value = completed(
+            [],
+            stdout=event_lines(
+                {"type": "thread.started", "thread_id": "thread-workspace"},
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": "Ready"},
+                },
+            ),
+        )
+        result = instance.handle_message(
+            {
+                "content": "start",
+                "workspace": "/subjective",
+                "sandbox_mode": "workspace-write",
+                "new_session": True,
+            }
+        )
+        self.assertTrue(result["success"])
+        command = run.call_args.args[0]
+        self.assertIn("/subjective", command)
+        self.assertIn("workspace-write", command)
 
 
 @unittest.skipUnless(

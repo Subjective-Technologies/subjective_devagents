@@ -116,6 +116,33 @@ test('new Codex channel persists and adopts native session id after first messag
   assert.equal(new LlmService(paths).listConversations().find((item) => item.target === created.target).activeOnIrc, true);
 });
 
+// Regression test: a big agentic ask ("generate a whole new app") can genuinely run past
+// the datasource's own 10-minute connection default. sendMessage must hand the CLI
+// subprocess an explicit per-turn budget (not just rely on the outer wrapper's timeout,
+// which only stops the *wrapper* - the datasource's own subprocess.run(..., timeout=...)
+// fires first and reports "timed out" on its own, well before that outer stop ever runs).
+test('sendMessage gives the agent turn a timeout budget well beyond the datasource default, and the outer wrapper a bit more than that', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  let capturedTimeoutSeconds = null;
+  let capturedRequest = null;
+  service._runPipeline = async (_runtimePath, request, timeoutSeconds) => {
+    capturedRequest = request;
+    capturedTimeoutSeconds = timeoutSeconds;
+    return {
+      success: true,
+      result: { pipeline_result: { success: true, response: 'ok', session_id: 's1', events: [], usage: {} } }
+    };
+  };
+  const created = service.createConversation({ name: 'Big build', workspace: '/subjective' });
+  await service.sendMessage(created.target, 'Build the whole thing');
+
+  assert.equal(capturedRequest.timeout, 1800);
+  assert.equal(capturedTimeoutSeconds, 1860);
+  assert.ok(capturedTimeoutSeconds > capturedRequest.timeout, 'the wrapper must outlive the datasource-level timeout it is meant to back up');
+});
+
 test('migrates copied v1 history to live history reference and preserves local replies', (t) => {
   const paths = fixture();
   t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
@@ -349,7 +376,7 @@ test('sendMessage routes osUser conversations through SuSessionManager.runInSess
   assert.equal(result.ok, true);
   assert.equal(result.assistantMessage.text, 'hi from bob');
   assert.equal(bridgedCall.username, 'bob');
-  assert.deepEqual(bridgedCall.argv, [service.pythonPath, pipelineRuntime, runtimePath, '--timeout', '660']);
+  assert.deepEqual(bridgedCall.argv, [service.pythonPath, pipelineRuntime, runtimePath, '--timeout', '1860']);
   assert.deepEqual(JSON.parse(bridgedCall.stdin), {
     action: 'send',
     prompt: 'hello as bob',
@@ -357,6 +384,7 @@ test('sendMessage routes osUser conversations through SuSessionManager.runInSess
     session_id: '',
     new_session: true,
     working_directory: sibling.workspace,
+    timeout: 1800,
     sandbox_mode: 'workspace-write'
   });
 });

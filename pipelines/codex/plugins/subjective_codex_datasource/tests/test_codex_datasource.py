@@ -219,6 +219,42 @@ class SubjectiveCodexDataSourceTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["status"], "timeout")
 
+    @patch("SubjectiveCodexDataSource.subprocess.run")
+    def test_per_message_timeout_overrides_the_connection_default(self, run):
+        # A big agentic ask can legitimately run past the connection's 10-minute default -
+        # the caller (Subjective Chat) can request a longer per-turn budget explicitly.
+        instance = self.datasource()
+        self.assertEqual(instance.timeout, 600)
+        self.ready(instance)
+        run.return_value = completed(
+            [],
+            stdout=event_lines(
+                {"type": "thread.started", "thread_id": "thread-1"},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}},
+            ),
+        )
+
+        instance.handle_message({"content": "build the whole thing", "timeout": 1800})
+
+        self.assertEqual(instance.timeout, 1800)
+        self.assertEqual(run.call_args.kwargs["timeout"], 1800)
+
+    @patch("SubjectiveCodexDataSource.subprocess.run")
+    def test_per_message_timeout_is_capped_so_it_cannot_wedge_the_subprocess_open(self, run):
+        instance = self.datasource()
+        self.ready(instance)
+        run.return_value = completed(
+            [],
+            stdout=event_lines(
+                {"type": "thread.started", "thread_id": "thread-1"},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}},
+            ),
+        )
+
+        instance.handle_message({"content": "hello", "timeout": 999999})
+
+        self.assertEqual(instance.timeout, 3600)
+
     def test_text_and_image_attachments_are_normalized(self):
         instance = self.datasource()
         files = [

@@ -270,6 +270,9 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
             attachments = normalized["files"]
             requested_session_id = normalized["session_id"]
             new_session = normalized["new_session"]
+            requested_working_directory = normalized["working_directory"]
+            requested_sandbox_mode = normalized["sandbox_mode"]
+            requested_timeout = normalized["timeout"]
 
             if not prompt and not attachments:
                 return self._error_result("invalid_request", "Message is empty.")
@@ -284,6 +287,30 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
                 self.session_id = None
             if requested_session_id:
                 self.session_id = requested_session_id
+            if requested_working_directory:
+                workspace = os.path.abspath(os.path.expanduser(requested_working_directory))
+                if not os.path.isdir(workspace):
+                    return self._error_result(
+                        "invalid_request", f"Working directory does not exist: {workspace}"
+                    )
+                self.working_directory = workspace
+            if requested_sandbox_mode:
+                if requested_sandbox_mode not in {
+                    "read-only",
+                    "workspace-write",
+                    "danger-full-access",
+                }:
+                    return self._error_result(
+                        "invalid_request",
+                        f"Unsupported sandbox mode: {requested_sandbox_mode}",
+                    )
+                self.sandbox_mode = requested_sandbox_mode
+            if requested_timeout:
+                # Caller (Subjective Chat) knows how big the ask is - a "generate a whole
+                # new app" turn legitimately needs far more than the connection's default
+                # 10 minutes. Capped at 1h so a bad value can't wedge the subprocess call
+                # open indefinitely.
+                self.timeout = min(requested_timeout, 3600)
 
             with self._prepared_attachments(attachments) as prepared:
                 effective_prompt = prompt
@@ -507,6 +534,8 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
         embedded_files: list[Any] = []
         session_id = ""
         new_session = False
+        working_directory = ""
+        sandbox_mode = ""
 
         if isinstance(message, dict):
             prompt_value = (
@@ -521,8 +550,14 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
                     embedded_files.extend(value)
             session_id = str(message.get("session_id") or "")
             new_session = self._coerce_bool(message.get("new_session", False))
+            working_directory = str(
+                message.get("working_directory") or message.get("workspace") or ""
+            ).strip()
+            sandbox_mode = str(message.get("sandbox_mode") or "").strip()
+            timeout = self._coerce_optional_int(message.get("timeout"), minimum=10)
         else:
             prompt = str(message or "")
+            timeout = None
 
         all_files = list(embedded_files)
         if isinstance(files, list):
@@ -532,6 +567,9 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
             "files": all_files,
             "session_id": session_id or None,
             "new_session": new_session,
+            "working_directory": working_directory,
+            "sandbox_mode": sandbox_mode,
+            "timeout": timeout,
         }
 
     @contextmanager
@@ -759,3 +797,15 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
         except (TypeError, ValueError):
             parsed = default
         return max(minimum, parsed)
+
+    @staticmethod
+    def _coerce_optional_int(value: Any, *, minimum: int) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed < minimum:
+            return None
+        return parsed
