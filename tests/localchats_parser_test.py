@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import sqlite3
 import sys
 import tempfile
 import types
@@ -134,6 +136,153 @@ class LocalChatsParserTest(unittest.TestCase):
 
         self.assertEqual(parsed["cmd"], command)
         self.assertEqual(parsed["workdir"], "/subjective")
+
+
+    def test_cursor_tab_name_from_composer_headers_beats_first_message(self):
+        composer_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        index = {}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "state.vscdb")
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE composerHeaders "
+                "(composerId TEXT PRIMARY KEY, workspaceId TEXT, createdAt INTEGER, "
+                "lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, "
+                "recency INTEGER, checkpointAt INTEGER, value TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO composerHeaders VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    composer_id,
+                    "ws",
+                    1,
+                    2,
+                    0,
+                    0,
+                    2,
+                    0,
+                    json.dumps({"type": "head", "composerId": composer_id, "name": "dashboard_agent"}),
+                ),
+            )
+            conn.commit()
+            conn.close()
+            self.datasource._ingest_cursor_db_tab_names(db_path, index)
+        self.assertEqual(index[composer_id]["name"], "dashboard_agent")
+
+        transcript_path = (
+            f"/home/goldenthinker/.cursor/projects/subjective/agent-transcripts/"
+            f"{composer_id}/{composer_id}.jsonl"
+        )
+        self.assertEqual(self.datasource._cursor_agent_id(transcript_path), composer_id)
+        annotated = self.datasource._annotate_cursor_agent_candidates(
+            [{"product": "cursor", "kind": "agent", "path": transcript_path}],
+            index,
+        )
+        self.assertEqual(annotated[0]["cursor_name"], "dashboard_agent")
+
+    def test_cursor_subagent_transcripts_are_dropped(self):
+        composer_id = "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"
+        path = (
+            f"/home/u/.cursor/projects/p/agent-transcripts/{composer_id}/subagents/child.jsonl"
+        )
+        discovered = self.datasource._annotate_cursor_agent_candidates(
+            [{"product": "cursor", "kind": "agent", "path": path}],
+            {composer_id: {"name": "Parent tab", "is_subagent": True}},
+        )
+        self.assertEqual(discovered, [])
+
+    def test_title_noise_skips_you_are_prompt_fragments(self):
+        self.assertTrue(self.datasource._is_title_noise("you a"))
+        self.assertTrue(self.datasource._is_title_noise("You are Cursor Grok"))
+        self.assertFalse(self.datasource._is_title_noise("dashboard_agent"))
+        self.assertEqual(
+            self.datasource._derive_title(
+                "chat.jsonl",
+                [
+                    {"role": "user", "text": "You are an AI coding assistant"},
+                    {"role": "user", "text": "Rename the chat list to tab names"},
+                ],
+            ),
+            "Rename the chat list to tab names",
+        )
+
+    def test_duplicate_tab_titles_get_disambiguator(self):
+        manifest = {
+            "sources": {
+                "a": {
+                    "tab_title": "Work",
+                    "title": "Work",
+                    "source_file": "/home/u/.cursor/projects/alpha-app/agent-transcripts/x/x.jsonl",
+                },
+                "b": {
+                    "tab_title": "Work",
+                    "title": "Work",
+                    "source_file": "/home/u/.cursor/projects/beta-app/agent-transcripts/y/y.jsonl",
+                },
+                "c": {
+                    "tab_title": "Keep me",
+                    "title": "Keep me",
+                    "source_file": "/home/u/.cursor/projects/p/agent-transcripts/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/subagents/child.jsonl",
+                },
+                "d": {
+                    "tab_title": "Composer twin",
+                    "title": "Composer twin",
+                    "source_file": "/tmp/state.vscdb#composer:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                },
+                "e": {
+                    "tab_title": "Composer twin",
+                    "title": "Composer twin",
+                    "source_file": "/home/u/.cursor/projects/p/agent-transcripts/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
+                },
+            }
+        }
+        self.datasource._drop_agent_jsonl_twins(manifest)
+        self.assertNotIn("c", manifest["sources"])
+        self.assertNotIn("e", manifest["sources"])
+        self.assertIn("d", manifest["sources"])
+        self.datasource._disambiguate_duplicate_titles(manifest)
+        titles = {record["title"] for record in manifest["sources"].values()}
+        self.assertIn("Work · alpha-app", titles)
+        self.assertIn("Work · beta-app", titles)
+
+    def test_apply_cursor_tab_names_overwrites_stale_first_message_titles(self):
+        jsonl_id = "11115350-aaaa-bbbb-cccc-dddddddddddd"
+        composer_id = "1caed09f-aaaa-bbbb-cccc-dddddddddddd"
+        manifest = {
+            "sources": {
+                "stale": {
+                    "tab_title": "you a",
+                    "title": "you a",
+                    "source_file": (
+                        f"/home/gordon/.cursor/projects/p/agent-transcripts/"
+                        f"{jsonl_id}/{jsonl_id}.jsonl"
+                    ),
+                },
+                "composer": {
+                    "tab_title": "the test is passed but I do not see any conversion",
+                    "title": "the test is passed but I do not see any conversion",
+                    "source_file": f"/tmp/state.vscdb#composer:{composer_id}",
+                },
+                "other": {
+                    "tab_title": "Keep derived",
+                    "title": "Keep derived",
+                    "source_file": "/home/u/.claude/projects/x/session.jsonl",
+                },
+            }
+        }
+        self.datasource._apply_cursor_tab_names(
+            manifest,
+            {
+                jsonl_id: {"name": "manager_new"},
+                composer_id: {"name": "VAI-238"},
+            },
+        )
+        self.assertEqual(manifest["sources"]["stale"]["tab_title"], "manager_new")
+        self.assertEqual(manifest["sources"]["composer"]["tab_title"], "VAI-238")
+        self.assertEqual(manifest["sources"]["other"]["tab_title"], "Keep derived")
+        self.datasource._disambiguate_duplicate_titles(manifest)
+        self.assertEqual(manifest["sources"]["stale"]["title"], "manager_new")
+        self.assertEqual(manifest["sources"]["composer"]["title"], "VAI-238")
 
 
 if __name__ == "__main__":

@@ -1,34 +1,126 @@
-/* Web-only layout override: the desktop app keeps Conversations and Accent in the left
-   sidebar (src/index.html, unchanged) - this web build moves both into content-grid,
-   after Users, stacked in a new .right-rail wrapper (Conversations filling the space,
-   Accent as a fixed-height footer below it). Doesn't touch styles.css (shared with the
-   desktop app and the mobile build) or any renderer.js logic - every element keeps its
-   original id/class, so renderer.js's DOM lookups and styles.css's existing per-element
-   rules (#conversationsPanel, .conversation-list, .accent-grid, etc.) keep working
-   unchanged. This file only repositions the grid cells and gives .right-rail the
-   right-hand-pane chrome (border/background/padding) .sidebar used to provide. */
+/* Web / dashboard iframe layout.
+   Desktop Electron keeps Conversations in the left sidebar (src/index.html).
+   This file only loads in the browser build. Inside the dashboard the iframe is
+   often <1040px, so styles.css hid Users and collapsed the grid — transcript
+   sat in a squeezed middle between two sidebars. Override that here. */
+
+.app-shell {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+/* Dashboard already has a left menu. Hide this app's brand column so the
+   transcript sits immediately to the right of that menu. */
+.sidebar {
+  display: none !important;
+}
 
 .content-grid {
-  grid-template-columns: minmax(0, 1fr) 230px 280px;
+  grid-template-columns: minmax(0, 1fr) 360px !important;
 }
 
 .right-rail {
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   background: #050505;
-  padding: 16px 14px;
+  padding: 12px 10px;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+}
+
+.right-rail .users-pane {
+  display: grid !important;
+  border-left: none;
+  background: transparent;
+  padding: 0;
+  flex: 0 0 auto;
+  max-height: 28%;
+}
+
+.right-rail .user-list {
+  max-height: 120px;
 }
 
 #conversationsPanel {
   min-height: 0;
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
 }
 
-#accentPanel {
-  flex: 0 0 auto;
+#conversationsPanel .conversation-browser {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#conversationsPanel .panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-collapse {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.panel-collapse::before {
+  content: "▾ ";
+}
+
+body.chats-collapsed .panel-collapse::before {
+  content: "▸ ";
+}
+
+body.chats-collapsed .conversation-browser {
+  display: none;
+}
+
+body.chats-collapsed .content-grid {
+  grid-template-columns: minmax(0, 1fr) 168px !important;
+}
+
+body.chats-collapsed .right-rail .users-pane {
+  max-height: none;
+  flex: 1 1 auto;
+}
+
+body.chats-collapsed .right-rail .user-list {
+  max-height: none;
+}
+
+@media (max-width: 1040px) {
+  body {
+    min-width: 0 !important;
+  }
+
+  .content-grid {
+    grid-template-columns: minmax(0, 1fr) 320px !important;
+  }
+
+  .users-pane {
+    display: grid !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .content-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .right-rail {
+    display: none;
+  }
 }

@@ -163,6 +163,7 @@
           <select id="llmProviderSelect">
             <option value="codex">Codex</option>
             <option value="claude">Claude</option>
+            <option value="cursor">Cursor</option>
           </select>
         </label>
         <label>
@@ -177,6 +178,18 @@
         <div class="settings-actions">
           <button type="submit" class="primary-button">Create channel</button>
         </div>
+      </form>
+    </dialog>
+    <dialog id="sessionPickerDialog" class="settings-dialog">
+      <form id="sessionPickerForm" class="settings-form" method="dialog">
+        <div class="settings-head">
+          <div>
+            <h3 id="sessionPickerTitle">Choose user session</h3>
+            <p id="sessionPickerSubtitle">This agent is not logged in for the current OS user. Pick whose CLI login to use.</p>
+          </div>
+          <button type="button" id="sessionPickerCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <div id="sessionPickerList" class="session-picker-list"></div>
       </form>
     </dialog>
     <script src="../assets/vendor/markdown-it.min.js"></script>

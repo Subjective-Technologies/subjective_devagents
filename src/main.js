@@ -556,22 +556,29 @@ function activateLlmIrcChannel(conversation) {
 // this function returns as soon as that decision is made, it does not block on the whole
 // (possibly minutes-long, human-interactive) connect flow.
 function continueConversationAsUser(target, username) {
-  if (!llmService.findConversation(target)) return { ok: false, error: 'Conversation was not found.' };
+  const conversation = llmService.findConversation(target);
+  if (!conversation) return { ok: false, error: 'Conversation was not found.' };
   if (!isValidUsername(username)) return { ok: false, error: 'Invalid username.' };
+  const provider = conversation.provider;
+  const loginProviders = new Set(['codex', 'claude', 'cursor']);
 
-  const existing = suSessionManager.getStatus(username);
-  if (existing.status === 'ready') {
-    return { ok: true, ...switchConversationOwner(target, username) };
+  const finish = () => switchConversationOwner(target, username);
+  const connect = () => suSessionManager.ensureSession(username)
+    .then(() => (loginProviders.has(provider)
+      ? suSessionManager.ensureProviderLogin(username, provider)
+      : null))
+    .then(finish)
+    .catch((error) => {
+      log('error', 'Failed to connect as OS user', { username, provider, message: error.message });
+    });
+
+  if (suSessionManager.isProviderReady(username, provider)) {
+    return { ok: true, ...finish() };
   }
 
-  // Reopen/reattach the viewer if a connect is already in flight (e.g. the person closed
-  // the terminal window early) rather than spawning a second `su` for the same user.
   terminalWindow.openTerminalWindow(username, { parent: mainWindow, suSessionManager });
-  suSessionManager.ensureSession(username)
-    .then(() => switchConversationOwner(target, username))
-    .catch((error) => {
-      log('error', 'Failed to connect as OS user', { username, message: error.message });
-    });
+  connect();
+  const existing = suSessionManager.getStatus(username);
   return { ok: true, status: existing.status || 'connecting' };
 }
 
@@ -664,6 +671,15 @@ async function answerLlmMessage(target, text, from = currentNick, mirrorToIrc = 
     } else {
       const errorText = llmErrorText(label, response);
       emit('system', { target, text: errorText });
+      if (llmService._isAuthFailure(response)) {
+        emit('llm-choose-session', {
+          target,
+          provider,
+          text,
+          currentUser: response.sessions?.currentUser,
+          sessions: response.sessions?.users || []
+        });
+      }
       if (mirrorToIrc && conversation.ircChannel) sendIrcText(conversation.ircChannel, errorText);
     }
     return response;
@@ -1260,6 +1276,9 @@ app.whenReady().then(() => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('switchuser:event', payload);
   });
   suSessionManager.on('provider-status', (event) => {
+    const payload = { type: 'status', ...event };
+    const termWin = terminalWindow.getTerminalWindow(event.username);
+    if (termWin) termWin.webContents.send('switchuser:event', payload);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('switchuser:event', { type: 'provider-status', ...event });
   });
   llmService = new LlmService({
@@ -1308,9 +1327,13 @@ app.whenReady().then(() => {
     return { ok: Boolean(result?.ok), focusTarget: result?.focusTarget || '' };
   });
 
-  ipcMain.handle('llm:list-conversations', () => {
+  ipcMain.handle('llm:list-conversations', (_event, payload = {}) => {
     try {
-      return { ok: true, conversations: llmService.listConversations() };
+      const conversations = llmService.listConversations({
+        query: String(payload?.q || payload?.query || '').trim(),
+        limit: payload?.limit == null ? 200 : payload.limit
+      });
+      return { ok: true, conversations, total: conversations.total ?? conversations.length };
     } catch (error) {
       log('error', 'Failed to list LLM conversations', { message: error.message, stack: error.stack });
       return { ok: false, error: error.message, conversations: [] };
@@ -1368,6 +1391,10 @@ app.whenReady().then(() => {
     return { ok: Boolean(result.success), ...result };
   });
 
+  ipcMain.handle('llm:sessions', async (_event, payload) => {
+    return llmService.listProviderSessions(payload?.provider);
+  });
+
   ipcMain.handle('llm:send-message', async (_event, payload) => {
     const target = String(payload?.target || '');
     const text = String(payload?.text || '').trim();
@@ -1387,6 +1414,15 @@ app.whenReady().then(() => {
           if (conversation?.ircChannel) sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
         } else {
           emit('system', { target, text: llmErrorText(label, response) });
+          if (llmService._isAuthFailure(response)) {
+            emit('llm-choose-session', {
+              target,
+              provider,
+              text,
+              currentUser: response.sessions?.currentUser,
+              sessions: response.sessions?.users || []
+            });
+          }
         }
         return response;
       } finally {

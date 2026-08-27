@@ -32,11 +32,11 @@ function parsePasswdText(text) {
     .filter(Boolean);
 }
 
-function filterHumanUsers(entries, { excludeUsername = '' } = {}) {
+function filterHumanUsers(entries, { excludeUsername = '', includeExcluded = false } = {}) {
   return entries
     .filter((entry) => entry.uid >= MIN_UID && entry.uid <= MAX_UID)
     .filter((entry) => !NOLOGIN_SHELLS.has(entry.shell))
-    .filter((entry) => entry.username !== excludeUsername)
+    .filter((entry) => includeExcluded || entry.username !== excludeUsername)
     .sort((a, b) => a.username.localeCompare(b.username));
 }
 
@@ -81,15 +81,19 @@ async function listSystemUsers(options = {}) {
   if (process.platform !== 'linux') {
     return { ok: false, users: [], error: 'Switching OS users is only supported on Linux.' };
   }
-  const excludeUsername = options.excludeUsername || os.userInfo().username;
+  const excludeUsername = options.includeCurrent ? '' : (options.excludeUsername || os.userInfo().username);
   const read = await readPasswdEntries(options);
   if (!read.ok) return { ok: false, users: [], error: read.error };
   const entries = parsePasswdText(read.text);
-  const users = filterHumanUsers(entries, { excludeUsername }).map(({ username, uid, home, gecos }) => ({
+  const users = filterHumanUsers(entries, {
+    excludeUsername,
+    includeExcluded: Boolean(options.includeCurrent)
+  }).map(({ username, uid, home, gecos }) => ({
     username,
     uid,
     home,
-    gecos
+    gecos,
+    current: username === os.userInfo().username
   }));
   return { ok: true, users };
 }

@@ -78,15 +78,41 @@ function createApp(core, options = {}) {
     '/terminal-renderer.js': path.join(srcDir, 'terminal-renderer.js')
   };
 
+  // Who may embed this app in an iframe. Needed because the dashboard's
+  // ST_BACKEND -> My Agents page frames it from a different origin
+  // (dashboard.subjectivetechnologies.com), while a zone-wide Cloudflare rule
+  // stamps `X-Frame-Options: SAMEORIGIN` onto every HTML response in
+  // subjectivetechnologies.com — which alone forbids that.
+  //
+  // CSP frame-ancestors takes precedence over X-Frame-Options in any browser
+  // that supports it, so sending this header is what actually allows the
+  // embed. Same approach taggy.subjectivetechnologies.com already uses to be
+  // embedded by the same dashboard.
+  //
+  // It has to be an HTTP header: frame-ancestors is explicitly ignored when
+  // delivered via <meta http-equiv>, so the CSP already in web/index.html
+  // cannot express this.
+  const FRAME_ANCESTORS =
+    "frame-ancestors 'self' https://dashboard.subjectivetechnologies.com https://dashboard.worktwins.com";
+
+  function pathIsAsset(filePath) {
+    return filePath.startsWith(assetsDir + path.sep);
+  }
+
   function sendFile(res, filePath) {
     fs.readFile(filePath, (error, data) => {
       if (error) return notFound(res);
       const ext = path.extname(filePath).toLowerCase();
-      res.writeHead(200, {
+      const headers = {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
         'Content-Length': data.length,
-        'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300'
-      });
+        // no-store everywhere: index.html, renderer.js and layout.css ship as a
+        // matched set; a cached renderer.js against a newer index.html crashes
+        // on missing DOM nodes and renders nothing. Files are tiny and local.
+        'Cache-Control': pathIsAsset(filePath) ? 'public, max-age=300' : 'no-store'
+      };
+      if (ext === '.html') headers['Content-Security-Policy'] = FRAME_ANCESTORS;
+      res.writeHead(200, headers);
       res.end(data);
     });
   }
@@ -170,9 +196,14 @@ function createApp(core, options = {}) {
       const result = core.executeSlashCommand(body?.command || '', target);
       return { ok: Boolean(result?.ok), focusTarget: result?.focusTarget || '' };
     },
-    'GET /api/llm/conversations': async () => {
+    'GET /api/llm/conversations': async (query) => {
       try {
-        return { ok: true, conversations: core.llmService.listConversations() };
+        const limit = Math.min(500, Math.max(1, Number(query.limit || 200) || 200));
+        const conversations = core.llmService.listConversations({
+          query: String(query.q || '').trim(),
+          limit
+        });
+        return { ok: true, conversations, total: conversations.total ?? conversations.length };
       } catch (error) {
         return { ok: false, error: error.message, conversations: [] };
       }
@@ -215,6 +246,10 @@ function createApp(core, options = {}) {
     'GET /api/llm/status': async (query) => {
       const result = await core.llmService.status(query.provider);
       return { ok: Boolean(result.success), ...result };
+    },
+    'GET /api/llm/sessions': async (query) => {
+      const listed = await core.llmService.listProviderSessions(query.provider);
+      return { ok: true, ...listed };
     },
     'POST /api/llm/send-message': async (_query, body) => {
       const target = String(body?.target || '');
@@ -331,15 +366,38 @@ if (require.main === module) {
   server.listen(PORT, BIND_HOST, () => {
     defaultLog('info', 'Subjective Chat web server listening', { host: BIND_HOST, port: PORT, appHome: core.applicationHome });
     core.connectIrc();
-    core.llmService.refreshHistory().then((result) => {
-      if (!result.success) {
-        defaultLog('error', 'Local chat history pipeline failed', { status: result.status, error: result.error });
-        return;
-      }
+    // Serve whatever the manifest already has right away (no blank sidebar),
+    // then run the history pipeline. The pipeline is incremental: it walks
+    // candidates newest-first and skips manifest-fingerprinted unchanged files,
+    // so a run with an up-to-date archive costs seconds — never the full 38k
+    // re-import that used to OOM. It also re-runs on a timer so chats written
+    // while the server is up (new Cursor/Codex/Claude sessions, any user home
+    // readable to this uid) appear without a restart.
+    setImmediate(() => {
       core._broadcast('llm-history-refreshed', { count: core.llmService.listConversations().length });
-    }).catch((error) => {
-      defaultLog('error', 'Local chat history pipeline crashed', { message: error.message, stack: error.stack });
     });
+    let refreshing = false;
+    const refreshHistory = async (reason) => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const result = await core.llmService.refreshHistory();
+        if (!result.success) {
+          defaultLog('error', 'Local chat history pipeline failed', { reason, status: result.status, error: result.error });
+          return;
+        }
+        const count = core.llmService.listConversations().length;
+        defaultLog('info', 'Local chat history refreshed', { reason, count });
+        core._broadcast('llm-history-refreshed', { count });
+      } catch (error) {
+        defaultLog('error', 'Local chat history pipeline crashed', { reason, message: error.message, stack: error.stack });
+      } finally {
+        refreshing = false;
+      }
+    };
+    refreshHistory('startup');
+    const refreshEveryMs = Number(process.env.SUBJECTIVE_CHAT_HISTORY_REFRESH_MS || 10 * 60 * 1000);
+    if (refreshEveryMs > 0) setInterval(() => refreshHistory('interval'), refreshEveryMs).unref();
   });
 
   function shutdown() {

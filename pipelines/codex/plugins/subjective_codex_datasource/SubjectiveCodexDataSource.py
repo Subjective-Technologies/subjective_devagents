@@ -50,8 +50,11 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
             connection.get("approve_for_me", connection.get("full_auto", False))
         )
         self.enable_search = self._coerce_bool(connection.get("enable_search", False))
+        # Default True: resumed history chats often point at workspaces that are
+        # not git repos (or no longer exist); without this flag `codex exec`
+        # refuses with "Not inside a trusted directory".
         self.skip_git_repo_check = self._coerce_bool(
-            connection.get("skip_git_repo_check", False)
+            connection.get("skip_git_repo_check", True)
         )
         self.resume_session = self._coerce_bool(
             connection.get("resume_session", True)

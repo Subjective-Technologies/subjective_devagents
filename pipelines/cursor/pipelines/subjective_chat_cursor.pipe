@@ -1,0 +1,17 @@
+{
+  "description": "Interactive Cursor CLI conversation pipeline for Subjective Chat.",
+  "name": "subjective_chat_cursor",
+  "nodes": [
+    {
+      "class": "SubjectiveCursorDataSource",
+      "connection_name": "subjective_chat_cursor",
+      "inputs": {},
+      "node_id": "cursor",
+      "send_to_context": true
+    }
+  ],
+  "version": 2,
+  "workbench": {
+    "connections": []
+  }
+}

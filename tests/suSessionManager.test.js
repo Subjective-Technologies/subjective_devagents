@@ -160,8 +160,9 @@ test('ensureProviderLogin runs the OAuth login command and polls status until it
       'command -v codex': () => ({ output: '/usr/bin/codex\n', exitCode: 0 }),
       'codex login status': () => {
         statusCallCount += 1;
-        return statusCallCount >= 3 ? { exitCode: 0 } : { exitCode: 1, output: 'Not logged in\n' };
-      }
+        return statusCallCount >= 2 ? { exitCode: 0 } : { exitCode: 1, output: 'Not logged in\n' };
+      },
+      'codex login': () => ({ output: 'Logged in\n', exitCode: 0 })
     }
   });
   const manager = managerWithFakePty(pty);
@@ -174,7 +175,7 @@ test('ensureProviderLogin runs the OAuth login command and polls status until it
 
   const result = await manager.ensureProviderLogin('bob', 'codex');
   assert.equal(result.status, PROVIDER_STATUS.READY);
-  assert.ok(statusCallCount >= 3);
+  assert.ok(statusCallCount >= 2);
 });
 
 test('ensureProviderLogin fails clearly when the CLI is not on the target user\'s PATH', async () => {
@@ -276,4 +277,14 @@ test('attachViewer supports multiple simultaneous viewers; detaching one leaves 
 
   assert.equal(first.length, 0, 'detached viewer must receive nothing further');
   assert.ok(second.length > 0, 'the still-attached viewer must keep receiving data');
+});
+
+test('su spawn env does not leak this process HOME/USER (cursor-agent would write into the wrong ~/.cursor)', () => {
+  const manager = new SuSessionManager({ ptyFactory: () => ({ onData() {}, onExit() {}, write() {}, kill() {}, resize() {} }) });
+  const env = manager._suSpawnEnv();
+  assert.equal(env.HOME, undefined);
+  assert.equal(env.USER, undefined);
+  assert.equal(env.LOGNAME, undefined);
+  assert.equal(env.XDG_RUNTIME_DIR, undefined);
+  assert.ok(env.PATH);
 });

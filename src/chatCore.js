@@ -22,6 +22,8 @@ const { LlmService, providerLabel } = require('./llmService');
 const { listSystemUsers, isValidUsername } = require('./systemUsers');
 const { SuSessionManager } = require('./suSessionManager');
 
+const LOGIN_PROVIDERS = new Set(['codex', 'claude', 'cursor']);
+
 const DEFAULT_CONNECTION = {
   name: 'Subjective LAN',
   host: '192.168.0.250',
@@ -82,6 +84,7 @@ class ChatCore extends EventEmitter {
       suSessionManager: this.suSessionManager
     });
     for (const conversation of this.llmService.listConversations().filter((item) => item.activeOnIrc)) {
+      if (!conversation.ircChannel) continue;
       this.activeLlmIrcChannels.set(conversation.ircChannel.toLowerCase(), conversation.target);
     }
   }
@@ -913,8 +916,20 @@ class ChatCore extends EventEmitter {
         this._broadcast('llm-conversation', { conversation: response.conversation });
         if (mirrorToIrc && conversation.ircChannel) this.sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
       } else {
+        if (this.llmService._isAuthFailure(response) && !response.sessions) {
+          response.sessions = await this.llmService.listProviderSessions(provider);
+        }
         const errorText = this.llmErrorText(label, response);
         this._broadcast('system', { target, text: errorText });
+        if (this.llmService._isAuthFailure(response)) {
+          this._broadcast('llm-choose-session', {
+            target,
+            provider,
+            text,
+            currentUser: response.sessions?.currentUser,
+            sessions: response.sessions?.users || []
+          });
+        }
         if (mirrorToIrc && conversation.ircChannel) this.sendIrcText(conversation.ircChannel, errorText);
       }
       return response;
@@ -939,6 +954,15 @@ class ChatCore extends EventEmitter {
           if (conversation?.ircChannel) this.sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
         } else {
           this._broadcast('system', { target, text: this.llmErrorText(label, response) });
+          if (this.llmService._isAuthFailure(response)) {
+            this._broadcast('llm-choose-session', {
+              target,
+              provider,
+              text,
+              currentUser: response.sessions?.currentUser,
+              sessions: response.sessions?.users || []
+            });
+          }
         }
         return response;
       } finally {
@@ -970,24 +994,30 @@ class ChatCore extends EventEmitter {
   }
 
   continueConversationAsUser(target, username) {
-    if (!this.llmService.findConversation(target)) return { ok: false, error: 'Conversation was not found.' };
+    const conversation = this.llmService.findConversation(target);
+    if (!conversation) return { ok: false, error: 'Conversation was not found.' };
     if (!isValidUsername(username)) return { ok: false, error: 'Invalid username.' };
+    const provider = conversation.provider;
 
-    const existing = this.suSessionManager.getStatus(username);
-    if (existing.status === 'ready') {
-      return { ok: true, ...this.switchConversationOwner(target, username) };
+    const finish = () => this.switchConversationOwner(target, username);
+    const connect = () => this.suSessionManager.ensureSession(username)
+      .then(() => (LOGIN_PROVIDERS.has(provider)
+        ? this.suSessionManager.ensureProviderLogin(username, provider)
+        : null))
+      .then(finish)
+      .catch((error) => {
+        this.log('error', 'Failed to connect as OS user', { username, provider, message: error.message });
+        this._broadcast('switchuser-status', { username, status: 'error', error: error.message });
+        this._broadcast('system', { target, text: `Could not continue as ${username}: ${error.message}` });
+      });
+
+    if (this.suSessionManager.isProviderReady(username, provider)) {
+      return { ok: true, ...finish() };
     }
 
-    // No native terminal window here (this is what main.js's terminalWindow.js is for) -
-    // tell every connected frontend a login is needed so a browser tab can show its own
-    // in-page terminal panel, wired to the same live pty via switchuser-pty-data events
-    // (see webServer.js attaching a viewer below).
-    this._broadcast('switchuser-terminal-needed', { username });
-    this.suSessionManager.ensureSession(username)
-      .then(() => this.switchConversationOwner(target, username))
-      .catch((error) => {
-        this.log('error', 'Failed to connect as OS user', { username, message: error.message });
-      });
+    this._broadcast('switchuser-terminal-needed', { username, provider });
+    connect();
+    const existing = this.suSessionManager.getStatus(username);
     return { ok: true, status: existing.status || 'connecting' };
   }
 
@@ -1028,9 +1058,14 @@ class ChatCore extends EventEmitter {
     const users = usersResult.ok ? usersResult.users : [];
     const statuses = new Map(this.suSessionManager.listStatuses().map((entry) => [entry.username, entry]));
 
+    const listed = await require('./providerSessions').listProviderSessions();
+    const provider = conversation.provider;
+    const byUser = new Map((listed.users || []).map((user) => [user.username, user.providers?.[provider] || {}]));
     const candidates = users.map((user) => ({
       username: user.username,
-      status: statuses.get(user.username)?.status || 'idle'
+      status: statuses.get(user.username)?.status || 'idle',
+      ready: Boolean(byUser.get(user.username)?.ready),
+      unknown: Boolean(byUser.get(user.username)?.unknown)
     }));
     const activeSessions = [...statuses.values()]
       .filter((entry) => entry.status !== 'idle' && entry.status !== 'disconnected')

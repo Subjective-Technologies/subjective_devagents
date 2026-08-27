@@ -23,6 +23,8 @@
     switch (status.status) {
       case 'connecting': return `Connecting as ${username}…`;
       case 'awaiting-password': return `Type ${username}'s password and press Enter.`;
+      case 'checking-login': return `Checking whether ${username} is signed in to the agent CLI…`;
+      case 'awaiting-oauth': return `Sign in to the agent CLI as ${username}. Open the URL in this window if one appears.`;
       case 'ready': return `Connected as ${username}.`;
       case 'auth-failed': return status.error ? `${status.error} — try again.` : 'Authentication failed — try again.';
       case 'error': return status.error || 'Something went wrong.';

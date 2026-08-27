@@ -30,6 +30,35 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
     MAX_FILE_BYTES = 500 * 1024 * 1024
     MANIFEST_FILENAME = ".subjective_localchats_manifest.json"
     EXTRACTOR_VERSION = 4
+    PREAMBLE_TAG_PREFIXES = (
+        "<environment_context",
+        "<user_instructions",
+        "<system-reminder",
+        "<system>",
+        "<tool_result",
+        "<tool_use",
+        "<context>",
+        "<metadata",
+        "<timestamp",
+        "<external_links",
+        "<image_files",
+        "<system_notification",
+    )
+    _USER_QUERY_RE = re.compile(
+        r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL | re.IGNORECASE
+    )
+    _TIMESTAMP_RE = re.compile(
+        r"<timestamp>.*?</timestamp>", re.DOTALL | re.IGNORECASE
+    )
+    _TAG_RE = re.compile(r"<[^>]+>")
+    _UUID_RE = re.compile(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        re.IGNORECASE,
+    )
+    _TITLE_NOISE_RE = re.compile(
+        r"^(you are |you're |you’re |we are |i am an |i am a |<)",
+        re.IGNORECASE,
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -73,6 +102,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         )
         self._codex_thread_index: Optional[Dict[str, Dict[str, Any]]] = None
         self._codex_thread_index_cache_key: Optional[Tuple[str, ...]] = None
+        self._cursor_tab_index: Optional[Dict[str, Dict[str, Any]]] = None
         self._active_user_homes: Optional[List[Dict[str, str]]] = None
 
     @classmethod
@@ -231,19 +261,38 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         )
         self._codex_thread_index = None
         self._codex_thread_index_cache_key = None
+        self._cursor_tab_index = None
         max_files = self._to_int(request.get("max_files", self.max_files), default=self.max_files)
 
-        file_candidates = self._discover_candidate_files(additional_paths, warnings)
-        cursor_composer_candidates = self._discover_cursor_composer_candidates(warnings)
+        tab_index = self._load_cursor_tab_index()
+        file_candidates = self._annotate_cursor_agent_candidates(
+            self._discover_candidate_files(additional_paths, warnings),
+            tab_index,
+        )
+        cursor_composer_candidates = self._annotate_cursor_composer_candidates(
+            self._discover_cursor_composer_candidates(warnings),
+            tab_index,
+        )
+        composer_ids = {
+            str(item.get("cursor_composer_id") or "").lower()
+            for item in cursor_composer_candidates
+            if item.get("cursor_composer_id")
+        }
         combined: List[Tuple[float, Dict[str, str]]] = []
-        for item in file_candidates:
-            combined.append((self._safe_mtime(item.get("path", "")), item))
         for item in cursor_composer_candidates:
+            ums = self._safe_float(item.get("cursor_updated_ms"), 0.0)
             cms = self._safe_float(item.get("cursor_created_ms"), 0.0)
-            score = cms / 1000.0
+            score = (ums or cms) / 1000.0
             if score <= 0:
                 score = self._safe_mtime(item.get("path", "") or "")
             combined.append((score, item))
+        for item in file_candidates:
+            agent_id = str(item.get("cursor_agent_id") or "").lower()
+            if agent_id and agent_id in composer_ids:
+                # Same Cursor tab already covered by composerData. Keep the
+                # tab-named composer row; drop the first-message jsonl twin.
+                continue
+            combined.append((self._safe_mtime(item.get("path", "")), item))
         combined.sort(key=lambda pair: pair[0], reverse=True)
         candidates = [pair[1] for pair in combined]
 
@@ -258,10 +307,18 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                 source_file = self._candidate_source_file(candidate)
                 fingerprint = self._candidate_fingerprint(candidate)
                 if self._is_candidate_unchanged(export_folder, manifest, source_file, fingerprint):
-                    skipped_unchanged += 1
-                    continue
+                    self._touch_manifest_activity(manifest, source_file, candidate, fingerprint)
+                    stored_title = str(
+                        ((manifest.get("sources") or {}).get(self._manifest_key(source_file)) or {}).get("title")
+                        or ""
+                    )
+                    if candidate.get("cursor_name") or not self._is_title_noise(stored_title):
+                        skipped_unchanged += 1
+                        continue
 
-                if candidate.get("cursor_composer_id"):
+                if candidate.get("kind") == "composer" or (
+                    candidate.get("cursor_composer_id") and "state.vscdb" in (candidate.get("path") or "")
+                ):
                     transcript = self._parse_cursor_composer_session(candidate)
                 else:
                     transcript = self._parse_candidate(candidate)
@@ -285,6 +342,9 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                 warnings.append(warning)
                 BBLogger.log(warning)
 
+        self._drop_agent_jsonl_twins(manifest)
+        self._apply_cursor_tab_names(manifest, tab_index)
+        self._disambiguate_duplicate_titles(manifest)
         self._save_incremental_manifest(export_folder, manifest, warnings)
 
         BBLogger.log(
@@ -309,6 +369,9 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                 if not os.path.isfile(path):
                     continue
                 if not self._is_supported_file(path):
+                    continue
+                normalized = path.replace("\\", "/")
+                if "/agent-transcripts/" in normalized and "/subagents/" in normalized:
                     continue
                 try:
                     if os.path.getsize(path) > self.MAX_FILE_BYTES:
@@ -470,10 +533,24 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             source_user = record.get("source_user") or self._user_label_for_home(home)
             paths = [
                 os.path.join(home, "AppData", "Roaming", "Cursor", "User"),
-                os.path.join(home, ".config", "Cursor", "User"),
                 os.path.join(home, "Library", "Application Support", "Cursor", "User"),
                 os.path.join(home, ".cursor-server", "data", "User"),
             ]
+            config_dir = os.path.join(home, ".config")
+            try:
+                config_names = os.listdir(config_dir) if os.path.isdir(config_dir) else []
+            except OSError:
+                config_names = []
+            for name in config_names:
+                if name.lower().startswith("cursor"):
+                    paths.append(os.path.join(config_dir, name, "User"))
+            if not any(
+                os.path.normcase(os.path.normpath(path)).endswith(
+                    os.path.normcase(os.path.join(".config", "Cursor", "User"))
+                )
+                for path in paths
+            ):
+                paths.append(os.path.join(home, ".config", "Cursor", "User"))
             if os.path.normcase(os.path.normpath(home)) == os.path.normcase(os.path.normpath(current_home)):
                 appdata = os.environ.get("APPDATA", "")
                 if appdata:
@@ -506,6 +583,366 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                     }
                 )
         return paths
+
+    def _cursor_all_state_db_paths(self) -> List[Dict[str, str]]:
+        paths: List[Dict[str, str]] = []
+        seen: set = set()
+        for base in self._cursor_user_base_dirs():
+            records = [
+                os.path.join(base["path"], "globalStorage", "state.vscdb"),
+            ]
+            workspace_root = os.path.join(base["path"], "workspaceStorage")
+            try:
+                workspace_ids = os.listdir(workspace_root) if os.path.isdir(workspace_root) else []
+            except OSError:
+                workspace_ids = []
+            for workspace_id in workspace_ids:
+                records.append(os.path.join(workspace_root, workspace_id, "state.vscdb"))
+            for db_path in records:
+                norm = os.path.normcase(os.path.normpath(db_path))
+                if norm in seen or not os.path.isfile(db_path):
+                    continue
+                seen.add(norm)
+                paths.append(
+                    {
+                        "path": db_path,
+                        "source_user": base.get("source_user", ""),
+                        "source_home": base.get("source_home", ""),
+                    }
+                )
+        return paths
+
+    def _load_cursor_tab_index(self) -> Dict[str, Dict[str, Any]]:
+        cached = getattr(self, "_cursor_tab_index", None)
+        if cached is not None:
+            return cached
+        if not getattr(self, "include_cursor", True):
+            self._cursor_tab_index = {}
+            return {}
+        index: Dict[str, Dict[str, Any]] = {}
+        for db_record in self._cursor_all_state_db_paths():
+            self._ingest_cursor_db_tab_names(db_record.get("path") or "", index)
+        self._cursor_tab_index = index
+        return index
+
+    def _ingest_cursor_db_tab_names(self, db_path: str, index: Dict[str, Dict[str, Any]]) -> None:
+        if not db_path or not os.path.isfile(db_path):
+            return
+        uri = f"file:{db_path.replace(os.sep, '/')}?mode=ro"
+        try:
+            conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+        except sqlite3.Error:
+            return
+        try:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if "composerHeaders" in tables:
+                try:
+                    rows = conn.execute(
+                        "SELECT composerId, lastUpdatedAt, recency, isSubagent, value FROM composerHeaders"
+                    )
+                except sqlite3.Error:
+                    rows = []
+                for composer_id, updated, recency, is_subagent, raw in rows:
+                    cid = str(composer_id or "").strip().lower()
+                    if not cid:
+                        continue
+                    payload: Dict[str, Any] = {}
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", errors="ignore")
+                    if isinstance(raw, str) and raw[:1] in "{[":
+                        try:
+                            parsed = json.loads(raw)
+                        except (json.JSONDecodeError, TypeError):
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            payload = parsed
+                    name = self._cursor_display_title(
+                        str(payload.get("name") or payload.get("title") or "")
+                    )
+                    updated_ms = 0.0
+                    for value in (updated, recency, payload.get("lastUpdatedAt"), payload.get("createdAt")):
+                        if isinstance(value, (int, float)) and value > updated_ms:
+                            updated_ms = float(value)
+                    self._remember_cursor_tab(
+                        index,
+                        cid,
+                        name,
+                        updated_ms,
+                        is_subagent=bool(is_subagent) or bool(payload.get("isBestOfNSubcomposer")),
+                    )
+            if "ItemTable" in tables:
+                for key in ("composer.composerHeaders", "composer.composerData"):
+                    try:
+                        row = conn.execute("SELECT value FROM ItemTable WHERE key = ?", (key,)).fetchone()
+                    except sqlite3.Error:
+                        row = None
+                    if not row or row[0] is None:
+                        continue
+                    raw = row[0]
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", errors="ignore")
+                    try:
+                        payload = json.loads(raw) if isinstance(raw, str) else None
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    composers = payload.get("allComposers") if isinstance(payload, dict) else None
+                    if not isinstance(composers, list):
+                        continue
+                    for item in composers:
+                        if not isinstance(item, dict):
+                            continue
+                        cid = str(item.get("composerId") or "").strip().lower()
+                        if not cid:
+                            continue
+                        name = self._cursor_display_title(
+                            str(item.get("name") or item.get("title") or "")
+                        )
+                        updated_ms = 0.0
+                        for value in (item.get("lastUpdatedAt"), item.get("createdAt")):
+                            if isinstance(value, (int, float)) and value > updated_ms:
+                                updated_ms = float(value)
+                        self._remember_cursor_tab(
+                            index,
+                            cid,
+                            name,
+                            updated_ms,
+                            is_subagent=bool(item.get("isBestOfNSubcomposer") or item.get("isSubagent")),
+                        )
+            if "cursorDiskKV" in tables:
+                try:
+                    cur = conn.execute(
+                        "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'"
+                    )
+                except sqlite3.Error:
+                    cur = []
+                for key, raw in cur:
+                    cid = ""
+                    if isinstance(key, str) and key.startswith("composerData:"):
+                        cid = key.split(":", 1)[1].strip().lower()
+                    payload: Dict[str, Any] = {}
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", errors="ignore")
+                    if isinstance(raw, str) and raw[:1] in "{[":
+                        try:
+                            parsed = json.loads(raw)
+                        except (json.JSONDecodeError, TypeError):
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            payload = parsed
+                    cid = cid or str(payload.get("composerId") or "").strip().lower()
+                    if not cid:
+                        continue
+                    name = self._cursor_display_title(
+                        str(payload.get("name") or payload.get("title") or "")
+                    )
+                    if not name:
+                        continue
+                    updated_ms = 0.0
+                    for value in (payload.get("lastUpdatedAt"), payload.get("createdAt")):
+                        if isinstance(value, (int, float)) and value > updated_ms:
+                            updated_ms = float(value)
+                    self._remember_cursor_tab(index, cid, name, updated_ms, is_subagent=False)
+        finally:
+            conn.close()
+
+    def _remember_cursor_tab(
+        self,
+        index: Dict[str, Dict[str, Any]],
+        composer_id: str,
+        name: str,
+        updated_ms: float,
+        is_subagent: bool = False,
+    ) -> None:
+        current = index.get(composer_id) or {}
+        if is_subagent:
+            current["is_subagent"] = True
+        current_updated = self._safe_float(current.get("updated_ms"), 0.0)
+        if name and (not current.get("name") or updated_ms >= current_updated):
+            current["name"] = name
+            current["updated_ms"] = updated_ms
+        elif "updated_ms" not in current:
+            current["updated_ms"] = updated_ms
+        index[composer_id] = current
+
+    def _cursor_agent_id(self, path: str) -> str:
+        normalized = (path or "").replace("\\", "/")
+        if "/agent-transcripts/" not in normalized:
+            return ""
+        tail = normalized.split("/agent-transcripts/", 1)[-1]
+        match = self._UUID_RE.search(tail)
+        return match.group(0).lower() if match else ""
+
+    def _annotate_cursor_agent_candidates(
+        self,
+        discovered: List[Dict[str, str]],
+        tab_index: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, str]]:
+        annotated: List[Dict[str, str]] = []
+        for item in discovered:
+            path = item.get("path") or ""
+            normalized = path.replace("\\", "/")
+            if "/subagents/" in normalized:
+                continue
+            agent_id = self._cursor_agent_id(path)
+            if not agent_id:
+                annotated.append(item)
+                continue
+            info = tab_index.get(agent_id) or {}
+            if info.get("is_subagent"):
+                continue
+            clone = dict(item)
+            clone["cursor_agent_id"] = agent_id
+            name = self._cursor_display_title(str(info.get("name") or ""))
+            if name:
+                clone["cursor_name"] = name
+                updated_ms = self._safe_float(info.get("updated_ms"), 0.0)
+                if updated_ms > 0:
+                    clone["cursor_updated_ms"] = str(int(updated_ms))
+            annotated.append(clone)
+        return annotated
+
+    def _annotate_cursor_composer_candidates(
+        self,
+        discovered: List[Dict[str, str]],
+        tab_index: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, str]]:
+        annotated: List[Dict[str, str]] = []
+        for item in discovered:
+            cid = str(item.get("cursor_composer_id") or "").strip().lower()
+            info = tab_index.get(cid) or {}
+            if cid and info.get("is_subagent"):
+                continue
+            clone = dict(item)
+            if cid:
+                clone["cursor_composer_id"] = cid
+            name = self._cursor_display_title(str(info.get("name") or clone.get("cursor_name") or ""))
+            if name:
+                clone["cursor_name"] = name
+            annotated.append(clone)
+        return annotated
+
+    def _cursor_display_title(self, text: str) -> str:
+        stripped = (text or "").strip()
+        if not stripped:
+            return ""
+        if "<" in stripped:
+            stripped = self._clean_chat_title(stripped)
+        return " ".join(stripped.split())[:80].strip()
+
+    def _is_title_noise(self, text: str) -> bool:
+        stripped = (text or "").strip()
+        if not stripped:
+            return True
+        if self._is_preamble_text(stripped):
+            return True
+        if self._TITLE_NOISE_RE.match(stripped):
+            return True
+        collapsed = " ".join(stripped.split())
+        return len(collapsed) <= 6 and collapsed.lower() in {
+            "you",
+            "you a",
+            "you ar",
+            "we a",
+            "we ar",
+            "@/h",
+            "hi",
+            "ok",
+        }
+
+    def _drop_agent_jsonl_twins(self, manifest: Dict[str, Any]) -> None:
+        sources = manifest.get("sources") or {}
+        composer_ids = set()
+        for record in sources.values():
+            if not isinstance(record, dict):
+                continue
+            source = str(record.get("source_file") or "")
+            if "#composer:" in source:
+                composer_ids.add(source.rsplit(":", 1)[-1].strip().lower())
+        if not composer_ids:
+            return
+        drop = []
+        for key, record in sources.items():
+            if not isinstance(record, dict):
+                continue
+            source = str(record.get("source_file") or "").replace("\\", "/")
+            if "/subagents/" in source:
+                drop.append(key)
+                continue
+            if self._cursor_agent_id(source) in composer_ids:
+                drop.append(key)
+        for key in drop:
+            sources.pop(key, None)
+
+    def _composer_id_from_source(self, source: str) -> str:
+        text = str(source or "")
+        marker = "#composer:"
+        if marker in text:
+            return text.rsplit(":", 1)[-1].strip().lower()
+        return self._cursor_agent_id(text)
+
+    def _apply_cursor_tab_names(self, manifest: Dict[str, Any], tab_index: Dict[str, Dict[str, Any]]) -> None:
+        # History refresh stops after max_files *changed* transcripts. Older chats
+        # never reach _touch_manifest_activity, so Cursor tab renames would stick
+        # as first-message junk. Re-apply composerHeaders names to every record.
+        if not tab_index:
+            return
+        for record in (manifest.get("sources") or {}).values():
+            if not isinstance(record, dict):
+                continue
+            cid = self._composer_id_from_source(str(record.get("source_file") or ""))
+            if not cid:
+                continue
+            name = self._cursor_display_title(str((tab_index.get(cid) or {}).get("name") or ""))
+            if not name:
+                continue
+            record["tab_title"] = name
+
+    def _disambiguate_duplicate_titles(self, manifest: Dict[str, Any]) -> None:
+        sources = manifest.get("sources") or {}
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for record in sources.values():
+            if not isinstance(record, dict):
+                continue
+            base = str(record.get("tab_title") or record.get("title") or "").strip() or "Untitled chat"
+            record["tab_title"] = base
+            groups.setdefault(base.lower(), []).append(record)
+        for records in groups.values():
+            if len(records) == 1:
+                records[0]["title"] = records[0]["tab_title"]
+                continue
+            used: set = set()
+            for record in records:
+                base = record["tab_title"]
+                extra = self._title_disambiguator(record)
+                title = f"{base} · {extra}" if extra else base
+                if title.lower() in used:
+                    digest = self._manifest_key(str(record.get("source_file") or ""))[:8]
+                    title = f"{base} · {digest}"
+                used.add(title.lower())
+                record["title"] = title
+
+    def _title_disambiguator(self, record: Dict[str, Any]) -> str:
+        source = str(record.get("source_file") or "")
+        match = re.search(r"[/\\]\.cursor[/\\]projects[/\\]([^/\\]+)[/\\]", source)
+        if match:
+            slug = match.group(1)
+            return slug[:24] + ("..." if len(slug) > 24 else "")
+        user = str(record.get("fingerprint", {}).get("source_user") or "").strip()
+        if user:
+            return user
+        activity = record.get("last_activity_at")
+        ts = 0.0
+        if isinstance(activity, (int, float)) and activity > 0:
+            ts = float(activity) / 1000.0 if activity > 1e12 else float(activity)
+        if ts > 0:
+            try:
+                return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
+            except (OSError, OverflowError, ValueError, TypeError):
+                pass
+        return self._manifest_key(source)[:8]
 
     def _discover_cursor_composer_candidates(self, warnings: List[str]) -> List[Dict[str, str]]:
         if not self.include_cursor:
@@ -543,6 +980,17 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                         ts = self._parse_any_timestamp(created)
                         if ts > 0:
                             created_ms = ts * 1000.0
+                    updated = payload.get("lastUpdatedAt") or payload.get("updatedAt") or created
+                    updated_ms = 0.0
+                    if isinstance(updated, (int, float)):
+                        updated_ms = float(updated)
+                    elif isinstance(updated, str):
+                        ts = self._parse_any_timestamp(updated)
+                        if ts > 0:
+                            updated_ms = ts * 1000.0
+                    tab_name = payload.get("name") or payload.get("title") or ""
+                    if not isinstance(tab_name, str):
+                        tab_name = ""
                     out.append(
                         {
                             "product": "cursor",
@@ -550,6 +998,8 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                             "path": db_path,
                             "cursor_composer_id": composer_id,
                             "cursor_created_ms": str(int(created_ms)) if created_ms else "0",
+                            "cursor_updated_ms": str(int(updated_ms)) if updated_ms else "0",
+                            "cursor_name": tab_name.strip(),
                             "source_user": db_record.get("source_user", ""),
                             "source_home": db_record.get("source_home", ""),
                         }
@@ -580,6 +1030,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         messages: List[Dict[str, Any]] = []
         title_hint = ""
         chat_started_ms = 0.0
+        last_activity_ms = 0.0
         try:
             row = conn.execute(
                 "SELECT value FROM cursorDiskKV WHERE key = ?",
@@ -588,14 +1039,26 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             if row and row[0] is not None:
                 try:
                     meta = json.loads(row[0])
-                    t = meta.get("text")
-                    if isinstance(t, str) and t.strip():
-                        title_hint = t.strip()
+                    tab_name = meta.get("name") or meta.get("title") or ""
+                    if not isinstance(tab_name, str):
+                        tab_name = ""
+                    title_hint = self._cursor_display_title(
+                        candidate.get("cursor_name") or tab_name
+                    )
+                    if not title_hint:
+                        t = meta.get("text")
+                        if isinstance(t, str) and t.strip() and not self._is_title_noise(t):
+                            title_hint = self._cursor_display_title(t)
                     created = meta.get("createdAt")
                     if isinstance(created, (int, float)):
                         chat_started_ms = float(created)
                     elif isinstance(created, str):
                         chat_started_ms = self._parse_any_timestamp(created) * 1000.0
+                    updated = meta.get("lastUpdatedAt") or meta.get("updatedAt") or created
+                    if isinstance(updated, (int, float)):
+                        last_activity_ms = float(updated)
+                    elif isinstance(updated, str):
+                        last_activity_ms = self._parse_any_timestamp(updated) * 1000.0
                 except (json.JSONDecodeError, TypeError):
                     pass
             cur = conn.execute(
@@ -628,6 +1091,8 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         chat_started_at = chat_started_ms / 1000.0 if chat_started_ms > 0 else 0.0
         if chat_started_at <= 0:
             chat_started_at = self._chat_start_timestamp(virtual_path, messages)
+        if last_activity_ms <= 0 and messages:
+            last_activity_ms = self._parse_any_timestamp(messages[-1].get("timestamp")) * 1000.0
         return {
             "product": candidate.get("product"),
             "kind": candidate.get("kind"),
@@ -637,6 +1102,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             "title": title,
             "messages": messages,
             "chat_started_at": chat_started_at,
+            "last_activity_at": last_activity_ms / 1000.0 if last_activity_ms > 0 else chat_started_at,
         }
 
     def _candidate_globs(self, additional_paths: List[str]) -> List[Tuple[str, str, str, str, str]]:
@@ -712,10 +1178,14 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                     add("gemini", kind, pattern, source_user, home)
 
             if self.include_cursor:
+                # Cursor CLI/agent transcripts live one level below agent-transcripts:
+                # projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl (plus
+                # <uuid>/subagents/*.jsonl) - a bare "agent-transcripts/*.jsonl"
+                # glob matches nothing.
                 add(
                     "cursor",
                     "agent",
-                    os.path.join(home, ".cursor", "projects", "**", "agent-transcripts", "*.jsonl"),
+                    os.path.join(home, ".cursor", "projects", "**", "agent-transcripts", "**", "*.jsonl"),
                     source_user,
                     home,
                 )
@@ -741,7 +1211,9 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
     def _candidate_source_file(self, candidate: Dict[str, str]) -> str:
         path = candidate.get("path") or ""
         composer_id = candidate.get("cursor_composer_id") or ""
-        if composer_id:
+        if composer_id and (
+            candidate.get("kind") == "composer" or "state.vscdb" in path
+        ):
             return f"{path}#composer:{composer_id}"
         return path
 
@@ -773,6 +1245,9 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             fingerprint["mtime_ns"] = -1
         if candidate.get("cursor_created_ms"):
             fingerprint["cursor_created_ms"] = candidate.get("cursor_created_ms")
+        tab_name = self._cursor_display_title(candidate.get("cursor_name") or "")
+        if tab_name:
+            fingerprint["cursor_name"] = tab_name
         return fingerprint
 
     def _manifest_path(self, export_folder: str) -> str:
@@ -848,8 +1323,61 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             "export_path": export_path,
             "export_filename": os.path.basename(export_path),
             "message_count": len(transcript.get("messages") or []),
-            "title": transcript.get("title") or "",
+            "tab_title": self._cursor_display_title(transcript.get("title") or "")
+            or self._clean_chat_title(transcript.get("title") or "")
+            or (transcript.get("title") or ""),
+            "title": self._cursor_display_title(transcript.get("title") or "")
+            or self._clean_chat_title(transcript.get("title") or "")
+            or (transcript.get("title") or ""),
+            "last_activity_at": self._transcript_last_activity_ms(transcript, fingerprint),
         }
+
+    def _transcript_last_activity_ms(
+        self, transcript: Dict[str, Any], fingerprint: Dict[str, Any]
+    ) -> float:
+        activity = transcript.get("last_activity_at")
+        if isinstance(activity, (int, float)) and activity > 0:
+            return activity * 1000.0 if activity < 1e12 else float(activity)
+        messages = transcript.get("messages") or []
+        if messages:
+            ts = self._parse_any_timestamp(messages[-1].get("timestamp"))
+            if ts > 0:
+                return ts * 1000.0
+        mtime_ns = fingerprint.get("mtime_ns")
+        if isinstance(mtime_ns, (int, float)) and mtime_ns > 0:
+            return float(mtime_ns) / 1e6
+        return 0.0
+
+    def _touch_manifest_activity(
+        self,
+        manifest: Dict[str, Any],
+        source_file: str,
+        candidate: Dict[str, str],
+        fingerprint: Dict[str, Any],
+    ) -> None:
+        record = (manifest.get("sources") or {}).get(self._manifest_key(source_file))
+        if not isinstance(record, dict):
+            return
+        tab_name = self._cursor_display_title(candidate.get("cursor_name") or "")
+        if tab_name:
+            record["tab_title"] = tab_name
+            record["title"] = tab_name
+        elif record.get("title"):
+            cleaned = self._cursor_display_title(str(record.get("tab_title") or record.get("title") or ""))
+            if not cleaned:
+                cleaned = self._clean_chat_title(str(record.get("title") or ""))
+            if cleaned:
+                record["tab_title"] = cleaned
+                record["title"] = cleaned
+        updated_ms = self._safe_float(candidate.get("cursor_updated_ms"), 0.0)
+        if updated_ms <= 0:
+            mtime_ns = fingerprint.get("mtime_ns")
+            if isinstance(mtime_ns, (int, float)) and mtime_ns > 0:
+                source = str(candidate.get("path") or source_file)
+                if "state.vscdb" not in source:
+                    updated_ms = float(mtime_ns) / 1e6
+        if updated_ms > 0:
+            record["last_activity_at"] = updated_ms
 
     def _parse_candidate(self, candidate: Dict[str, str]) -> Optional[Dict[str, Any]]:
         path = candidate["path"]
@@ -866,10 +1394,17 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         if not messages:
             return None
 
+        last_activity_at = self._safe_mtime(path)
+        last_ts = self._parse_any_timestamp(messages[-1].get("timestamp"))
+        if last_ts > 0:
+            last_activity_at = last_ts
+
         if self.max_messages_per_chat > 0:
             messages = messages[: self.max_messages_per_chat]
 
-        title = self._derive_title(path, messages)
+        title = self._cursor_display_title(candidate.get("cursor_name") or "") or self._derive_title(
+            path, messages
+        )
         chat_started_at = self._chat_start_timestamp(path, messages)
         return {
             "product": candidate.get("product"),
@@ -880,6 +1415,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             "title": title,
             "messages": messages,
             "chat_started_at": chat_started_at,
+            "last_activity_at": last_activity_at,
         }
 
     def _parse_jsonl_messages(self, path: str, product: str = "") -> List[Dict[str, Any]]:
@@ -1306,6 +1842,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             real_title = (enrichment.get("title") or enrichment.get("first_user_message") or "").strip()
             if real_title:
                 title = " ".join(real_title.split())[:120]
+        title = self._cursor_display_title(title) or self._clean_chat_title(title) or title
 
         messages = []
         for message in (transcript.get("messages") or []):
@@ -1330,6 +1867,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             "source_file": source_file,
             "chat_started_at": chat_ts,
             "chat_started_timestamp": self._format_utc_timestamp(chat_ts),
+            "last_activity_at": transcript.get("last_activity_at") or chat_ts,
             "source_mtime": self._safe_mtime(self._path_for_fs_stat(source_file)),
             "source_timestamp": self._format_utc_timestamp(
                 self._safe_mtime(self._path_for_fs_stat(source_file))
@@ -1501,17 +2039,6 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         os.makedirs(fallback, exist_ok=True)
         return fallback
 
-    PREAMBLE_TAG_PREFIXES = (
-        "<environment_context",
-        "<user_instructions",
-        "<system-reminder",
-        "<system>",
-        "<tool_result",
-        "<tool_use",
-        "<context>",
-        "<metadata",
-    )
-
     def _is_preamble_text(self, text: str) -> bool:
         stripped = (text or "").lstrip()
         if not stripped:
@@ -1519,16 +2046,28 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         lowered = stripped.lower()
         return any(lowered.startswith(p) for p in self.PREAMBLE_TAG_PREFIXES)
 
+    def _clean_chat_title(self, text: str) -> str:
+        """Tab name / first prompt without Cursor's injected XML wrappers."""
+        stripped = (text or "").strip()
+        if not stripped:
+            return ""
+        query = self._USER_QUERY_RE.search(stripped)
+        if query:
+            stripped = query.group(1).strip()
+        stripped = self._TIMESTAMP_RE.sub(" ", stripped)
+        stripped = self._TAG_RE.sub(" ", stripped)
+        return " ".join(stripped.split())[:80].strip()
+
     def _derive_title(self, path: str, messages: List[Dict[str, Any]]) -> str:
         for message in messages:
             role = str(message.get("role", "")).lower()
             if role not in {"user", "human"}:
                 continue
             text = message.get("text", "") or ""
-            if self._is_preamble_text(text):
+            if self._is_preamble_text(text) or self._is_title_noise(text):
                 continue
-            title = " ".join(text.split())[:80].strip()
-            if title:
+            title = self._clean_chat_title(text)
+            if title and not self._is_title_noise(title):
                 return title
         stem_path = self._path_for_fs_stat(path)
         return Path(stem_path).stem if stem_path else "Untitled chat"

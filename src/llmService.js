@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { listProviderSessions, sessionsForProvider } = require('./providerSessions');
 
 const PROVIDER_ICONS = Object.freeze({
   codex: '../assets/providers/codex.svg',
@@ -42,7 +43,8 @@ const STATE_VERSION = 2;
 // Providers with an exported CLI datasource bundle that can create and resume sessions.
 const WRITABLE_PROVIDERS = Object.freeze({
   codex: { bundle: 'codex', label: 'Codex' },
-  claude: { bundle: 'claude', label: 'Claude' }
+  claude: { bundle: 'claude', label: 'Claude' },
+  cursor: { bundle: 'cursor', label: 'Cursor' }
 });
 const DEFAULT_PROVIDER = 'codex';
 
@@ -106,8 +108,64 @@ function exportFilenameTime(filePath) {
   return Date.UTC(...match.slice(1).map(Number).map((value, index) => index === 1 ? value - 1 : value));
 }
 
+function cleanChatTitle(raw) {
+  let text = String(raw || '').trim();
+  if (!text) return '';
+  const query = text.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i);
+  if (query) text = query[1].trim();
+  text = text.replace(/<timestamp>[\s\S]*?<\/timestamp>/gi, ' ');
+  text = text.replace(/<system_notification>[\s\S]*?<\/system_notification>/gi, ' ');
+  text = text.replace(/<[^>]+>/g, ' ');
+  text = text.replace(/<[^>]*$/g, ' ');
+  return text.replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
 function conversationKey(item) {
-  return `${item.provider}:${item.sessionId || item.sourceFile || item.target}`;
+  return `${item.provider}:${sessionIdentity(item)}`;
+}
+
+function sessionIdentity(item) {
+  const sessionId = String(item?.sessionId || '').trim().toLowerCase();
+  if (sessionId) return sessionId;
+  const fromPath = uuidFromPath(item?.sourceFile || item?.source_file || '');
+  if (fromPath) return fromPath;
+  return String(item?.target || '');
+}
+
+function uuidFromPath(filePath) {
+  const match = String(filePath || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return match ? match[0].toLowerCase() : '';
+}
+
+function currentOsUsername() {
+  try {
+    return String(os.userInfo().username || '').trim();
+  } catch (_error) {
+    return String(process.env.USER || process.env.LOGNAME || '').trim();
+  }
+}
+
+function sourceUserFromPath(filePath) {
+  const match = String(filePath || '').match(/(?:^|\/)home\/([^/]+)\//);
+  const user = match ? String(match[1] || '').trim() : '';
+  if (!user || user === '.' || user === '..') return '';
+  return user;
+}
+
+function resolveSourceUser(payload, sourceFile, origin) {
+  const fingerprint = payload?.fingerprint && typeof payload.fingerprint === 'object' ? payload.fingerprint : {};
+  const named = String(
+    payload?.osUser
+    || payload?.sourceUser
+    || payload?.source_user
+    || fingerprint.source_user
+    || ''
+  ).trim();
+  if (named) return named;
+  const fromPath = sourceUserFromPath(sourceFile || payload?.sourceFile || payload?.source_file);
+  if (fromPath) return fromPath;
+  if (origin === 'local') return currentOsUsername();
+  return '';
 }
 
 function ircChannelName(label, identity, provider = DEFAULT_PROVIDER) {
@@ -138,6 +196,7 @@ class LlmService {
       || (fs.existsSync(virtualenvPython) ? virtualenvPython : 'python3');
     this.codexRuntime = options.codexRuntime || path.join(this.root, 'pipelines', 'codex', 'run.py');
     this.claudeRuntime = options.claudeRuntime || path.join(this.root, 'pipelines', 'claude', 'run.py');
+    this.cursorRuntime = options.cursorRuntime || path.join(this.root, 'pipelines', 'cursor', 'run.py');
     this.historyRuntime = options.historyRuntime || path.join(this.root, 'pipelines', 'history', 'run.py');
     this.pipelineRuntime = options.pipelineRuntime || path.join(this.root, 'src', 'pipeline_runtime.py');
     this.spawn = options.spawn || spawn;
@@ -146,6 +205,7 @@ class LlmService {
     // suSessionManager.js.
     this.suSessionManager = options.suSessionManager || null;
     this.busy = new Set();
+    this._historyCache = null;
     fs.mkdirSync(this.appHome, { recursive: true });
     const saved = this._loadState();
     this.local = saved.conversations;
@@ -205,8 +265,8 @@ class LlmService {
   _normalizeConversation(payload, origin = 'history', filePath = '') {
     if (!payload || (origin === 'history' && payload.type !== 'localchat')) return null;
     const provider = String(payload.provider || payload.product || 'unknown').toLowerCase();
-    const sessionId = String(payload.sessionId || payload.thread_id || payload.session_id || '');
     const sourceFile = String(payload.sourceFile || payload.source_file || filePath || '');
+    const sessionId = String(payload.sessionId || payload.thread_id || payload.session_id || uuidFromPath(sourceFile) || '');
     const identity = sessionId || sourceFile || crypto.randomUUID();
     const target = String(payload.target || `llm:${provider}:${Buffer.from(identity).toString('base64url')}`);
     const messages = (payload.messages || []).map((message) => ({
@@ -228,10 +288,12 @@ class LlmService {
       || (filePath && fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0);
     const workspace = String(payload.workspace || payload.cwd || this.root);
     const createdAt = epochMs(payload.createdAt || payload.chat_started_at || payload.chat_started_timestamp) || updatedAt || Date.now();
-    const sortAt = epochMs(payload.sortAt || payload.sort_at) || messageUpdatedAt || createdAt || updatedAt;
+    const sortAt = epochMs(payload.sortAt || payload.sort_at || payload.last_activity_at || payload.lastActivityAt) || messageUpdatedAt || updatedAt || createdAt;
+    const rawLabel = String(payload.label || payload.title || payload.chat_name || `${provider} conversation`);
+    const cleanedLabel = cleanChatTitle(rawLabel);
     return {
       target,
-      label: String(payload.label || payload.title || payload.chat_name || `${provider} conversation`),
+      label: cleanedLabel || (rawLabel.trim().startsWith('<') ? `${provider} conversation` : rawLabel),
       description: String(payload.description || `${provider} ${payload.kind || 'chat'}`),
       kind: 'llm',
       provider,
@@ -252,6 +314,8 @@ class LlmService {
       // OS user currently running Subjective Chat - the default, and the only value every
       // conversation had before "Continue as…" existed, so this is a purely additive field.
       osUser: payload.osUser ? String(payload.osUser) : null,
+      // Display-only: who owns the session on disk (history scan) or the Continue-as user.
+      sourceUser: resolveSourceUser(payload, sourceFile, origin),
       icon: providerIcon(provider),
       participants: [
         { nick: 'You', modes: '' },
@@ -262,32 +326,46 @@ class LlmService {
   }
 
   _historyConversations() {
+    if (this._historyCache) return this._historyCache;
     if (!fs.existsSync(this.contextDir)) return [];
     const manifestPath = path.join(this.contextDir, '.subjective_localchats_manifest.json');
     const manifest = safeJson(manifestPath);
     if (manifest?.sources && typeof manifest.sources === 'object') {
-      return Object.values(manifest.sources).map((record) => {
+      // Trust the manifest. existsSync() on tens of thousands of files in one
+      // directory blocks the event loop long enough that the web UI's
+      // /api/llm/conversations fetch times out and the sidebar stays empty.
+      const conversations = Object.values(manifest.sources).map((record) => {
         const fingerprint = record.fingerprint || {};
         const sourceFile = String(record.source_file || fingerprint.source_file || '');
         const sessionMatch = sourceFile.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
         const exportPath = path.join(this.contextDir, path.basename(record.export_filename || record.export_path || ''));
         const filenameTimestamp = exportFilenameTime(exportPath);
+        const lastActivityMs = Number(record.last_activity_at || 0)
+          || (String(sourceFile).includes('state.vscdb') ? 0 : Number(fingerprint.mtime_ns || 0) / 1e6)
+          || filenameTimestamp;
+        const rawTitle = record.title || path.basename(sourceFile);
+        const cleanedTitle = cleanChatTitle(rawTitle);
         return this._normalizeConversation({
           type: 'localchat',
-          title: record.title || path.basename(sourceFile),
+          title: cleanedTitle || (String(rawTitle).trim().startsWith('<') ? `${fingerprint.product || 'chat'} conversation` : rawTitle),
           product: fingerprint.product || 'unknown',
           kind: fingerprint.kind || 'chat',
           thread_id: sessionMatch?.[1] || '',
           source_file: sourceFile,
+          source_user: fingerprint.source_user || record.source_user || '',
+          fingerprint,
           source_mtime: Number(fingerprint.mtime_ns || 0) / 1e9,
           chat_started_at: filenameTimestamp / 1000,
-          sort_at: filenameTimestamp,
+          last_activity_at: lastActivityMs,
+          sort_at: lastActivityMs,
           messages: [],
           messageCount: Number(record.message_count || 0),
           exportPath,
           loaded: false
         }, 'history', exportPath);
-      }).filter((conversation) => conversation && fs.existsSync(conversation.exportPath));
+      }).filter(Boolean);
+      this._historyCache = conversations;
+      return conversations;
     }
     const conversations = [];
     const directory = fs.opendirSync(this.contextDir);
@@ -301,27 +379,81 @@ class LlmService {
       if (conversation) conversations.push(conversation);
     }
     directory.closeSync();
+    this._historyCache = conversations;
     return conversations;
   }
 
   listConversations(options = {}) {
     const includeMessages = options.includeMessages === true;
+    const query = String(options.query || options.q || '').trim().toLowerCase();
+    const limit = options.limit == null || options.limit === '' ? null : Number(options.limit);
     const deduplicated = new Map();
     for (const conversation of [...this._historyConversations(), ...this.local]) {
       const key = conversationKey(conversation);
       const previous = deduplicated.get(key);
-      if (!previous || conversation.updatedAt >= previous.updatedAt || conversation.origin === 'local') {
+      if (!previous) {
+        deduplicated.set(key, conversation);
+        continue;
+      }
+      const history = previous.origin === 'history' ? previous : (conversation.origin === 'history' ? conversation : null);
+      const local = previous.origin === 'local' ? previous : (conversation.origin === 'local' ? conversation : null);
+      if (history && local) {
+        const override = this.labelOverrides[local.target] || this.labelOverrides[history.target];
+        deduplicated.set(key, {
+          ...local,
+          label: override || history.label || local.label,
+          sourceUser: local.sourceUser || history.sourceUser,
+          sessionId: local.sessionId || history.sessionId,
+          sortAt: Math.max(Number(local.sortAt || 0), Number(history.sortAt || 0)),
+          updatedAt: Math.max(Number(local.updatedAt || 0), Number(history.updatedAt || 0))
+        });
+        continue;
+      }
+      if (conversation.updatedAt >= previous.updatedAt) {
         deduplicated.set(key, conversation);
       }
     }
-    return [...deduplicated.values()]
-      .sort((left, right) => (right.sortAt || right.updatedAt) - (left.sortAt || left.updatedAt))
-      .map((conversation) => this._withLabelOverride(includeMessages ? this._hydrateLocalConversation(conversation) : {
-        ...conversation,
-        messages: [],
-        loaded: conversation.origin === 'local' && conversation.messages.length === 0,
-        activeOnIrc: this.activeTargets.has(conversation.target)
-      }));
+    // Sort by last message time, newest first. History records store last
+    // activity on last_activity_at / sortAt; local sends update both.
+    const lastActivity = (conversation) => Number(
+      conversation.sortAt || conversation.updatedAt || conversation.createdAt || 0
+    );
+    let list = [...deduplicated.values()]
+      .sort((left, right) => lastActivity(right) - lastActivity(left));
+    if (query) {
+      list = list.filter((conversation) => {
+        const haystack = `${conversation.label || ''} ${conversation.provider || ''} ${conversation.description || ''} ${conversation.sourceUser || ''} ${conversation.osUser || ''}`.toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+    const total = list.length;
+    if (Number.isFinite(limit) && limit > 0) list = list.slice(0, limit);
+    const conversations = list.map((conversation) => this._withLabelOverride(includeMessages ? this._hydrateLocalConversation(conversation) : {
+      target: conversation.target,
+      label: conversation.label,
+      kind: conversation.kind,
+      provider: conversation.provider,
+      icon: conversation.icon,
+      writable: conversation.writable,
+      origin: conversation.origin,
+      updatedAt: conversation.updatedAt,
+      sortAt: conversation.sortAt,
+      createdAt: conversation.createdAt,
+      messageCount: conversation.messageCount,
+      sessionId: conversation.sessionId,
+      osUser: conversation.osUser,
+      sourceUser: conversation.sourceUser,
+      workspace: conversation.workspace,
+      ircChannel: conversation.ircChannel,
+      exportPath: conversation.exportPath,
+      historyExportPath: conversation.historyExportPath,
+      sourceFile: conversation.sourceFile,
+      messages: [],
+      loaded: conversation.origin === 'local' && conversation.messages.length === 0,
+      activeOnIrc: this.activeTargets.has(conversation.target)
+    }));
+    conversations.total = total;
+    return conversations;
   }
 
   // Apply a user-assigned name (see this.labelOverrides) to a conversation record without
@@ -349,7 +481,10 @@ class LlmService {
   }
 
   _runtimeFor(provider) {
-    return providerKey(provider) === 'claude' ? this.claudeRuntime : this.codexRuntime;
+    const key = providerKey(provider);
+    if (key === 'claude') return this.claudeRuntime;
+    if (key === 'cursor') return this.cursorRuntime;
+    return this.codexRuntime;
   }
 
   createConversation(input = {}) {
@@ -362,6 +497,7 @@ class LlmService {
       label: String(input.name || `New ${label} chat`).trim() || `New ${label} chat`,
       description: `${label} CLI conversation`,
       workspace: String(input.workspace || this.root).trim() || this.root,
+      sourceUser: currentOsUsername(),
       messages: [],
       createdAt: now,
       updatedAt: now,
@@ -390,6 +526,7 @@ class LlmService {
       description: `${source.description} — continued as ${username}`,
       workspace: source.workspace,
       osUser: username,
+      sourceUser: username,
       messages: [],
       createdAt: now,
       updatedAt: now,
@@ -404,11 +541,22 @@ class LlmService {
   findConversation(target, options = {}) {
     const local = this.local.find((conversation) => conversation.target === target);
     if (local) return this._withLabelOverride(options.includeMessages === true ? this._hydrateLocalConversation(local) : local);
-    const metadata = this.listConversations().find((conversation) => conversation.target === target) || null;
-    if (!metadata || options.includeMessages !== true || !metadata.exportPath) return metadata;
+    // Look up the full history record (exportPath lives here). The sidebar list is
+    // a slim projection without exportPath, so using listConversations() here made
+    // click-to-open return an empty transcript.
+    const metadata = this._historyConversations().find((conversation) => conversation.target === target) || null;
+    if (!metadata) return null;
+    if (options.includeMessages !== true || !metadata.exportPath) return this._withLabelOverride(metadata);
     const payload = safeJson(metadata.exportPath);
-    if (!payload) return metadata;
-    return this._withLabelOverride(this._normalizeConversation({ ...payload, target: metadata.target, exportPath: metadata.exportPath, loaded: true }, 'history', metadata.exportPath));
+    if (!payload) return this._withLabelOverride(metadata);
+    return this._withLabelOverride(this._normalizeConversation({
+      ...payload,
+      target: metadata.target,
+      sessionId: metadata.sessionId || payload.sessionId || payload.thread_id || payload.session_id,
+      sourceFile: metadata.sourceFile || payload.source_file,
+      exportPath: metadata.exportPath,
+      loaded: true
+    }, 'history', metadata.exportPath));
   }
 
   _hydrateLocalConversation(conversation) {
@@ -458,11 +606,31 @@ class LlmService {
     return { provider: key, ...result };
   }
 
+  async listProviderSessions(provider = '') {
+    const listed = await listProviderSessions();
+    if (!provider) return listed;
+    return sessionsForProvider(listed, provider);
+  }
+
+  _isAuthFailure(result) {
+    if (!result) return false;
+    if (result.status === 'authentication_required') return true;
+    const blob = `${result.error || ''} ${result.response || ''}`.toLowerCase();
+    return blob.includes('authentication_required')
+      || blob.includes('loggedin": false')
+      || blob.includes('logged in": false')
+      || blob.includes('authentication required')
+      || blob.includes('agent login')
+      || blob.includes('auth status');
+  }
+
   async refreshHistory() {
+    this._historyCache = null;
     const response = await this._runPipeline(this.historyRuntime, {
       context_folder: this.contextDir,
-      max_files: 0
+      max_files: 500
     }, 1800);
+    this._historyCache = null;
     return this._pipelineResult(response);
   }
 
@@ -521,10 +689,11 @@ class LlmService {
         working_directory: conversation.workspace,
         timeout: AGENT_TURN_TIMEOUT_SECONDS
       };
-      // Codex sandboxes per request; Claude takes an equivalent permission mode.
+      // Codex sandboxes per request; Claude takes an equivalent permission
+      // mode; Cursor's CLI manages its own sandboxing (no per-request flag).
       if (provider.bundle === 'claude') {
         request.permission_mode = 'acceptEdits';
-      } else {
+      } else if (provider.bundle === 'codex') {
         request.sandbox_mode = 'workspace-write';
       }
       const runtimePath = this._runtimeFor(source.provider);
@@ -532,7 +701,20 @@ class LlmService {
         ? await this._runPipelineForUser(conversation.osUser, runtimePath, request, AGENT_TURN_WRAPPER_TIMEOUT_SECONDS)
         : await this._runPipeline(runtimePath, request, AGENT_TURN_WRAPPER_TIMEOUT_SECONDS);
       const result = this._pipelineResult(pipelineResponse);
-      if (!result.success) return { ok: false, ...result, userMessage };
+      if (!result.success) {
+        const failure = { ok: false, ...result, userMessage };
+        if (this._isAuthFailure(failure)) {
+          failure.sessions = await this.listProviderSessions(source.provider);
+          // This process just failed auth — don't advertise the current user as ready.
+          if (failure.sessions?.users) {
+            failure.sessions.users = failure.sessions.users.map((user) => (
+              user.current ? { ...user, ready: false } : user
+            ));
+            failure.sessions.users.sort((left, right) => Number(right.ready) - Number(left.ready) || left.username.localeCompare(right.username));
+          }
+        }
+        return failure;
+      }
       conversation.sessionId = String(result.session_id || conversation.sessionId || '');
       const assistantMessage = { role: 'assistant', text: String(result.response || ''), time: Date.now() };
       conversation.messages.push(assistantMessage);
@@ -642,5 +824,8 @@ module.exports = {
   ircChannelName,
   normalizeRole,
   providerIcon,
-  providerLabel
+  providerLabel,
+  resolveSourceUser,
+  sourceUserFromPath,
+  sessionIdentity
 };

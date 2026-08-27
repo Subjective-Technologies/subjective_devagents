@@ -76,8 +76,8 @@ test('lazy history manifest sorts chats by per-chat filename time, not shared da
   fs.writeFileSync(path.join(paths.contextDir, '.subjective_localchats_manifest.json'), JSON.stringify({
     version: 1,
     sources: {
-      old: { source_file: '/tmp/cursor.db#old', fingerprint: sharedFingerprint, export_filename: olderFile, title: 'Older chat' },
-      new: { source_file: '/tmp/cursor.db#new', fingerprint: sharedFingerprint, export_filename: newerFile, title: 'Newest chat' }
+      old: { source_file: '/tmp/state.vscdb#old', fingerprint: sharedFingerprint, export_filename: olderFile, title: 'Older chat' },
+      new: { source_file: '/tmp/state.vscdb#new', fingerprint: sharedFingerprint, export_filename: newerFile, title: 'Newest chat' }
     }
   }));
 
@@ -85,6 +85,80 @@ test('lazy history manifest sorts chats by per-chat filename time, not shared da
   assert.deepEqual(conversations.map((item) => item.label), ['Newest chat', 'Older chat']);
   assert.equal(conversations[0].sortAt, Date.UTC(2026, 7, 11, 17, 30, 0));
   assert.equal(exportFilenameTime(olderFile), Date.UTC(2025, 0, 2, 3, 4, 5));
+});
+
+test('listConversations exposes sourceUser from fingerprint, path, Continue-as, and local process user', (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const gordonFile = '2026_08_11_17_30_00_gordon-Localchats-test-context.json';
+  const pathFile = '2026_08_11_17_31_00_path-Localchats-test-context.json';
+  fs.writeFileSync(path.join(paths.contextDir, gordonFile), '{}');
+  fs.writeFileSync(path.join(paths.contextDir, pathFile), '{}');
+  fs.writeFileSync(path.join(paths.contextDir, '.subjective_localchats_manifest.json'), JSON.stringify({
+    version: 1,
+    sources: {
+      gordon: {
+        source_file: '/home/gordon/.cursor/chats/one.jsonl',
+        fingerprint: { product: 'cursor', kind: 'ide', source_user: 'gordon', mtime_ns: 1 },
+        export_filename: gordonFile,
+        title: 'Gordon chat'
+      },
+      pathOnly: {
+        source_file: '/home/subjective/.claude/projects/x/session.jsonl',
+        fingerprint: { product: 'claude', kind: 'cli', mtime_ns: 2 },
+        export_filename: pathFile,
+        title: 'Path chat'
+      }
+    }
+  }));
+
+  const service = new LlmService(paths);
+  const listed = service.listConversations();
+  assert.equal(listed.find((item) => item.label === 'Gordon chat').sourceUser, 'gordon');
+  assert.equal(listed.find((item) => item.label === 'Path chat').sourceUser, 'subjective');
+
+  const local = service.createConversation({ name: 'Local chat', provider: 'codex' });
+  assert.ok(local.sourceUser);
+  const sibling = service.createSiblingForUser(local.target, 'bob');
+  assert.equal(sibling.sourceUser, 'bob');
+});
+
+test('local first-message copies do not hide Cursor tab names from history', (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const composerId = '1caed09f-85be-4d7d-8db5-7994b94da04c';
+  const exportFile = '2026_08_11_17_30_00_tab-Localchats-test-context.json';
+  fs.writeFileSync(path.join(paths.contextDir, exportFile), '{}');
+  fs.writeFileSync(path.join(paths.contextDir, '.subjective_localchats_manifest.json'), JSON.stringify({
+    version: 1,
+    sources: {
+      tab: {
+        source_file: `/tmp/state.vscdb#composer:${composerId}`,
+        fingerprint: { product: 'cursor', kind: 'composer', source_user: 'gordon', mtime_ns: 3 },
+        export_filename: exportFile,
+        title: 'VAI-238',
+        last_activity_at: 2000
+      }
+    }
+  }));
+  fs.mkdirSync(path.dirname(paths.statePath), { recursive: true });
+  fs.writeFileSync(paths.statePath, JSON.stringify({
+    version: 2,
+    conversations: [{
+      type: 'localchat',
+      product: 'cursor',
+      title: 'you a',
+      source_file: `/home/gordon/.cursor/projects/p/agent-transcripts/${composerId}/${composerId}.jsonl`,
+      messages: [{ role: 'user', text: 'you a', timestamp: 1 }]
+    }],
+    activeTargets: [],
+    labelOverrides: {}
+  }));
+
+  const listed = new LlmService(paths).listConversations();
+  const matches = listed.filter((item) => String(item.sessionId) === composerId || String(item.sourceFile).includes(composerId));
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].label, 'VAI-238');
 });
 
 test('new Codex channel persists and adopts native session id after first message', async (t) => {
@@ -302,6 +376,7 @@ test('createSiblingForUser clones provider/workspace but starts a fresh session 
   assert.equal(sibling.provider, 'codex');
   assert.equal(sibling.workspace, '/repo');
   assert.equal(sibling.osUser, 'bob');
+  assert.equal(sibling.sourceUser, 'bob');
   assert.equal(sibling.sessionId, '');
   assert.deepEqual(sibling.messages, []);
   assert.match(sibling.label, /Ops chat \(as bob\)/);

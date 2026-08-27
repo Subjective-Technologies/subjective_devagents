@@ -5,10 +5,13 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subjective Chat</title>
-    <link rel="stylesheet" href="/styles.css">
+    <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
+         server); index.html is never cached, so bumping the version here atomically swaps
+         the whole set. Bump on any change to these files. -->
+    <link rel="stylesheet" href="/styles.css?v=20260827f">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
-    <link rel="stylesheet" href="/contextMenu.css">
-    <link rel="stylesheet" href="/layout.css">
+    <link rel="stylesheet" href="/contextMenu.css?v=20260826a">
+    <link rel="stylesheet" href="/layout.css?v=20260827f">
   </head>
   <body data-accent="gold">
     <main class="app-shell">
@@ -58,18 +61,18 @@
             </form>
           </div>
 
-          <aside class="users-pane" id="usersPane">
-            <div class="users-head">
-              <span>Users</span>
-              <small id="userCount">0</small>
-            </div>
-            <div id="userList" class="user-list"></div>
-          </aside>
-
           <aside class="right-rail">
+            <aside class="users-pane" id="usersPane">
+              <div class="users-head">
+                <span>Users</span>
+                <small id="userCount">0</small>
+              </div>
+              <div id="userList" class="user-list"></div>
+            </aside>
+
             <section class="panel" id="conversationsPanel">
               <div class="panel-head">
-                <span class="panel-title">Conversations</span>
+                <button type="button" id="collapseChatsButton" class="panel-collapse" title="Hide chats" aria-expanded="true" aria-controls="conversationBrowser">Chats</button>
                 <button type="button" id="createLlmButton" class="panel-add" title="New agent conversation" aria-label="New agent conversation">+</button>
               </div>
               <div id="conversationBrowser" class="conversation-browser">
@@ -81,18 +84,6 @@
                   <small id="conversationSearchCount" class="conversation-search-count"></small>
                 </div>
                 <div id="conversationList" class="conversation-list"></div>
-              </div>
-            </section>
-
-            <section class="panel" id="accentPanel">
-              <div class="panel-head">
-                <span class="panel-title">Accent</span>
-              </div>
-              <div class="accent-grid" id="accentGrid">
-                <button type="button" class="accent-swatch gold active" data-accent="gold" title="Gold"></button>
-                <button type="button" class="accent-swatch purple" data-accent="purple" title="Purple"></button>
-                <button type="button" class="accent-swatch pink" data-accent="pink" title="Pink"></button>
-                <button type="button" class="accent-swatch green" data-accent="green" title="Green"></button>
               </div>
             </section>
           </aside>
@@ -166,6 +157,7 @@
           <select id="llmProviderSelect">
             <option value="codex">Codex</option>
             <option value="claude">Claude</option>
+            <option value="cursor">Cursor</option>
           </select>
         </label>
         <label>
@@ -182,10 +174,22 @@
         </div>
       </form>
     </dialog>
+    <dialog id="sessionPickerDialog" class="settings-dialog">
+      <form id="sessionPickerForm" class="settings-form" method="dialog">
+        <div class="settings-head">
+          <div>
+            <h3 id="sessionPickerTitle">Choose user session</h3>
+            <p id="sessionPickerSubtitle">This agent is not logged in for the current OS user. Pick whose CLI login to use.</p>
+          </div>
+          <button type="button" id="sessionPickerCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <div id="sessionPickerList" class="session-picker-list"></div>
+      </form>
+    </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js"></script>
-    <script src="/messageRenderer.js"></script>
-    <script src="/renderer.js"></script>
+    <script src="/webBridge.js?v=20260827f"></script>
+    <script src="/messageRenderer.js?v=20260827f"></script>
+    <script src="/renderer.js?v=20260827f"></script>
   </body>
 </html>

@@ -55,6 +55,11 @@ const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
 const llmStatusText = document.getElementById('llmStatusText');
+const sessionPickerDialog = document.getElementById('sessionPickerDialog');
+const sessionPickerTitle = document.getElementById('sessionPickerTitle');
+const sessionPickerSubtitle = document.getElementById('sessionPickerSubtitle');
+const sessionPickerList = document.getElementById('sessionPickerList');
+const sessionPickerCloseButton = document.getElementById('sessionPickerCloseButton');
 const topProviderIcon = document.getElementById('topProviderIcon');
 const richMessages = window.SubjectiveMessageRenderer || {
   detectPromptActions: () => [],
@@ -348,6 +353,9 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
+let deferConversationRender = 0;
+let llmListTotal = 0;
+
 function ensureConversation(target, label = target, kind = target.startsWith('#') ? 'channel' : 'dm', metadata = {}) {
   if (!conversations.has(target)) {
     conversations.set(target, { target, label, kind, events: [], unread: 0, updatedAt: 0, sortAt: 0, ...metadata });
@@ -363,7 +371,7 @@ function ensureConversation(target, label = target, kind = target.startsWith('#'
       sortAt: latestSortTimestamp
     });
   }
-  renderConversations();
+  if (!deferConversationRender) renderConversations();
   return conversations.get(target);
 }
 
@@ -777,6 +785,8 @@ function conversationSearchText(conversation) {
     conversation.description,
     conversation.workspace,
     conversation.ircChannel,
+    conversation.sourceUser,
+    conversation.osUser,
     ...(conversation.events || []).map((event) => `${event.data?.from || ''} ${event.data?.text || event.data?.command || ''}`)
   ].join(' ').toLocaleLowerCase();
 }
@@ -784,6 +794,24 @@ function conversationSearchText(conversation) {
 // IRC channels/DMs are listed above AI chats, most-recent-first within each group.
 function conversationGroupRank(conversation) {
   return conversation.kind === 'llm' ? 1 : 0;
+}
+
+function conversationUserHue(username) {
+  let hash = 2166136261;
+  for (let index = 0; index < username.length; index += 1) {
+    hash ^= username.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % 12;
+}
+
+function conversationUserPillHtml(conversation) {
+  const username = String(conversation.sourceUser || conversation.osUser || '').trim();
+  if (!username || conversation.kind !== 'llm') {
+    return '<span class="conversation-user-pill is-empty" aria-hidden="true"></span>';
+  }
+  const slot = conversationUserHue(username);
+  return `<span class="conversation-user-pill user-hue-${slot}" title="${escapeHtml(username)}">${escapeHtml(username)}</span>`;
 }
 
 function renderConversations() {
@@ -800,7 +828,11 @@ function renderConversations() {
     ? ordered.filter((conversation) => conversationSearchText(conversation).includes(query))
     : ordered;
   if (conversationSearchCount) {
-    conversationSearchCount.textContent = query ? `${visible.length}/${ordered.length}` : String(ordered.length);
+    const shown = visible.length;
+    const total = llmListTotal || ordered.filter((item) => item.kind === 'llm').length;
+    conversationSearchCount.textContent = query
+      ? `${shown}${total > shown ? `/${total}` : ''}`
+      : (total > shown ? `${shown}/${total}` : String(shown || ordered.length));
   }
   if (!visible.length) {
     const empty = document.createElement('div');
@@ -813,7 +845,9 @@ function renderConversations() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'conversation-row';
-    button.title = conversation.label;
+    button.title = conversation.sourceUser
+      ? `${conversation.sourceUser}: ${conversation.label}`
+      : conversation.label;
     button.dataset.target = conversation.target;
     button.classList.toggle('active', conversation.target === activeTarget);
     button.classList.toggle('busy', Boolean(conversation.busy));
@@ -821,9 +855,10 @@ function renderConversations() {
       ? `<img class="conversation-provider-icon" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(conversation.provider)}">`
       : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
     button.innerHTML = `
-      ${icon}
+      <span class="conversation-user-cell">${conversationUserPillHtml(conversation)}</span>
+      <span class="conversation-icon-cell">${icon}</span>
       <span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span>
-      ${conversation.unread ? `<b>${conversation.unread}</b>` : ''}
+      <span class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</span>
     `;
     button.addEventListener('click', () => setActiveTarget(conversation.target));
     if (conversation.kind === 'llm') {
@@ -898,12 +933,18 @@ function beginRenameConversation(target) {
 }
 
 if (conversationSearch) {
-  conversationSearch.addEventListener('input', renderConversations);
+  let searchReloadTimer = 0;
+  conversationSearch.addEventListener('input', () => {
+    window.clearTimeout(searchReloadTimer);
+    searchReloadTimer = window.setTimeout(() => {
+      loadLlmConversations();
+    }, 200);
+  });
   conversationSearch.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && conversationSearch.value) {
       event.preventDefault();
       conversationSearch.value = '';
-      renderConversations();
+      loadLlmConversations();
     }
     if (event.key === 'Enter') {
       const firstResult = conversationList.querySelector('.conversation-row');
@@ -1050,7 +1091,19 @@ async function sendTextMessages(lines) {
         if (conversation?.kind === 'llm') {
           addOptimisticLlmEcho(conversation, outgoing);
           const result = await window.subjectiveChat.sendLlmMessage(activeTarget, outgoing);
-          if (!result.ok && !result.status) addEvent('system', { target: activeTarget, text: 'Message was not sent.' });
+          if (!result.ok) {
+            const detail = result.error || result.status || 'Message was not sent.';
+            addEvent('system', { target: activeTarget, text: `${providerName(conversation.provider)}: ${detail}` });
+            if (result.sessions?.users) {
+              openSessionPicker({
+                target: activeTarget,
+                provider: conversation.provider,
+                text: outgoing,
+                sessions: result.sessions.users,
+                currentUser: result.sessions.currentUser
+              });
+            }
+          }
         } else {
           const result = await window.subjectiveChat.sendMessage(activeTarget, outgoing);
           if (!result.ok) addEvent('system', { target: activeTarget, text: 'Message was not sent. The IRC connection is not ready.' });
@@ -1299,18 +1352,29 @@ function upsertLlmConversation(payload) {
     renderTranscript();
     renderUsers();
   }
-  renderConversations();
+  if (!deferConversationRender) renderConversations();
   return conversation;
 }
 
 async function loadLlmConversations() {
   if (!window.subjectiveChat.listLlmConversations) return;
-  const result = await window.subjectiveChat.listLlmConversations();
+  const q = String(conversationSearch?.value || '').trim();
+  const result = await window.subjectiveChat.listLlmConversations({ limit: 200, q });
   if (!result?.ok) {
     rendererLog('error', 'Failed to load LLM conversations', { error: result?.error });
     return;
   }
-  for (const conversation of result.conversations || []) upsertLlmConversation(conversation);
+  llmListTotal = Number(result.total || (result.conversations || []).length || 0);
+  deferConversationRender += 1;
+  try {
+    for (const [target, conversation] of [...conversations.entries()]) {
+      if (conversation.kind === 'llm') conversations.delete(target);
+    }
+    for (const conversation of result.conversations || []) upsertLlmConversation(conversation);
+  } finally {
+    deferConversationRender -= 1;
+    renderConversations();
+  }
 }
 
 function selectedLlmProvider() {
@@ -1318,7 +1382,93 @@ function selectedLlmProvider() {
 }
 
 function llmProviderLabel(provider) {
-  return provider === 'claude' ? 'Claude' : 'Codex';
+  if (provider === 'claude') return 'Claude';
+  if (provider === 'cursor') return 'Cursor';
+  return 'Codex';
+}
+
+let pendingSessionChoice = null;
+
+function openSessionPicker({ target, provider, text, sessions, currentUser }) {
+  if (!sessionPickerDialog || !sessionPickerList) return;
+  pendingSessionChoice = { target, provider, text, currentUser };
+  const label = llmProviderLabel(provider);
+  if (sessionPickerTitle) sessionPickerTitle.textContent = `Run ${label} as…`;
+  if (sessionPickerSubtitle) {
+    sessionPickerSubtitle.textContent = `${label} is not logged in as ${currentUser || 'this user'}. Pick an OS user whose ${label} CLI login to use.`;
+  }
+  sessionPickerList.replaceChildren();
+  const users = Array.isArray(sessions) ? sessions : [];
+  if (!users.length) {
+    const empty = document.createElement('p');
+    empty.textContent = 'No other user accounts found on this computer.';
+    sessionPickerList.appendChild(empty);
+  }
+  for (const user of users) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `session-choice${user.ready ? ' ready' : ''}`;
+    button.dataset.username = user.username;
+    const name = document.createElement('span');
+    name.textContent = user.current ? `${user.username} (this process)` : user.username;
+    const hint = document.createElement('small');
+    hint.textContent = user.ready
+      ? `${label} login found`
+      : user.unknown
+        ? `${label} login not readable from this process — pick to switch and check`
+        : `no ${label} login file found — pick to sign in`;
+    button.append(name, hint);
+    button.addEventListener('click', () => chooseSessionUser(user.username));
+    sessionPickerList.appendChild(button);
+  }
+  sessionPickerDialog.showModal ? sessionPickerDialog.showModal() : sessionPickerDialog.setAttribute('open', '');
+}
+
+async function chooseSessionUser(username) {
+  const pending = pendingSessionChoice;
+  if (sessionPickerDialog?.close) sessionPickerDialog.close();
+  else sessionPickerDialog?.removeAttribute('open');
+  if (!pending) return;
+  const label = llmProviderLabel(pending.provider);
+  if (username === pending.currentUser) {
+    addEvent('system', {
+      target: pending.target,
+      text: `${label} has no login for ${username}. Run the ${label} CLI login in a terminal as that user, then retry.`
+    });
+    pendingSessionChoice = null;
+    return;
+  }
+  pendingSessionChoice = { ...pending, retryUsername: username };
+  if (!window.subjectiveChat.continueAsUser) {
+    addEvent('system', { target: pending.target, text: `Cannot switch to ${username} from this client.` });
+    return;
+  }
+  const result = await window.subjectiveChat.continueAsUser(pending.target, username);
+  if (result?.conversation?.target && pending.text) {
+    const sibling = result.conversation.target;
+    pendingSessionChoice = null;
+    await window.subjectiveChat.sendLlmMessage(sibling, pending.text);
+    return;
+  }
+  if (!result?.ok) {
+    addEvent('system', { target: pending.target, text: result?.error || `Could not continue as ${username}.` });
+    pendingSessionChoice = null;
+  }
+}
+
+if (sessionPickerCloseButton) {
+  sessionPickerCloseButton.addEventListener('click', () => {
+    pendingSessionChoice = null;
+    sessionPickerDialog?.close?.();
+  });
+}
+if (sessionPickerDialog) {
+  sessionPickerDialog.addEventListener('click', (event) => {
+    if (event.target === sessionPickerDialog) {
+      pendingSessionChoice = null;
+      sessionPickerDialog.close?.();
+    }
+  });
 }
 
 async function refreshLlmStatus() {
@@ -1412,14 +1562,16 @@ settingsForm.addEventListener('submit', async (event) => {
   await saveConnection(true);
 });
 
-accentGrid.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-accent]');
-  if (!button) return;
-  document.body.dataset.accent = button.dataset.accent;
-  for (const swatch of accentGrid.querySelectorAll('.accent-swatch')) swatch.classList.remove('active');
-  button.classList.add('active');
-  localStorage.setItem('subjective-chat-accent', button.dataset.accent);
-});
+if (accentGrid) {
+  accentGrid.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-accent]');
+    if (!button) return;
+    document.body.dataset.accent = button.dataset.accent;
+    for (const swatch of accentGrid.querySelectorAll('.accent-swatch')) swatch.classList.remove('active');
+    button.classList.add('active');
+    localStorage.setItem('subjective-chat-accent', button.dataset.accent);
+  });
+}
 
 window.addEventListener('resize', () => {
   mountMobileLayout();
@@ -1464,10 +1616,18 @@ window.subjectiveChat.onEvent((event) => {
       }
       break;
     }
+    case 'llm-choose-session':
+      openSessionPicker(event);
+      break;
     case 'llm-switch-user':
       // The new sibling conversation was already added via the llm-conversation event
       // just before this one; switch the view over to it now that it exists.
       if (conversations.has(event.target)) setActiveTarget(event.target);
+      if (pendingSessionChoice?.retryUsername === event.osUser && pendingSessionChoice.text) {
+        const text = pendingSessionChoice.text;
+        pendingSessionChoice = null;
+        window.subjectiveChat.sendLlmMessage(event.target, text);
+      }
       break;
     case 'llm-message': {
       const conversation = conversations.get(event.target);
@@ -1534,7 +1694,24 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
   mountMobileLayout();
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;
-  for (const swatch of accentGrid.querySelectorAll('.accent-swatch')) {
-    swatch.classList.toggle('active', swatch.dataset.accent === savedAccent);
+  if (accentGrid) {
+    for (const swatch of accentGrid.querySelectorAll('.accent-swatch')) {
+      swatch.classList.toggle('active', swatch.dataset.accent === savedAccent);
+    }
+  }
+  const collapseChatsButton = document.getElementById('collapseChatsButton');
+  if (collapseChatsButton) {
+    const key = 'subjective-chat-chats-collapsed';
+    const applyCollapsed = (collapsed) => {
+      document.body.classList.toggle('chats-collapsed', collapsed);
+      collapseChatsButton.setAttribute('aria-expanded', String(!collapsed));
+      collapseChatsButton.title = collapsed ? 'Show chats' : 'Hide chats';
+    };
+    applyCollapsed(localStorage.getItem(key) === '1');
+    collapseChatsButton.addEventListener('click', () => {
+      const collapsed = !document.body.classList.contains('chats-collapsed');
+      localStorage.setItem(key, collapsed ? '1' : '0');
+      applyCollapsed(collapsed);
+    });
   }
 });

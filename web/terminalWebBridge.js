@@ -9,6 +9,14 @@
 
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   const socket = new WebSocket(url);
+  socket.addEventListener('open', () => {
+    fetch(`/api/switchuser/status?username=${encodeURIComponent(username)}`)
+      .then((response) => response.json())
+      .then((result) => {
+        if (result?.status) for (const listener of statusListeners) listener(result.status);
+      })
+      .catch(() => {});
+  });
   socket.addEventListener('message', (message) => {
     let event;
     try {
@@ -18,7 +26,9 @@
     }
     if (event.username !== username) return;
     if (event.type === 'switchuser-pty-data') for (const listener of dataListeners) listener(event.chunk);
-    if (event.type === 'switchuser-status') for (const listener of statusListeners) listener(event);
+    if (event.type === 'switchuser-status' || event.type === 'switchuser-provider-status') {
+      for (const listener of statusListeners) listener(event);
+    }
   });
 
   function post(path, body) {

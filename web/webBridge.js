@@ -62,7 +62,8 @@
   // already-open popup for that username instead of stacking duplicates.
   listeners.add((event) => {
     if (event.type === 'switchuser-terminal-needed' && event.username) {
-      window.open(`/terminal.html?username=${encodeURIComponent(event.username)}`, `terminal-${event.username}`, 'width=760,height=500');
+      const provider = event.provider ? `&provider=${encodeURIComponent(event.provider)}` : '';
+      window.open(`/terminal.html?username=${encodeURIComponent(event.username)}${provider}`, `terminal-${event.username}`, 'width=760,height=500');
     }
   });
 
@@ -134,7 +135,7 @@
       } else {
         for (const candidate of candidates) {
           menu.appendChild(menuRow({
-            label: `${statusDot(candidate.status)} ${candidate.username}`,
+            label: `${statusDot(candidate.status)} ${candidate.username}${candidate.ready ? ' · login found' : candidate.unknown ? ' · login hidden' : ''}`,
             onClick: () => post('/api/switchuser/continue-as', { target, username: candidate.username })
           }));
         }
@@ -193,12 +194,18 @@
     disconnect: () => post('/api/disconnect'),
     sendMessage: (target, text) => post('/api/send-message', { target, text }),
     executeCommand: (command, target) => post('/api/execute-command', { command, target }),
-    listLlmConversations: () => get('/api/llm/conversations'),
+    listLlmConversations: (opts = {}) => {
+      const params = new URLSearchParams();
+      params.set('limit', String(opts.limit || 200));
+      if (opts.q) params.set('q', String(opts.q));
+      return get(`/api/llm/conversations?${params}`);
+    },
     getLlmConversation: (target) => get(`/api/llm/conversation?target=${encodeURIComponent(target)}`),
     activateLlmConversation: (target) => post('/api/llm/activate-conversation', { target }),
     createLlmConversation: (payload) => post('/api/llm/create-conversation', payload),
     renameLlmConversation: (target, name) => post('/api/llm/rename-conversation', { target, name }),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),
+    listProviderSessions: (provider) => get(`/api/llm/sessions?provider=${encodeURIComponent(provider || '')}`),
     sendLlmMessage: (target, text, files = []) => post('/api/llm/send-message', { target, text, files }),
     listSystemUsers: () => get('/api/system/users'),
     getSwitchUserStatus: (username) => get(`/api/switchuser/status?username=${encodeURIComponent(username || '')}`),

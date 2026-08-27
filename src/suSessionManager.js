@@ -16,6 +16,8 @@
 // socket bridge (see pipeline_bridge_server.py) started as a background child of the
 // authenticated shell, rather than typed through the pty as text - see runInSession().
 const crypto = require('crypto');
+const { spawn } = require('child_process');
+const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
@@ -47,8 +49,10 @@ const AUTH_FAILURE_RE = /su:\s*Authentication failure|incorrect password/i;
 
 const LOGIN_COMMANDS = Object.freeze({
   codex: { status: 'codex login status', login: 'codex login', which: 'codex' },
-  claude: { status: 'claude auth status', login: 'claude auth login', which: 'claude' }
+  claude: { status: 'claude auth status', login: 'claude auth login', which: 'claude' },
+  cursor: { status: 'cursor-agent status', login: 'cursor-agent login', which: 'cursor-agent' }
 });
+const LOGIN_SUCCESS_RE = /logged in|login successful|authentication successful|already logged in/i;
 
 function loadPty() {
   try {
@@ -81,12 +85,88 @@ class SuSessionManager extends EventEmitter {
     this.tmpDir = options.tmpDir || '/tmp';
   }
 
+  _targetHome(username) {
+    try {
+      const text = fs.readFileSync('/etc/passwd', 'utf8');
+      for (const line of text.split('\n')) {
+        const fields = line.split(':');
+        if (fields[0] === username && fields[5]) return fields[5];
+      }
+    } catch (_error) { /* fall through */ }
+    return path.join('/home', username);
+  }
+
+  _suSpawnEnv() {
+    // Login `su -` must not inherit this process's HOME/USER/XDG — otherwise
+    // cursor-agent writes sandbox-policies into the chat process owner's
+    // ~/.cursor while running as a different uid, and that owner then gets EACCES.
+    return {
+      TERM: process.env.TERM || 'xterm-256color',
+      LANG: process.env.LANG || 'C.UTF-8',
+      LC_ALL: process.env.LC_ALL || process.env.LANG || 'C.UTF-8',
+      PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+      DISPLAY: process.env.DISPLAY || '',
+      WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || '',
+      XAUTHORITY: process.env.XAUTHORITY || ''
+    };
+  }
+
   _pty() {
     if (this.ptyFactory) return this.ptyFactory;
     const pty = loadPty();
-    if (!pty) throw new Error('node-pty is not available. Reinstall dependencies and rebuild native modules for Electron.');
-    this.ptyFactory = (...args) => pty.spawn(...args);
+    if (pty) {
+      this.ptyFactory = (file, args, options) => pty.spawn(file, args, options);
+      return this.ptyFactory;
+    }
+    this.ptyFactory = (file, args, options) => this._spawnPythonPty(file, args, options);
     return this.ptyFactory;
+  }
+
+  isProviderReady(username, provider) {
+    const session = this.sessions.get(username);
+    return Boolean(session && session.status === STATUS.READY && session.providerReady[provider] === true);
+  }
+
+  _spawnPythonPty(file, args, options = {}) {
+    const helper = path.join(__dirname, 'pty_fallback.py');
+    const env = {
+      ...this._suSpawnEnv(),
+      PYTHONUNBUFFERED: '1',
+      SUBJECTIVE_PTY_COLS: String(options.cols || 100),
+      SUBJECTIVE_PTY_ROWS: String(options.rows || 30),
+      SUBJECTIVE_PTY_CWD: options.cwd || os.homedir()
+    };
+    const child = spawn(this.pythonPath, [helper, file, ...args], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env
+    });
+    const dataHandlers = [];
+    const exitHandlers = [];
+    const emitData = (chunk) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+      for (const handler of dataHandlers) {
+        try { handler(text); } catch (_error) { /* viewer may be closing */ }
+      }
+    };
+    child.stdout.on('data', emitData);
+    child.stderr.on('data', emitData);
+    child.on('exit', (code) => {
+      for (const handler of exitHandlers) {
+        try { handler({ exitCode: code || 0 }); } catch (_error) { /* already tearing down */ }
+      }
+    });
+    return {
+      onData(callback) { dataHandlers.push(callback); },
+      onExit(callback) { exitHandlers.push(callback); },
+      write(data) {
+        if (child.stdin.destroyed) return;
+        child.stdin.write(data);
+      },
+      kill() {
+        try { child.kill(); } catch (_error) { /* already dead */ }
+      },
+      resize() { /* python helper uses the initial size; login does not need live resize */ }
+    };
   }
 
   getStatus(username) {
@@ -294,8 +374,8 @@ class SuSessionManager extends EventEmitter {
       name: 'xterm-256color',
       cols: 100,
       rows: 30,
-      cwd: os.homedir(),
-      env: process.env
+      cwd: this._targetHome(session.username),
+      env: this._suSpawnEnv()
     });
     session.ptyProcess = ptyProcess;
     ptyProcess.onData((chunk) => this._handleData(session, chunk));
@@ -356,13 +436,44 @@ class SuSessionManager extends EventEmitter {
     return { success: false, error: 'Timed out waiting for su to authenticate.' };
   }
 
+  async _resolveProviderCli(session, whichName) {
+    const which = await this._runFramed(session, `command -v ${whichName}`, { timeoutMs: 10000 });
+    const fromPath = String(which.stdout || '').trim().split('\n').filter(Boolean).pop();
+    if (which.exitCode === 0 && fromPath) return { cli: whichName, onPath: true };
+    const fallbacks = [
+      `test -x "$HOME/.local/bin/${whichName}" && echo "$HOME/.local/bin/${whichName}"`,
+      `ls -1 "$HOME/.nvm/versions/node/"*/bin/${whichName} 2>/dev/null | tail -1`,
+      `test -x /usr/local/bin/${whichName} && echo /usr/local/bin/${whichName}`,
+      `test -x /usr/bin/${whichName} && echo /usr/bin/${whichName}`
+    ];
+    for (const command of fallbacks) {
+      const result = await this._runFramed(session, command, { timeoutMs: 10000 });
+      const found = String(result.stdout || '').trim().split('\n').filter(Boolean).pop();
+      if (found) return { cli: found, onPath: false };
+    }
+    return null;
+  }
+
+  _providerCommandsForCli(commands, resolved) {
+    if (!resolved || resolved.onPath) return commands;
+    const quoted = JSON.stringify(resolved.cli);
+    return {
+      which: commands.which,
+      status: commands.status.replace(commands.which, quoted),
+      login: commands.login.replace(commands.which, quoted)
+    };
+  }
+
   async _runProviderLogin(session, provider, commands) {
     this._emitProvider(session, provider, PROVIDER_STATUS.CHECKING);
-    const which = await this._runFramed(session, `command -v ${commands.which}`, { timeoutMs: 10000 });
-    if (which.exitCode !== 0) {
-      throw new Error(`${commands.which} was not found on ${session.username}'s PATH.`);
+    const resolvedCli = await this._resolveProviderCli(session, commands.which);
+    if (!resolvedCli) {
+      const message = `${commands.which} was not found on ${session.username}'s PATH (also checked ~/.local/bin and nvm).`;
+      session.ptyProcess.write(`echo ${JSON.stringify(message)}\n`);
+      throw new Error(message);
     }
-    const status = await this._runFramed(session, commands.status, { timeoutMs: 30000 });
+    const resolved = this._providerCommandsForCli(commands, resolvedCli);
+    const status = await this._runFramed(session, resolved.status, { timeoutMs: 30000 });
     if (status.exitCode === 0) {
       session.providerReady[provider] = true;
       this._emitProvider(session, provider, PROVIDER_STATUS.READY);
@@ -370,21 +481,16 @@ class SuSessionManager extends EventEmitter {
     }
 
     this._emitProvider(session, provider, PROVIDER_STATUS.AWAITING_OAUTH);
-    const since = session.totalWritten;
-    session.ptyProcess.write(`${commands.login}\n`);
-    const deadline = Date.now() + 5 * 60 * 1000;
-    while (Date.now() < deadline) {
-      await this._delay(3000);
-      if (session.exited) throw new Error(session.exitError || 'Shell exited during login.');
-      const recheck = await this._runFramed(session, commands.status, { timeoutMs: 15000 });
-      if (recheck.exitCode === 0) {
-        session.providerReady[provider] = true;
-        this._emitProvider(session, provider, PROVIDER_STATUS.READY);
-        return { status: PROVIDER_STATUS.READY };
-      }
+    const banner = `=== Sign in to ${provider} as ${session.username}. Complete the URL/device flow below. ===`;
+    session.ptyProcess.write(`echo ${JSON.stringify(banner)}\n`);
+    await this._runFramed(session, resolved.login, { timeoutMs: 5 * 60 * 1000 });
+    const recheck = await this._runFramed(session, resolved.status, { timeoutMs: 15000 });
+    if (recheck.exitCode === 0 || LOGIN_SUCCESS_RE.test(`${status.stdout || ''}\n${recheck.stdout || ''}\n${session.buffer.slice(-8000)}`)) {
+      session.providerReady[provider] = true;
+      this._emitProvider(session, provider, PROVIDER_STATUS.READY);
+      return { status: PROVIDER_STATUS.READY };
     }
-    void since;
-    throw new Error(`${provider} login did not complete before timing out.`);
+    throw new Error(`${provider} login did not complete. Finish the ${provider} sign-in in the terminal window, then retry.`);
   }
 
   async _ensureBridge(session) {
