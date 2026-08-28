@@ -8,10 +8,10 @@
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
          the whole set. Bump on any change to these files. -->
-    <link rel="stylesheet" href="/styles.css?v=20260827f">
+    <link rel="stylesheet" href="/styles.css?v=20260827i">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
     <link rel="stylesheet" href="/contextMenu.css?v=20260826a">
-    <link rel="stylesheet" href="/layout.css?v=20260827f">
+    <link rel="stylesheet" href="/layout.css?v=20260827i">
   </head>
   <body data-accent="gold">
     <main class="app-shell">
@@ -35,6 +35,7 @@
               </div>
               <p id="identityLabel">Tomasso</p>
             </div>
+            <button id="mobileMenuButton" class="secondary-button mobile-menu-button" type="button" aria-label="Show chats and users">☰ Chats</button>
             <div class="top-actions" id="topActions">
               <button id="settingsButton" class="icon-button subtle" title="Connection settings" aria-label="Connection settings">⚙</button>
               <button id="bookmarksButton" class="icon-button subtle" title="Bookmarks" aria-label="Bookmarks">☆</button>
@@ -90,6 +91,29 @@
         </section>
       </section>
     </main>
+    <dialog id="mobileDrawer" class="mobile-drawer">
+      <div class="mobile-drawer-shell">
+        <div class="mobile-drawer-head">
+          <div>
+            <h3>Chats &amp; Users</h3>
+            <p id="mobileDrawerLabel">Subjective Chat</p>
+          </div>
+          <button type="button" id="mobileDrawerClose" class="plain-icon" aria-label="Close menu">×</button>
+        </div>
+        <div class="mobile-drawer-tabs">
+          <button type="button" class="drawer-tab active" data-mobile-drawer-tab="conversations">Chats</button>
+          <button type="button" class="drawer-tab" data-mobile-drawer-tab="users">Users</button>
+        </div>
+        <div class="mobile-drawer-body">
+          <section class="mobile-drawer-panel active" data-mobile-drawer-panel="conversations">
+            <div id="mobileTabsSlot"></div>
+          </section>
+          <section class="mobile-drawer-panel" data-mobile-drawer-panel="users">
+            <div id="mobileUsersSlot"></div>
+          </section>
+        </div>
+      </div>
+    </dialog>
     <dialog id="settingsDialog" class="settings-dialog">
       <form id="settingsForm" class="settings-form">
         <div class="settings-head">
@@ -188,8 +212,8 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js?v=20260827f"></script>
-    <script src="/messageRenderer.js?v=20260827f"></script>
-    <script src="/renderer.js?v=20260827f"></script>
+    <script src="/webBridge.js?v=20260827i"></script>
+    <script src="/messageRenderer.js?v=20260827i"></script>
+    <script src="/renderer.js?v=20260827i"></script>
   </body>
 </html>

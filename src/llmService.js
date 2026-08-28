@@ -108,13 +108,84 @@ function exportFilenameTime(filePath) {
   return Date.UTC(...match.slice(1).map(Number).map((value, index) => index === 1 ? value - 1 : value));
 }
 
+const ENVELOPE_TAG_NAMES = [
+  'timestamp',
+  'user_query',
+  'user_info',
+  'user_instructions',
+  'system_notification',
+  'system-reminder',
+  'system_reminder',
+  'environment_context',
+  'git_status',
+  'open_and_recently_viewed_files',
+  'agent_skills',
+  'image_files',
+  'external_links',
+  'attached_files'
+];
+const ENVELOPE_TAG_RE = new RegExp(`<(?:${ENVELOPE_TAG_NAMES.join('|')})_?\\b`, 'i');
+const TASK_BLOCK_RE = /<task_?\b[^>]*>([\s\S]*?)<\/task_?>/i;
+const TASK_TITLE_RE = /^\s*title:\s*(.+)$/im;
+const INTERNAL_QUERY_RE = /^(?:briefly inform the user about the task result\b|the (?:above|following) task (?:has finished|is complete)\b)/i;
+const ENVELOPE_BLOCK_RE = new RegExp(
+  `<(${ENVELOPE_TAG_NAMES.join('|')})_?\\b[^>]*>[\\s\\S]*?</\\1_?>`,
+  'gi'
+);
+
+function looksWrapped(text) {
+  return ENVELOPE_TAG_RE.test(String(text || ''));
+}
+
+function extractTaskTitle(text) {
+  const block = String(text || '').match(TASK_BLOCK_RE);
+  const body = block ? block[1] : String(text || '');
+  const title = body.match(TASK_TITLE_RE);
+  return title ? title[1].trim() : '';
+}
+
+function isAgentInternalQuery(text) {
+  return INTERNAL_QUERY_RE.test(String(text || '').replace(/\s+/g, ' ').trim());
+}
+
+function extractUserQueries(text) {
+  return [...String(text || '').matchAll(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/gi)]
+    .map((match) => String(match[1] || '').trim())
+    .filter(Boolean);
+}
+
+function stripEnvelopeBlocks(text) {
+  return String(text || '').replace(ENVELOPE_BLOCK_RE, ' ').trim();
+}
+
+function cleanVisibleMessage(raw, role = 'user') {
+  const originalRole = normalizeRole(role);
+  const source = String(raw || '').trim();
+  if (!source) return null;
+  if (!looksWrapped(source)) return { role: originalRole, text: source };
+
+  const queries = extractUserQueries(source);
+  if (queries.length) {
+    const visible = queries.filter((query) => !isAgentInternalQuery(query));
+    if (!visible.length) {
+      const title = extractTaskTitle(source);
+      return title ? { role: 'system', text: `Task finished: ${title}` } : null;
+    }
+    return { role: originalRole, text: visible.join('\n\n') };
+  }
+
+  const stripped = stripEnvelopeBlocks(source).replace(/^\s*<\/?[a-z][\w:-]*_?\s*>\s*$/gim, '').trim();
+  if (!stripped || isAgentInternalQuery(stripped)) {
+    const title = extractTaskTitle(source);
+    return title ? { role: 'system', text: `Task finished: ${title}` } : null;
+  }
+  return { role: originalRole, text: stripped };
+}
+
 function cleanChatTitle(raw) {
-  let text = String(raw || '').trim();
+  const cleaned = cleanVisibleMessage(raw, 'user');
+  let text = cleaned && cleaned.role !== 'system' ? cleaned.text : String(raw || '').trim();
   if (!text) return '';
-  const query = text.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i);
-  if (query) text = query[1].trim();
-  text = text.replace(/<timestamp>[\s\S]*?<\/timestamp>/gi, ' ');
-  text = text.replace(/<system_notification>[\s\S]*?<\/system_notification>/gi, ' ');
   text = text.replace(/<[^>]+>/g, ' ');
   text = text.replace(/<[^>]*$/g, ' ');
   return text.replace(/\s+/g, ' ').trim().slice(0, 80);
@@ -206,6 +277,7 @@ class LlmService {
     this.suSessionManager = options.suSessionManager || null;
     this.busy = new Set();
     this._historyCache = null;
+    this._sortedCache = null;
     fs.mkdirSync(this.appHome, { recursive: true });
     const saved = this._loadState();
     this.local = saved.conversations;
@@ -251,6 +323,7 @@ class LlmService {
   }
 
   _saveState() {
+    this._sortedCache = null;
     fs.mkdirSync(path.dirname(this.statePath), { recursive: true });
     const temporary = `${this.statePath}.tmp`;
     fs.writeFileSync(temporary, `${JSON.stringify({
@@ -269,16 +342,22 @@ class LlmService {
     const sessionId = String(payload.sessionId || payload.thread_id || payload.session_id || uuidFromPath(sourceFile) || '');
     const identity = sessionId || sourceFile || crypto.randomUUID();
     const target = String(payload.target || `llm:${provider}:${Buffer.from(identity).toString('base64url')}`);
-    const messages = (payload.messages || []).map((message) => ({
-      role: normalizeRole(message.role),
-      kind: String(message.kind || 'message'),
-      text: String(message.text || message.content || ''),
-      command: String(message.command || ''),
-      shell: String(message.shell || ''),
-      toolName: String(message.toolName || message.tool_name || ''),
-      workdir: String(message.workdir || ''),
-      time: epochMs(message.time || message.timestamp) || Date.now()
-    })).filter((message) => message.text || message.command);
+    const messages = (payload.messages || []).map((message) => {
+      const role = normalizeRole(message.role);
+      const command = String(message.command || '');
+      const cleaned = cleanVisibleMessage(String(message.text || message.content || ''), role);
+      if (!cleaned && !command) return null;
+      return {
+        role: cleaned ? cleaned.role : role,
+        kind: String(message.kind || 'message'),
+        text: cleaned ? cleaned.text : command,
+        command,
+        shell: String(message.shell || ''),
+        toolName: String(message.toolName || message.tool_name || ''),
+        workdir: String(message.workdir || ''),
+        time: epochMs(message.time || message.timestamp) || Date.now()
+      };
+    }).filter((message) => message && (message.text || message.command));
     const messageUpdatedAt = latestMessageTime(messages);
     const contentUpdatedAt = Math.max(
       epochMs(payload.updatedAt || payload.source_mtime || payload.source_timestamp),
@@ -365,6 +444,7 @@ class LlmService {
         }, 'history', exportPath);
       }).filter(Boolean);
       this._historyCache = conversations;
+      this._sortedCache = null;
       return conversations;
     }
     const conversations = [];
@@ -380,13 +460,40 @@ class LlmService {
     }
     directory.closeSync();
     this._historyCache = conversations;
+    this._sortedCache = null;
     return conversations;
   }
 
-  listConversations(options = {}) {
-    const includeMessages = options.includeMessages === true;
-    const query = String(options.query || options.q || '').trim().toLowerCase();
-    const limit = options.limit == null || options.limit === '' ? null : Number(options.limit);
+  // Deduplicating and sorting every known conversation costs ~35ms once the archive
+  // reaches tens of thousands of chats, and it is identical for every caller until the
+  // history cache or the saved state changes — so do it once and reuse it. Every mutation
+  // path goes through _saveState() or nulls _historyCache, and both drop this.
+  _sortedConversations() {
+    if (this._sortedCache) return this._sortedCache.list;
+    const list = this._buildSortedConversations();
+    this._sortedCache = { list, haystacks: null };
+    return list;
+  }
+
+  // Lowercased search text per conversation, in the same order as _sortedConversations().
+  // Built once instead of re-concatenating and re-lowercasing five fields per record on
+  // every keystroke, which is the whole cost of a search over a large archive.
+  _searchHaystacks() {
+    this._sortedConversations();
+    if (!this._sortedCache.haystacks) {
+      this._sortedCache.haystacks = this._sortedCache.list.map((conversation) => (
+        `${conversation.label || ''} ${conversation.provider || ''} ${conversation.description || ''} ${conversation.sourceUser || ''} ${conversation.osUser || ''}`
+      ).toLowerCase());
+    }
+    return this._sortedCache.haystacks;
+  }
+
+  // Number of distinct conversations, without building a projection for each one.
+  countConversations() {
+    return this._sortedConversations().length;
+  }
+
+  _buildSortedConversations() {
     const deduplicated = new Map();
     for (const conversation of [...this._historyConversations(), ...this.local]) {
       const key = conversationKey(conversation);
@@ -418,13 +525,18 @@ class LlmService {
     const lastActivity = (conversation) => Number(
       conversation.sortAt || conversation.updatedAt || conversation.createdAt || 0
     );
-    let list = [...deduplicated.values()]
+    return [...deduplicated.values()]
       .sort((left, right) => lastActivity(right) - lastActivity(left));
+  }
+
+  listConversations(options = {}) {
+    const includeMessages = options.includeMessages === true;
+    const query = String(options.query || options.q || '').trim().toLowerCase();
+    const limit = options.limit == null || options.limit === '' ? null : Number(options.limit);
+    let list = this._sortedConversations();
     if (query) {
-      list = list.filter((conversation) => {
-        const haystack = `${conversation.label || ''} ${conversation.provider || ''} ${conversation.description || ''} ${conversation.sourceUser || ''} ${conversation.osUser || ''}`.toLowerCase();
-        return haystack.includes(query);
-      });
+      const haystacks = this._searchHaystacks();
+      list = list.filter((_conversation, index) => haystacks[index].includes(query));
     }
     const total = list.length;
     if (Number.isFinite(limit) && limit > 0) list = list.slice(0, limit);
@@ -626,11 +738,13 @@ class LlmService {
 
   async refreshHistory() {
     this._historyCache = null;
+    this._sortedCache = null;
     const response = await this._runPipeline(this.historyRuntime, {
       context_folder: this.contextDir,
       max_files: 500
     }, 1800);
     this._historyCache = null;
+    this._sortedCache = null;
     return this._pipelineResult(response);
   }
 
@@ -819,6 +933,7 @@ module.exports = {
   PROVIDER_ICONS,
   WRITABLE_PROVIDERS,
   LlmService,
+  cleanVisibleMessage,
   epochMs,
   exportFilenameTime,
   ircChannelName,

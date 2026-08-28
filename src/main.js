@@ -381,7 +381,9 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 720,
+    // 760, not 720: at exactly 720 the phone breakpoint kicks in and hides the
+    // sidebar's chats panel, and this shell has no mobile drawer to reach it from.
+    minWidth: 760,
     minHeight: 480,
     backgroundColor: '#0b0d12',
     title: 'Subjective Chat',
@@ -1561,7 +1563,7 @@ app.whenReady().then(() => {
         emit('system', { target: config.channel, text: `History refresh failed: ${result.error || result.status || 'unknown error'}` });
         return;
       }
-      const count = llmService.listConversations().length;
+      const count = llmService.countConversations();
       log('info', 'Local chat history pipeline completed', { count });
       emit('llm-history-refreshed', { count });
     }).catch((error) => {

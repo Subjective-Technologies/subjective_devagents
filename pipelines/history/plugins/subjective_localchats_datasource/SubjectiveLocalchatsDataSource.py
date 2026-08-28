@@ -29,7 +29,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
     TEXT_EXTENSIONS = {".jsonl", ".json", ".md", ".txt", ".log"}
     MAX_FILE_BYTES = 500 * 1024 * 1024
     MANIFEST_FILENAME = ".subjective_localchats_manifest.json"
-    EXTRACTOR_VERSION = 4
+    EXTRACTOR_VERSION = 5
     PREAMBLE_TAG_PREFIXES = (
         "<environment_context",
         "<user_instructions",
@@ -48,9 +48,42 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL | re.IGNORECASE
     )
     _TIMESTAMP_RE = re.compile(
-        r"<timestamp>.*?</timestamp>", re.DOTALL | re.IGNORECASE
+        r"<timestamp_?\b[^>]*>.*?</timestamp_?>", re.DOTALL | re.IGNORECASE
     )
     _TAG_RE = re.compile(r"<[^>]+>")
+    _ENVELOPE_TAG_NAMES = (
+        "timestamp",
+        "user_query",
+        "user_info",
+        "user_instructions",
+        "system_notification",
+        "system-reminder",
+        "system_reminder",
+        "environment_context",
+        "git_status",
+        "open_and_recently_viewed_files",
+        "agent_skills",
+        "image_files",
+        "external_links",
+        "attached_files",
+    )
+    _ENVELOPE_TAG_RE = re.compile(
+        r"<(?:" + "|".join(_ENVELOPE_TAG_NAMES) + r")_?\b",
+        re.IGNORECASE,
+    )
+    _ENVELOPE_BLOCK_RE = re.compile(
+        r"<(" + "|".join(_ENVELOPE_TAG_NAMES) + r")_?\b[^>]*>.*?</\1_?>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    _TASK_BLOCK_RE = re.compile(
+        r"<task_?\b[^>]*>(.*?)</task_?>", re.DOTALL | re.IGNORECASE
+    )
+    _TASK_TITLE_RE = re.compile(r"^\s*title:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+    _INTERNAL_QUERY_RE = re.compile(
+        r"^(?:briefly inform the user about the task result\b|"
+        r"the (?:above|following) task (?:has finished|is complete)\b)",
+        re.IGNORECASE,
+    )
     _UUID_RE = re.compile(
         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
         re.IGNORECASE,
@@ -1081,6 +1114,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         finally:
             conn.close()
 
+        messages = self._finalize_messages(messages)
         messages.sort(key=lambda m: self._parse_any_timestamp(m.get("timestamp")))
         if self.max_messages_per_chat > 0:
             messages = messages[: self.max_messages_per_chat]
@@ -1390,7 +1424,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
         else:
             messages = self._parse_plain_text(path)
 
-        messages = [m for m in messages if (m.get("text") or "").strip()]
+        messages = self._finalize_messages(messages)
         if not messages:
             return None
 
@@ -1443,7 +1477,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                         messages.extend(codex_messages)
                         continue
                 messages.extend(self._extract_messages_from_object(obj, fallback_timestamp=None))
-        return messages
+        return self._finalize_messages(messages)
 
     def _extract_codex_jsonl_record(
         self, obj: Any
@@ -2045,6 +2079,70 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             return True
         lowered = stripped.lower()
         return any(lowered.startswith(p) for p in self.PREAMBLE_TAG_PREFIXES)
+
+    def _finalize_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        cleaned: List[Dict[str, Any]] = []
+        for message in messages:
+            item = self._clean_visible_message(message)
+            if item:
+                cleaned.append(item)
+        return cleaned
+
+    def _clean_visible_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(message, dict):
+            return None
+        command = str(message.get("command") or "").strip()
+        unwrapped = self._unwrap_provider_text(
+            str(message.get("text") or ""),
+            str(message.get("role") or "user"),
+        )
+        if unwrapped is None:
+            if not command:
+                return None
+            clone = dict(message)
+            clone["text"] = command
+            return clone
+        clone = dict(message)
+        clone["role"] = unwrapped["role"]
+        clone["text"] = unwrapped["text"]
+        return clone
+
+    def _unwrap_provider_text(self, text: str, role: str) -> Optional[Dict[str, str]]:
+        source = (text or "").strip()
+        if not source:
+            return None
+        if not self._ENVELOPE_TAG_RE.search(source):
+            return {"role": role, "text": source}
+
+        queries = [match.group(1).strip() for match in self._USER_QUERY_RE.finditer(source)]
+        queries = [query for query in queries if query]
+        if queries:
+            visible = [query for query in queries if not self._is_agent_internal_query(query)]
+            if not visible:
+                title = self._task_title(source)
+                if title:
+                    return {"role": "system", "text": f"Task finished: {title}"}
+                return None
+            return {"role": role, "text": "\n\n".join(visible)}
+
+        stripped = self._ENVELOPE_BLOCK_RE.sub(" ", source).strip()
+        stripped = " ".join(stripped.split())
+        if not stripped or self._is_agent_internal_query(stripped):
+            title = self._task_title(source)
+            if title:
+                return {"role": "system", "text": f"Task finished: {title}"}
+            return None
+        return {"role": role, "text": stripped}
+
+    def _is_agent_internal_query(self, text: str) -> bool:
+        collapsed = " ".join((text or "").split())
+        return bool(self._INTERNAL_QUERY_RE.match(collapsed))
+
+    def _task_title(self, text: str) -> str:
+        block = self._TASK_BLOCK_RE.search(text or "")
+        body = block.group(1) if block else (text or "")
+        title = self._TASK_TITLE_RE.search(body)
+        return title.group(1).strip() if title else ""
 
     def _clean_chat_title(self, text: str) -> str:
         """Tab name / first prompt without Cursor's injected XML wrappers."""

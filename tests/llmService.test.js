@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const test = require('node:test');
 
-const { LlmService, exportFilenameTime, providerIcon, providerLabel } = require('../src/llmService');
+const { LlmService, exportFilenameTime, providerIcon, providerLabel, cleanVisibleMessage } = require('../src/llmService');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'subjective-chat-'));
@@ -462,4 +462,78 @@ test('sendMessage routes osUser conversations through SuSessionManager.runInSess
     timeout: 1800,
     sandbox_mode: 'workspace-write'
   });
+});
+
+test('cleanVisibleMessage unwraps Cursor user_query XML and hides task pings', () => {
+  const real = cleanVisibleMessage(
+    '<timestamp>Tuesday, Aug 18, 2026, 10:59 AM (UTC-3)</timestamp>\n<user_query>\nFix the login form\n</user_query>',
+    'user'
+  );
+  assert.deepEqual(real, { role: 'user', text: 'Fix the login form' });
+
+  const ping = cleanVisibleMessage([
+    '<timestamp>Tuesday, Aug 18, 2026, 10:59 AM (UTC-3)</timestamp>',
+    '<system_notification>',
+    'The above task is complete.',
+    '<task>',
+    'kind: shell',
+    'status: success',
+    'title: Rebuild API and start Vite on VAI 281',
+    '</task>',
+    '</system_notification_>',
+    '<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed). If there\'s no follow-ups needed, don\'t explicitly say that.</user_query>'
+  ].join('\n'), 'user');
+  assert.deepEqual(ping, { role: 'system', text: 'Task finished: Rebuild API and start Vite on VAI 281' });
+
+  const boilerplate = cleanVisibleMessage(
+    '<timestamp>now</timestamp>\n<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed).</user_query>',
+    'user'
+  );
+  assert.equal(boilerplate, null);
+
+  assert.deepEqual(cleanVisibleMessage('plain user text', 'user'), { role: 'user', text: 'plain user text' });
+  assert.deepEqual(
+    cleanVisibleMessage('Use a `<div>` in the template', 'assistant'),
+    { role: 'assistant', text: 'Use a `<div>` in the template' }
+  );
+});
+
+test('history hydrate shows Cursor user_query text, not the XML envelope', (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  writeChat(paths.contextDir, 'cursor-Localchats-test-context.json', {
+    title: 'selenium_agent',
+    product: 'cursor',
+    thread_id: 'thread-xml',
+    source_mtime: 200,
+    messages: [
+      {
+        role: 'user',
+        text: '<timestamp>Tue</timestamp>\n<user_query>\nsee all messages for selenium_agent\n</user_query>',
+        timestamp: '2026-08-18T10:58:00Z'
+      },
+      {
+        role: 'user',
+        text: [
+          '<timestamp>Tue</timestamp>',
+          '<system_notification><task>\ntitle: Restart Vite proxying API to wittycoast\n</task></system_notification_>',
+          '<user_query>Briefly inform the user about the task result and perform any follow-up actions (if needed).</user_query>'
+        ].join('\n'),
+        timestamp: '2026-08-18T10:59:00Z'
+      },
+      {
+        role: 'assistant',
+        text: '3 passed / 3 skipped',
+        timestamp: '2026-08-18T11:22:00Z'
+      }
+    ]
+  });
+
+  const service = new LlmService(paths);
+  const conversation = service.listConversations({ includeMessages: true })[0];
+  assert.deepEqual(conversation.messages.map((message) => ({ role: message.role, text: message.text })), [
+    { role: 'user', text: 'see all messages for selenium_agent' },
+    { role: 'system', text: 'Task finished: Restart Vite proxying API to wittycoast' },
+    { role: 'assistant', text: '3 passed / 3 skipped' }
+  ]);
 });

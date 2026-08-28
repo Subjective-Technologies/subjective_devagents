@@ -8,6 +8,14 @@
   grid-template-columns: minmax(0, 1fr) !important;
 }
 
+/* styles.css gives .app-shell two rows at <=720px, sized for the mobile build
+   where .sidebar is a visible top strip. This build hides .sidebar, so the chat
+   pane fell into the "auto" row and collapsed to content height, leaving the
+   transcript ~18px tall above a screen of dead space. One row, full height. */
+.app-shell {
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
 /* Dashboard already has a left menu. Hide this app's brand column so the
    transcript sits immediately to the right of that menu. */
 .sidebar {
@@ -15,7 +23,7 @@
 }
 
 .content-grid {
-  grid-template-columns: minmax(0, 1fr) 360px !important;
+  grid-template-columns: minmax(0, 1fr) 400px !important;
 }
 
 .right-rail {
@@ -55,6 +63,32 @@
   min-height: 0;
 }
 
+/* The chat list in the rail is a real table and must stay one at every iframe
+   width. Never let a narrow-viewport rule collapse it into a chip strip. */
+#conversationsPanel .conversation-list {
+  display: block !important;
+  overflow-x: hidden !important;
+}
+
+#conversationsPanel .conversation-table {
+  display: table !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+#conversationsPanel .conversation-table tbody {
+  display: table-row-group !important;
+}
+
+#conversationsPanel .conversation-row {
+  display: table-row !important;
+}
+
+#conversationsPanel .conversation-row > td {
+  display: table-cell !important;
+  vertical-align: middle !important;
+}
+
 #conversationsPanel .panel-head {
   display: flex;
   align-items: center;
@@ -88,6 +122,12 @@ body.chats-collapsed .conversation-browser {
   display: none;
 }
 
+/* The rail's collapse toggle must not follow the chat list into the drawer —
+   there is no visible toggle in there to undo it with. */
+body.chats-collapsed .mobile-drawer-panel .conversation-browser {
+  display: block;
+}
+
 body.chats-collapsed .content-grid {
   grid-template-columns: minmax(0, 1fr) 168px !important;
 }
@@ -107,7 +147,7 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .content-grid {
-    grid-template-columns: minmax(0, 1fr) 320px !important;
+    grid-template-columns: minmax(0, 1fr) 360px !important;
   }
 
   .users-pane {
@@ -118,9 +158,51 @@ body.chats-collapsed .right-rail .user-list {
 @media (max-width: 720px) {
   .content-grid {
     grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
   }
 
+  /* Phone width: the rail's contents are not dropped, they move into
+     #mobileDrawer (see the "☰ Chats" button in the topbar). Hiding the rail
+     without that drawer is what made Chats and Users unreachable. */
   .right-rail {
     display: none;
+  }
+
+  /* The drawer is outside .right-rail, so the rail's overrides stop applying —
+     restate what the borrowed panels need on their own. */
+  .mobile-drawer-panel .users-pane {
+    display: grid !important;
+    max-height: 34dvh;
+  }
+
+  .mobile-drawer-panel .user-list {
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .mobile-drawer-panel .conversation-browser {
+    display: grid;
+    gap: 8px;
+  }
+
+  .mobile-drawer-panel .conversation-list {
+    display: block;
+    max-height: 46dvh;
+    overflow-y: auto;
+  }
+
+  .mobile-drawer-panel .conversation-table {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  .mobile-drawer-panel .conversation-row {
+    display: table-row;
+  }
+
+  .mobile-drawer-panel .conversation-row > td {
+    display: table-cell;
+    vertical-align: middle;
   }
 }

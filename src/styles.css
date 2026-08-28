@@ -227,23 +227,34 @@ h1 {
   font-weight: 800;
 }
 
-.conversation-list,
 .user-list {
   display: grid;
   gap: 6px;
 }
 
+/* Scroll container only — the chat list itself is a real <table> inside it,
+   because a <table> cannot be its own overflow-y box. */
 .conversation-list {
-  display: table;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 3px;
+  scrollbar-width: none;
+}
+
+.conversation-table {
   width: 100%;
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0 4px;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 3px;
-  scrollbar-width: none;
 }
+
+.conversation-table col.col-user { width: 9rem; }
+.conversation-table col.col-icon { width: 28px; }
+.conversation-table col.col-name { width: auto; }
+.conversation-table col.col-unread { width: 34px; }
 
 /* scrolls, but the bar itself never shows */
 .conversation-list::-webkit-scrollbar {
@@ -262,7 +273,6 @@ h1 {
 }
 
 .conversation-row {
-  display: table-row;
   background: transparent;
   color: #cfd7e6;
   text-align: left;
@@ -271,31 +281,42 @@ h1 {
   cursor: pointer;
 }
 
-.conversation-row > * {
-  display: table-cell;
+.conversation-row > td {
   vertical-align: middle;
   padding: 6px 6px;
 }
 
+.conversation-row:focus-visible {
+  outline: none;
+}
+
+.conversation-row:focus-visible > td {
+  box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+
 .conversation-user-cell {
-  width: 7.6rem;
   padding-left: 8px;
+  overflow: hidden;
 }
 
 .conversation-icon-cell {
-  width: 28px;
   padding-left: 2px;
   padding-right: 2px;
   text-align: center;
+  overflow: hidden; /* a broken icon must not push its alt text into the title */
 }
 
 .conversation-unread-cell {
-  width: 24px;
   padding-right: 8px;
+  text-align: right;
+}
+
+.conversation-name-cell {
+  max-width: 0; /* lets table-layout:fixed clip the title instead of widening the column */
 }
 
 .conversation-label {
-  width: auto;
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -334,26 +355,27 @@ h1 {
 .conversation-user-pill.user-hue-10 { color: #e0f2fe; background: #075985; box-shadow: inset 0 0 0 1px #38bdf8; }
 .conversation-user-pill.user-hue-11 { color: #fae8ff; background: #86198f; box-shadow: inset 0 0 0 1px #e879f9; }
 
-.conversation-row.active > * {
+.conversation-row.active > td {
   color: #ffffff;
   background: linear-gradient(90deg, var(--accent-soft), rgba(255,255,255,0.04));
 }
 
-.conversation-row.active > :first-child {
+.conversation-row.active > td:first-child {
   box-shadow: inset 2px 0 0 var(--accent);
   border-radius: 8px 0 0 8px;
 }
 
-.conversation-row.active > :last-child {
+.conversation-row.active > td:last-child {
   border-radius: 0 8px 8px 0;
 }
 
-.conversation-row:hover:not(.active) > * {
+.conversation-row:hover:not(.active) > td {
   background: rgba(255, 255, 255, 0.04);
 }
 
 .conversation-rename-input {
-  display: table-cell;
+  display: block;
+  box-sizing: border-box;
   min-width: 0;
   width: 100%;
   margin: 0;
@@ -370,6 +392,7 @@ h1 {
 }
 
 .conversation-row b {
+  justify-self: end;
   min-width: 20px;
   height: 20px;
   display: grid;
@@ -1756,7 +1779,8 @@ img.provider-avatar[src$="cursor.svg"] {
 
 .mobile-drawer-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -1797,7 +1821,7 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .mobile-drawer-panel .conversation-list {
-  display: grid;
+  display: block;
 }
 
 .mobile-drawer-panel .users-pane {
@@ -1915,36 +1939,20 @@ img.provider-avatar[src$="cursor.svg"] {
     max-width: 64vw;
   }
 
-  .conversation-list {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
+  /* Narrow viewports keep the real table — only the columns get tighter.
+     Do NOT turn this back into a flex chip strip: the dashboard My Agents
+     iframe is often <=720px and must still show aligned columns. */
+  .conversation-table col.col-user { width: 7rem; }
+  .conversation-table col.col-icon { width: 24px; }
+  .conversation-table col.col-unread { width: 30px; }
 
-  .conversation-row {
-    display: grid;
-    grid-template-columns: auto 18px minmax(0, 1fr) auto;
-    flex: 0 0 auto;
-    min-height: 34px;
-    max-width: 220px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .conversation-row > * {
-    display: block;
+  .conversation-row > td {
     padding: 6px 4px;
   }
 
-  .conversation-user-cell {
-    width: auto;
-  }
-
-  .conversation-row .conversation-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .conversation-user-pill {
+    padding: 2px 6px;
+    font-size: 9px;
   }
 
   .status-pill {
@@ -1968,15 +1976,26 @@ img.provider-avatar[src$="cursor.svg"] {
   }
 
   .mobile-tabs .conversation-list {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+  }
+
+  .mobile-tabs .conversation-table,
+  .mobile-tabs .conversation-table tbody {
     display: flex;
     gap: 8px;
-    overflow-x: auto;
-    padding-bottom: 2px;
+    width: auto;
+  }
+
+  .mobile-tabs .conversation-table colgroup {
+    display: none;
   }
 
   .mobile-tabs .conversation-row {
     display: grid;
     grid-template-columns: auto 18px minmax(0, 1fr) auto;
+    align-items: center;
     flex: 0 0 auto;
     min-width: 118px;
     max-width: 190px;
@@ -1985,14 +2004,30 @@ img.provider-avatar[src$="cursor.svg"] {
     background: rgba(255, 255, 255, 0.05);
   }
 
+  .mobile-tabs .conversation-row > td {
+    display: block;
+    padding: 6px 4px;
+  }
+
+  .mobile-tabs .conversation-name-cell {
+    max-width: none;
+  }
+
   .topbar {
     grid-template-columns: 1fr;
     padding: 10px 12px;
   }
 
   .topbar-main {
+    display: flex;
+    align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+  }
+
+  .topbar-main > div:first-child {
+    flex: 1 1 130px;
+    min-width: 0;
   }
 
   .topbar h2 {
@@ -2011,10 +2046,12 @@ img.provider-avatar[src$="cursor.svg"] {
   .topbar .mobile-menu-button {
     display: inline-flex;
     width: auto;
+    flex: 0 0 auto;
   }
 
   .topbar .top-actions {
     margin-left: auto;
+    flex: 0 0 auto;
   }
 
   .icon-button {
@@ -2130,9 +2167,6 @@ img.provider-avatar[src$="cursor.svg"] {
     padding: 12px;
   }
 
-  .mobile-drawer-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
 
   .mobile-drawer-panel .users-pane {
     max-height: 30dvh;

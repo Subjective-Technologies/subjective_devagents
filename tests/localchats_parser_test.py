@@ -284,6 +284,59 @@ class LocalChatsParserTest(unittest.TestCase):
         self.assertEqual(manifest["sources"]["stale"]["title"], "manager_new")
         self.assertEqual(manifest["sources"]["composer"]["title"], "VAI-238")
 
+    def test_cursor_user_query_xml_is_unwrapped_and_task_pings_are_hidden(self):
+        records = [
+            {
+                "role": "user",
+                "message": {
+                    "content": [{
+                        "type": "text",
+                        "text": (
+                            "<timestamp>Tuesday, Aug 18, 2026, 10:58 AM (UTC-3)</timestamp>\n"
+                            "<user_query>\nsee all messages for selenium_agent\n</user_query>"
+                        ),
+                    }]
+                },
+            },
+            {
+                "role": "user",
+                "message": {
+                    "content": [{
+                        "type": "text",
+                        "text": (
+                            "<timestamp>Tuesday, Aug 18, 2026, 10:59 AM (UTC-3)</timestamp>\n"
+                            "<system_notification>\nThe above task is complete.\n"
+                            "<task>\nkind: shell\nstatus: success\n"
+                            "title: Rebuild API and start Vite on VAI 281\n"
+                            "</task>\n</system_notification_>\n"
+                            "<user_query>Briefly inform the user about the task result "
+                            "and perform any follow-up actions (if needed).</user_query>"
+                        ),
+                    }]
+                },
+            },
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "3 passed / 3 skipped"}]
+                },
+            },
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+            handle.flush()
+            messages = self.datasource._parse_jsonl_messages(handle.name, "cursor")
+
+        self.assertEqual(
+            [(m["role"], m["text"]) for m in messages],
+            [
+                ("user", "see all messages for selenium_agent"),
+                ("system", "Task finished: Rebuild API and start Vite on VAI 281"),
+                ("assistant", "3 passed / 3 skipped"),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

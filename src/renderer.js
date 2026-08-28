@@ -180,10 +180,28 @@ function isMobileLayout() {
   return Boolean(mobileDrawer) && window.matchMedia('(max-width: 720px)').matches;
 }
 
+// Where each node lived before the drawer borrowed it, so widening the viewport
+// (rotating a phone to landscape, dragging the iframe wider) can put it back.
+const mobileNodeHomes = new WeakMap();
+
 function mountNode(node, slot) {
   if (!node || !slot) return;
   if (slot.contains(node)) return;
+  if (!mobileNodeHomes.has(node) && node.parentNode) {
+    mobileNodeHomes.set(node, { parent: node.parentNode, next: node.nextSibling });
+  }
   slot.replaceChildren(node);
+}
+
+function unmountNode(node) {
+  const home = node && mobileNodeHomes.get(node);
+  if (!home || !home.parent) return;
+  if (node.parentNode === home.parent) return;
+  home.parent.insertBefore(node, home.next && home.next.parentNode === home.parent ? home.next : null);
+}
+
+function mobileMovableNodes() {
+  return [conversationBrowser || conversationList, usersPane, accentPanel, topbarMeta, topActions];
 }
 
 function mountMobileLayout() {
@@ -196,19 +214,41 @@ function mountMobileLayout() {
   mobileMounted = true;
 }
 
+// Without this the borrowed panels stay stranded in a closed dialog once the
+// viewport grows back past 720px, and the rail comes back empty.
+function unmountMobileLayout() {
+  if (!mobileMounted) return;
+  for (const node of mobileMovableNodes()) unmountNode(node);
+  mobileMounted = false;
+}
+
+function syncMobileLayout() {
+  if (isMobileLayout()) {
+    mountMobileLayout();
+    return;
+  }
+  if (mobileDrawer && mobileDrawer.open) closeMobileDrawer();
+  unmountMobileLayout();
+}
+
 function setMobileDrawerTab(name) {
+  // Builds differ: the Android shell has no "conversations" panel (chats live in
+  // an always-visible strip), the web build has no "appearance" panel. Fall back
+  // to the first tab that exists rather than activating nothing.
+  const known = mobileDrawerTabs.map((tab) => tab.dataset.mobileDrawerTab);
+  const target = known.includes(name) ? name : known[0];
   for (const tab of mobileDrawerTabs) {
-    tab.classList.toggle('active', tab.dataset.mobileDrawerTab === name);
+    tab.classList.toggle('active', tab.dataset.mobileDrawerTab === target);
   }
   for (const panel of mobileDrawerPanels) {
-    panel.classList.toggle('active', panel.dataset.mobileDrawerPanel === name);
+    panel.classList.toggle('active', panel.dataset.mobileDrawerPanel === target);
   }
 }
 
 function openMobileDrawer(tabName = 'conversations') {
   if (!mobileDrawer) return;
-  mountMobileLayout();
-  setMobileDrawerTab(tabName || 'users');
+  syncMobileLayout();
+  setMobileDrawerTab(tabName);
   if (mobileDrawer.showModal) mobileDrawer.showModal();
   else mobileDrawer.setAttribute('open', '');
 }
@@ -376,6 +416,7 @@ function ensureConversation(target, label = target, kind = target.startsWith('#'
 }
 
 function setActiveTarget(target) {
+  if (mobileDrawer && mobileDrawer.open) closeMobileDrawer();
   const conversation = ensureConversation(target);
   activeTarget = target;
   conversation.unread = 0;
@@ -429,8 +470,43 @@ function addEvent(kind, data) {
     conversation.sortAt = Math.max(Number(conversation.sortAt || 0), messageTimestamp);
   }
   if (target !== activeTarget) conversation.unread += 1;
-  if (target === activeTarget) renderTranscript();
+  if (target === activeTarget && !appendTranscriptEntry(conversation)) renderTranscript();
   renderConversations();
+}
+
+// A new message used to redraw the whole transcript: markdown-it and highlight.js re-ran
+// over every earlier message (~110ms in a 200-message chat, on the main thread, for each
+// arriving message). Appending the single new entry is the same DOM, ~1ms. Falls back to
+// a full render whenever the transcript is not exactly one event behind the model.
+function appendTranscriptEntry(conversation) {
+  if (pendingTranscriptRender) return false;          // a full render is already queued
+  if (conversation.target !== activeTarget) return false;
+  if (transcriptTarget !== conversation.target) return false;
+  if (conversation.loading) return false;
+  const events = conversation.events;
+  if (transcriptRenderedCount !== events.length - 1) return false;
+  const index = events.length - 1;
+  // Action buttons belong to the final assistant message only, so the entry that was last
+  // until now has to give them up. renderEntry() emits exactly one .entry per event, which
+  // is what makes this positional lookup safe.
+  const previous = events[index - 1];
+  if (previous && previous.data.assistant) {
+    const rendered = transcript.querySelectorAll('.entry:not(.thinking-entry)');
+    const stale = rendered[index - 1];
+    if (!stale) return false;
+    stale.replaceWith(renderEntry(previous.kind, previous.data, { conversation, actionable: false }));
+  }
+  const event = events[index];
+  const node = renderEntry(event.kind, event.data, {
+    conversation,
+    actionable: Boolean(event.data.assistant)
+  });
+  const thinking = transcript.querySelector('.thinking-entry');
+  if (thinking) transcript.insertBefore(node, thinking);
+  else transcript.appendChild(node);
+  transcriptRenderedCount = events.length;
+  transcript.scrollTop = transcript.scrollHeight;
+  return true;
 }
 
 const THINKING_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -483,12 +559,50 @@ function renderThinkingRow(conversation) {
   return item;
 }
 
+// A burst of events (an agent reply arriving as several messages, a batch of IRC joins)
+// used to run one full transcript + chat-list rebuild each. Collapse them into a single
+// repaint: the DOM only has to be right once per frame.
+let transcriptTarget = null;
+let transcriptRenderedCount = -1;
+let pendingTranscriptRender = false;
+let pendingConversationsRender = false;
+let renderFrame = 0;
+
+function flushRenders() {
+  renderFrame = 0;
+  if (pendingTranscriptRender) {
+    pendingTranscriptRender = false;
+    renderTranscriptNow();
+  }
+  if (pendingConversationsRender) {
+    pendingConversationsRender = false;
+    renderConversationsNow();
+  }
+}
+
+function scheduleRender() {
+  if (renderFrame) return;
+  renderFrame = window.requestAnimationFrame(flushRenders);
+}
+
 function renderTranscript() {
+  pendingTranscriptRender = true;
+  scheduleRender();
+}
+
+function renderConversations() {
+  pendingConversationsRender = true;
+  scheduleRender();
+}
+
+function renderTranscriptNow() {
   transcript.replaceChildren();
   const conversation = ensureConversation(activeTarget || config.channel);
+  transcriptTarget = conversation.target;
   if (conversation.kind === 'llm' && conversation.loading) {
     transcript.appendChild(renderEntry('system', { text: 'Loading conversation history…' }));
     stopThinkingAnimation();
+    transcriptRenderedCount = -1;
     return;
   }
   const finalEventIndex = conversation.events.length - 1;
@@ -504,6 +618,7 @@ function renderTranscript() {
   } else {
     stopThinkingAnimation();
   }
+  transcriptRenderedCount = conversation.events.length;
   transcript.scrollTop = transcript.scrollHeight;
 }
 
@@ -814,7 +929,7 @@ function conversationUserPillHtml(conversation) {
   return `<span class="conversation-user-pill user-hue-${slot}" title="${escapeHtml(username)}">${escapeHtml(username)}</span>`;
 }
 
-function renderConversations() {
+function renderConversationsNow() {
   conversationList.replaceChildren();
   const ordered = [...conversations.values()].sort((left, right) => {
     const groupDifference = conversationGroupRank(left) - conversationGroupRank(right);
@@ -841,38 +956,60 @@ function renderConversations() {
     conversationList.appendChild(empty);
     return;
   }
+  // A real <table>: the four columns line up across every row because the browser
+  // does the column sizing. A stack of <button>s with display:table-cell children
+  // does not form a table box, so the columns drifted per row.
+  const table = document.createElement('table');
+  table.className = 'conversation-table';
+  const colgroup = document.createElement('colgroup');
+  for (const name of ['col-user', 'col-icon', 'col-name', 'col-unread']) {
+    const col = document.createElement('col');
+    col.className = name;
+    colgroup.appendChild(col);
+  }
+  table.appendChild(colgroup);
+  const body = document.createElement('tbody');
   for (const conversation of visible) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'conversation-row';
-    button.title = conversation.sourceUser
+    const row = document.createElement('tr');
+    row.className = 'conversation-row';
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.title = conversation.sourceUser
       ? `${conversation.sourceUser}: ${conversation.label}`
       : conversation.label;
-    button.dataset.target = conversation.target;
-    button.classList.toggle('active', conversation.target === activeTarget);
-    button.classList.toggle('busy', Boolean(conversation.busy));
+    row.dataset.target = conversation.target;
+    row.classList.toggle('active', conversation.target === activeTarget);
+    row.classList.toggle('busy', Boolean(conversation.busy));
     const icon = conversation.icon
       ? `<img class="conversation-provider-icon" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(conversation.provider)}">`
       : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
-    button.innerHTML = `
-      <span class="conversation-user-cell">${conversationUserPillHtml(conversation)}</span>
-      <span class="conversation-icon-cell">${icon}</span>
-      <span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span>
-      <span class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</span>
+    row.innerHTML = `
+      <td class="conversation-user-cell">${conversationUserPillHtml(conversation)}</td>
+      <td class="conversation-icon-cell">${icon}</td>
+      <td class="conversation-name-cell"><span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span></td>
+      <td class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</td>
     `;
-    button.addEventListener('click', () => setActiveTarget(conversation.target));
+    row.addEventListener('click', () => setActiveTarget(conversation.target));
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target !== row) return; // let the inline rename field keep its keys
+      event.preventDefault();
+      setActiveTarget(conversation.target);
+    });
     if (conversation.kind === 'llm') {
-      button.addEventListener('contextmenu', (event) => {
+      row.addEventListener('contextmenu', (event) => {
         event.preventDefault();
         window.subjectiveChat.showConversationContextMenu(conversation.target, event.clientX, event.clientY);
       });
-      button.addEventListener('dblclick', (event) => {
+      row.addEventListener('dblclick', (event) => {
         event.preventDefault();
         beginRenameConversation(conversation.target);
       });
     }
-    conversationList.appendChild(button);
+    body.appendChild(row);
   }
+  table.appendChild(body);
+  conversationList.appendChild(table);
 }
 
 // Inline chat rename: swap the label for a text field in place. Triggered by double-click
@@ -1521,7 +1658,7 @@ settingsButton.addEventListener('click', openSettings);
 bookmarksButton.addEventListener('click', openBookmarks);
 
 if (mobileMenuButton) {
-  mobileMenuButton.addEventListener('click', () => openMobileDrawer('users'));
+  mobileMenuButton.addEventListener('click', () => openMobileDrawer('conversations'));
 }
 
 if (mobileDrawerClose) {
@@ -1536,6 +1673,16 @@ if (mobileDrawer) {
 
 for (const tab of mobileDrawerTabs) {
   tab.addEventListener('click', () => setMobileDrawerTab(tab.dataset.mobileDrawerTab));
+}
+
+// Crossing the 720px breakpoint in either direction: hand the borrowed panels
+// back to the rail when the viewport grows, so a rotation or an iframe resize
+// never leaves Chats and Users stranded inside a closed dialog.
+if (mobileDrawer) {
+  const mobileQuery = window.matchMedia('(max-width: 720px)');
+  const onBreakpointChange = () => syncMobileLayout();
+  if (mobileQuery.addEventListener) mobileQuery.addEventListener('change', onBreakpointChange);
+  else mobileQuery.addListener(onBreakpointChange);
 }
 
 settingsCloseButton.addEventListener('click', closeSettings);
@@ -1574,7 +1721,7 @@ if (accentGrid) {
 }
 
 window.addEventListener('resize', () => {
-  mountMobileLayout();
+  syncMobileLayout();
 });
 
 window.subjectiveChat.onEvent((event) => {
@@ -1691,7 +1838,7 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
   ensureConversation(config.channel, config.channel, 'channel');
   setActiveTarget(config.channel);
   await loadLlmConversations();
-  mountMobileLayout();
+  syncMobileLayout();
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;
   if (accentGrid) {

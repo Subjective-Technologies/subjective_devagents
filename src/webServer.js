@@ -374,7 +374,7 @@ if (require.main === module) {
     // while the server is up (new Cursor/Codex/Claude sessions, any user home
     // readable to this uid) appear without a restart.
     setImmediate(() => {
-      core._broadcast('llm-history-refreshed', { count: core.llmService.listConversations().length });
+      core._broadcast('llm-history-refreshed', { count: core.llmService.countConversations() });
     });
     let refreshing = false;
     const refreshHistory = async (reason) => {
@@ -386,7 +386,7 @@ if (require.main === module) {
           defaultLog('error', 'Local chat history pipeline failed', { reason, status: result.status, error: result.error });
           return;
         }
-        const count = core.llmService.listConversations().length;
+        const count = core.llmService.countConversations();
         defaultLog('info', 'Local chat history refreshed', { reason, count });
         core._broadcast('llm-history-refreshed', { count });
       } catch (error) {
