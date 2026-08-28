@@ -440,9 +440,23 @@ function setActiveTarget(target) {
   renderUsers();
   if (conversation.kind === 'llm' && !conversation.hydrated && !conversation.loading) {
     conversation.loading = true;
+    rendererLog('info', 'Hydrate conversation start', {
+      target,
+      provider: conversation.provider,
+      label: conversation.label,
+      sessionId: conversation.sessionId || '',
+      origin: conversation.origin || ''
+    });
     renderTranscript();
     window.subjectiveChat.getLlmConversation(target).then((result) => {
       conversation.loading = false;
+      rendererLog(result?.ok ? 'info' : 'error', 'Hydrate conversation done', {
+        target,
+        ok: Boolean(result?.ok),
+        error: result?.error || '',
+        messageCount: result?.conversation?.messages?.length || 0,
+        label: result?.conversation?.label || conversation.label
+      });
       if (result?.ok) upsertLlmConversation(result.conversation);
       else addEvent('system', { target, text: result?.error || 'Could not load conversation history.' });
     });
@@ -1213,6 +1227,30 @@ function addOptimisticLlmEcho(conversation, text) {
   });
 }
 
+// The optimistic bubble is a promise that the message went out. When the send fails that
+// promise is false, so take the bubble back and hand the text to the composer instead —
+// the accompanying system message says why, and nothing the user typed is lost.
+function dropOptimisticLlmEcho(conversation, text) {
+  if (!conversation) return;
+  const pending = conversation.pendingEchoes || [];
+  const echoIndex = pending.indexOf(text);
+  if (echoIndex !== -1) pending.splice(echoIndex, 1);
+  const eventIndex = conversation.events.findIndex(
+    (item) => item.data.optimistic && item.data.text === text
+  );
+  if (eventIndex !== -1) conversation.events.splice(eventIndex, 1);
+  conversation.busy = false;
+  conversation.busySince = 0;
+  if (conversation.target === activeTarget) {
+    input.disabled = false;
+    input.placeholder = `Message ${providerName(conversation.provider)}`;
+    // Only reclaim the composer if the user has not started typing something else.
+    if (!input.value.trim()) input.value = text;
+    renderTranscript();
+  }
+  renderConversations();
+}
+
 async function sendTextMessages(lines) {
   for (const text of lines) {
     const outgoing = normalizeLiteralSlash(text).trim();
@@ -1228,7 +1266,19 @@ async function sendTextMessages(lines) {
         if (conversation?.kind === 'llm') {
           addOptimisticLlmEcho(conversation, outgoing);
           const result = await window.subjectiveChat.sendLlmMessage(activeTarget, outgoing);
+          rendererLog(result?.ok ? 'info' : 'error', 'Composer LLM send result', {
+            target: activeTarget,
+            provider: conversation.provider,
+            ok: Boolean(result?.ok),
+            pending: Boolean(result?.pending),
+            proxyTimeout: result?.proxyTimeout || 0,
+            status: result?.status || '',
+            error: result?.error || '',
+            sessionId: result?.conversation?.sessionId || conversation.sessionId || ''
+          });
+          if (result?.pending) return;
           if (!result.ok) {
+            dropOptimisticLlmEcho(conversation, outgoing);
             const detail = result.error || result.status || 'Message was not sent.';
             addEvent('system', { target: activeTarget, text: `${providerName(conversation.provider)}: ${detail}` });
             if (result.sessions?.users) {
@@ -1248,6 +1298,7 @@ async function sendTextMessages(lines) {
       }
     } catch (error) {
       rendererLog('error', 'Failed to send message from composer', { message: error.message, stack: error.stack });
+      dropOptimisticLlmEcho(conversations.get(activeTarget), outgoing);
       addEvent('system', { target: activeTarget, text: `Message send failed: ${error.message}` });
     }
   }
@@ -1474,10 +1525,24 @@ function llmCodeEvent(entry, conversation) {
   };
 }
 
+function llmListMetadata(payload) {
+  const meta = { ...payload };
+  delete meta.messages;
+  delete meta.events;
+  delete meta.hydrated;
+  delete meta.loading;
+  delete meta.pendingEchoes;
+  delete meta.unread;
+  delete meta.busy;
+  return meta;
+}
+
 function upsertLlmConversation(payload) {
   if (!payload?.target) return null;
-  const conversation = ensureConversation(payload.target, payload.label, 'llm', payload);
-  if (payload.loaded !== false) {
+  const existing = conversations.get(payload.target);
+  const replaceEvents = payload.loaded !== false;
+  const conversation = ensureConversation(payload.target, payload.label, 'llm', llmListMetadata(payload));
+  if (replaceEvents) {
     conversation.events = richMessages.normalizeToolMessages(payload.messages || []).map((entry) => {
       if (entry.type === 'command') return llmCommandEvent(entry, conversation);
       if (entry.type === 'code') return llmCodeEvent(entry, conversation);
@@ -1485,9 +1550,12 @@ function upsertLlmConversation(payload) {
     });
     conversation.hydrated = true;
   }
-  if (conversation.target === activeTarget) {
+  if (conversation.target === activeTarget && (replaceEvents || !existing)) {
     renderTranscript();
     renderUsers();
+  } else if (conversation.target === activeTarget && payload.label) {
+    topChannel.textContent = conversation.label;
+    topChannel.title = conversation.label;
   }
   if (!deferConversationRender) renderConversations();
   return conversation;
@@ -1502,15 +1570,45 @@ async function loadLlmConversations() {
     return;
   }
   llmListTotal = Number(result.total || (result.conversations || []).length || 0);
+  const seen = new Set();
+  let keptHydrated = 0;
+  let dropped = 0;
   deferConversationRender += 1;
   try {
-    for (const [target, conversation] of [...conversations.entries()]) {
-      if (conversation.kind === 'llm') conversations.delete(target);
+    for (const payload of result.conversations || []) {
+      seen.add(payload.target);
+      upsertLlmConversation(payload);
     }
-    for (const conversation of result.conversations || []) upsertLlmConversation(conversation);
+    for (const [target, conversation] of [...conversations.entries()]) {
+      if (conversation.kind !== 'llm') continue;
+      if (seen.has(target)) continue;
+      if (target === activeTarget || conversation.hydrated || conversation.loading || conversation.busy) {
+        keptHydrated += 1;
+        continue;
+      }
+      dropped += 1;
+      conversations.delete(target);
+    }
   } finally {
     deferConversationRender -= 1;
     renderConversations();
+  }
+  rendererLog('info', 'LLM conversation list refreshed', {
+    query: q,
+    listed: (result.conversations || []).length,
+    total: llmListTotal,
+    keptHydrated,
+    dropped,
+    activeTarget,
+    activeHydrated: Boolean(conversations.get(activeTarget)?.hydrated)
+  });
+  const open = conversations.get(activeTarget);
+  if (open?.kind === 'llm' && !open.hydrated && !open.loading) {
+    open.loading = true;
+    window.subjectiveChat.getLlmConversation(activeTarget).then((loaded) => {
+      open.loading = false;
+      if (loaded?.ok) upsertLlmConversation(loaded.conversation);
+    });
   }
 }
 
@@ -1746,6 +1844,7 @@ window.subjectiveChat.onEvent((event) => {
       upsertLlmConversation(event.conversation);
       break;
     case 'llm-history-refreshed':
+      rendererLog('info', 'History refresh event', { count: event.count, activeTarget });
       loadLlmConversations();
       break;
     case 'conversation-rename-request':
@@ -1800,6 +1899,11 @@ window.subjectiveChat.onEvent((event) => {
       if (conversation) {
         conversation.busy = event.busy;
         conversation.busySince = event.busy ? Date.now() : 0;
+        rendererLog('info', event.busy ? 'LLM busy' : 'LLM idle', {
+          target: event.target,
+          provider: conversation.provider,
+          label: conversation.label
+        });
         if (event.target === activeTarget) {
           input.disabled = event.busy;
           input.placeholder = event.busy ? `${providerName(conversation.provider)} is working…` : `Message ${providerName(conversation.provider)}`;

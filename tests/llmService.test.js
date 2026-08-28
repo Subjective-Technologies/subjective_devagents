@@ -190,6 +190,62 @@ test('new Codex channel persists and adopts native session id after first messag
   assert.equal(new LlmService(paths).listConversations().find((item) => item.target === created.target).activeOnIrc, true);
 });
 
+// Regression test: a failed turn must not leave the user's line in the transcript. It used
+// to stay, saved to disk, with no reply after it - indistinguishable from a delivered
+// message, which is what "I sent it and nothing happened" looked like.
+test('a failed turn leaves no unsent message behind in the transcript', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  service._runPipeline = async () => ({
+    success: true,
+    result: { pipeline_result: { success: false, status: 'execution_error', error: 'cursor-agent failed' } }
+  });
+  const created = service.createConversation({ provider: 'cursor', name: 'Cursor chat', workspace: '/subjective' });
+  const before = service.findConversation(created.target, { includeMessages: true });
+  const result = await service.sendMessage(created.target, 'does this reach cursor?');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'execution_error');
+  // In memory and on disk: no orphan user message, and the sort time is untouched so the
+  // chat does not jump to the top of the list for a message that never went out.
+  const after = service.findConversation(created.target, { includeMessages: true });
+  assert.deepEqual(after.messages.map((message) => message.text), []);
+  assert.equal(after.sortAt, before.sortAt);
+  const restored = new LlmService(paths).findConversation(created.target, { includeMessages: true });
+  assert.deepEqual(restored.messages.map((message) => message.text), []);
+});
+
+test('a turn that throws also rolls the user message back', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  service._runPipeline = async () => { throw new Error('runtime exploded'); };
+  const created = service.createConversation({ provider: 'cursor', name: 'Cursor chat', workspace: '/subjective' });
+  await assert.rejects(service.sendMessage(created.target, 'hello'), /runtime exploded/);
+
+  const restored = new LlmService(paths).findConversation(created.target, { includeMessages: true });
+  assert.deepEqual(restored.messages.map((message) => message.text), []);
+});
+
+// A successful turn is unaffected: both lines are kept and persisted.
+test('a successful turn still records the user message and the reply', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  service._runPipeline = async () => ({
+    success: true,
+    result: { pipeline_result: { success: true, status: 'completed', response: 'PING-OK', session_id: 'chat-1' } }
+  });
+  const created = service.createConversation({ provider: 'cursor', name: 'Cursor chat', workspace: '/subjective' });
+  const result = await service.sendMessage(created.target, 'ping');
+
+  assert.equal(result.ok, true);
+  const restored = new LlmService(paths).findConversation(created.target, { includeMessages: true });
+  assert.deepEqual(restored.messages.map((message) => message.role), ['user', 'assistant']);
+  assert.equal(restored.messages[1].text, 'PING-OK');
+});
+
 // Regression test: a big agentic ask ("generate a whole new app") can genuinely run past
 // the datasource's own 10-minute connection default. sendMessage must hand the CLI
 // subprocess an explicit per-turn budget (not just rely on the outer wrapper's timeout,

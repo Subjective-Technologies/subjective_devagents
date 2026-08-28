@@ -337,6 +337,38 @@ class LocalChatsParserTest(unittest.TestCase):
             ],
         )
 
+    def test_cursor_ask_question_tool_becomes_visible_lettered_prompt(self):
+        record = {
+            "role": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "name": "AskQuestion",
+                    "input": {
+                        "title": "How should I proceed?",
+                        "questions": [{
+                            "prompt": "How should I proceed?",
+                            "options": [
+                                {"id": "a", "label": "Check logs"},
+                                {"id": "b", "label": "Fix frozen chats"},
+                                {"id": "c", "label": "Show hidden questions"},
+                                {"id": "d", "label": "Stop IRC spam"},
+                                {"id": "e", "label": "All of the above"},
+                            ],
+                        }],
+                    },
+                }]
+            },
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+            handle.flush()
+            messages = self.datasource._parse_jsonl_messages(handle.name, "cursor")
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["role"], "assistant")
+        self.assertIn("E. All of the above", messages[0]["text"])
+        self.assertIn("Which — A, B, C, D, or E?", messages[0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

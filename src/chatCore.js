@@ -81,7 +81,8 @@ class ChatCore extends EventEmitter {
     this.llmService = new LlmService({
       root: this.root,
       appHome: this.applicationHome,
-      suSessionManager: this.suSessionManager
+      suSessionManager: this.suSessionManager,
+      log: (level, message, details) => this.logFn(level, message, details)
     });
     for (const conversation of this.llmService.listConversations().filter((item) => item.activeOnIrc)) {
       if (!conversation.ircChannel) continue;
@@ -262,13 +263,24 @@ class ChatCore extends EventEmitter {
     this.currentNick = this.config.nick;
 
     const options = { host: this.config.host, port: this.config.port, rejectUnauthorized: false };
-    this.log('info', 'Connecting to IRC', { host: this.config.host, port: this.config.port, tls: this.config.tls, channel: this.config.channel, nick: this.config.nick });
+    const attempt = this.reconnectAttempt || 0;
+    if (attempt <= 1 || attempt % 10 === 0) {
+      this.log(attempt > 1 ? 'warn' : 'info', 'Connecting to IRC', {
+        host: this.config.host,
+        port: this.config.port,
+        tls: this.config.tls,
+        channel: this.config.channel,
+        nick: this.config.nick,
+        attempt
+      });
+    }
     this.socket = this.config.tls ? tls.connect(options) : net.connect(options);
     this.socket.setEncoding('utf8');
 
     this.socket.on('connect', () => {
       this.connected = true;
       this.reconnectAttempt = 0;
+      this._ircFailCount = 0;
       this.log('info', 'IRC connected');
       this._broadcast('status', { state: 'connected', text: `Connected to ${this.config.host}:${this.config.port}` });
       this.writeIrc(`NICK ${this.config.nick}`);
@@ -283,7 +295,15 @@ class ChatCore extends EventEmitter {
     });
 
     this.socket.on('error', (error) => {
-      this.log('error', 'IRC socket error', { message: error.message, stack: error.stack });
+      this._ircFailCount = (this._ircFailCount || 0) + 1;
+      if (this._ircFailCount === 1 || this._ircFailCount % 10 === 0) {
+        this.log('error', 'IRC socket error', {
+          message: error.message,
+          failCount: this._ircFailCount,
+          host: this.config.host,
+          port: this.config.port
+        });
+      }
       this._broadcast('status', { state: 'error', text: error.message });
     });
 
@@ -293,7 +313,9 @@ class ChatCore extends EventEmitter {
       this.socket = null;
       clearTimeout(this.nickRetryTimer);
       this.nickRetryTimer = null;
-      this.log('info', 'IRC disconnected', { manualDisconnect: this.manualDisconnect });
+      if (this.manualDisconnect || (this._ircFailCount || 0) <= 1 || (this._ircFailCount || 0) % 10 === 0) {
+        this.log('info', 'IRC disconnected', { manualDisconnect: this.manualDisconnect, failCount: this._ircFailCount || 0 });
+      }
       this._broadcast('status', { state: 'disconnected', text: 'Disconnected' });
       this._updateUsers();
       this._scheduleReconnect();
@@ -908,9 +930,22 @@ class ChatCore extends EventEmitter {
     const provider = conversation.provider || 'codex';
     const label = providerLabel(provider);
     this._broadcast('llm-busy', { target, busy: true });
+    this.log('info', 'LLM answer start', {
+      target,
+      provider,
+      from,
+      promptChars: String(text || '').length,
+      promptPreview: String(text || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+    });
     try {
       const response = await this.llmService.sendMessage(target, text, []);
-      if (response.userMessage) this._broadcast('llm-message', { target, message: response.userMessage, provider, from });
+      // Only echo the user's line once the turn actually happened. Broadcasting it on a
+      // failed send published an unsent message as a confirmed one, which the renderer
+      // then kept in place of its own optimistic bubble - the message looked delivered
+      // while llmService had already rolled it back out of the stored transcript.
+      if (response.ok && response.userMessage) {
+        this._broadcast('llm-message', { target, message: response.userMessage, provider, from });
+      }
       if (response.ok) {
         this._broadcast('llm-message', { target, message: response.assistantMessage, provider });
         this._broadcast('llm-conversation', { conversation: response.conversation });
@@ -919,6 +954,13 @@ class ChatCore extends EventEmitter {
         if (this.llmService._isAuthFailure(response) && !response.sessions) {
           response.sessions = await this.llmService.listProviderSessions(provider);
         }
+        this.log('error', 'LLM answer failed', {
+          target,
+          provider,
+          status: response.status || '',
+          error: response.error || '',
+          authFailure: this.llmService._isAuthFailure(response)
+        });
         const errorText = this.llmErrorText(label, response);
         this._broadcast('system', { target, text: errorText });
         if (this.llmService._isAuthFailure(response)) {
@@ -947,7 +989,9 @@ class ChatCore extends EventEmitter {
       this._broadcast('llm-busy', { target, busy: true });
       try {
         const response = await this.llmService.sendMessage(target, text, files);
-        if (response.userMessage) this._broadcast('llm-message', { target, message: response.userMessage, provider, from: this.currentNick });
+        if (response.ok && response.userMessage) {
+          this._broadcast('llm-message', { target, message: response.userMessage, provider, from: this.currentNick });
+        }
         if (response.ok) {
           this._broadcast('llm-message', { target, message: response.assistantMessage, provider });
           this._broadcast('llm-conversation', { conversation: response.conversation });

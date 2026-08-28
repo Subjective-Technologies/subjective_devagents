@@ -29,7 +29,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
     TEXT_EXTENSIONS = {".jsonl", ".json", ".md", ".txt", ".log"}
     MAX_FILE_BYTES = 500 * 1024 * 1024
     MANIFEST_FILENAME = ".subjective_localchats_manifest.json"
-    EXTRACTOR_VERSION = 5
+    EXTRACTOR_VERSION = 6
     PREAMBLE_TAG_PREFIXES = (
         "<environment_context",
         "<user_instructions",
@@ -1751,6 +1751,9 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             parts = [self._extract_text(item) for item in value]
             return "\n".join([p for p in parts if p]).strip()
         if isinstance(value, dict):
+            ask = self._format_ask_tool(value)
+            if ask:
+                return ask
             for key in [
                 "text",
                 "content",
@@ -1784,6 +1787,55 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                 return value["arguments"].strip()
 
         return ""
+
+    _ASK_TOOL_NAMES = {
+        "askquestion",
+        "ask_question",
+        "askuserquestion",
+        "ask_user_question",
+        "askuser",
+    }
+
+    def _format_ask_tool(self, value: Dict[str, Any]) -> str:
+        name = str(value.get("name") or value.get("toolName") or value.get("tool_name") or "").replace("-", "").lower()
+        value_type = str(value.get("type") or "").lower()
+        if name not in self._ASK_TOOL_NAMES and value_type not in self._ASK_TOOL_NAMES:
+            return ""
+        payload = value.get("input") or value.get("arguments") or value
+        if not isinstance(payload, dict):
+            return ""
+        title = str(payload.get("title") or payload.get("prompt") or "Question").strip()
+        questions = payload.get("questions")
+        if not isinstance(questions, list) or not questions:
+            options = payload.get("options")
+            questions = [{"prompt": title, "options": options}] if options else []
+        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        lines: List[str] = []
+        if title:
+            lines.append(title)
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            prompt = str(question.get("prompt") or question.get("question") or "").strip()
+            if prompt and prompt != title:
+                lines.append(prompt)
+            options = question.get("options") or []
+            used: List[str] = []
+            if isinstance(options, list):
+                for index, option in enumerate(options):
+                    if isinstance(option, dict):
+                        label = str(option.get("label") or option.get("id") or "").strip()
+                    else:
+                        label = str(option).strip()
+                    if not label:
+                        continue
+                    letter = letters[index] if index < len(letters) else str(index + 1)
+                    lines.append(f"{letter}. {label}")
+                    used.append(letter)
+            if len(used) >= 2:
+                listed = ", ".join(used[:-1]) + f", or {used[-1]}"
+                lines.append(f"Which — {listed}?")
+        return "\n".join(lines).strip()
 
     def _path_for_fs_stat(self, path: str) -> str:
         """Strip URI-style fragment (e.g. Cursor virtual source `db#composer:uuid`) for os.path ops."""

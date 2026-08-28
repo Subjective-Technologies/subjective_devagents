@@ -336,27 +336,46 @@
   // that happens to be followed by an unrelated yes/no question ("Want me to?") must NOT
   // be mistaken for a menu, so the labels have to appear in the question itself, not just
   // exist as list markers somewhere earlier in the message.
+  function choiceFromLabel(prose, label, index) {
+    const lineMatch = prose.match(new RegExp(`^[ \\t]*(?:[-*]\\s*)?${label}[.)]\\s+(.+)$`, 'mi'));
+    const summary = lineMatch ? lineMatch[1].replace(/[:.,;]?\s*$/, '').trim().slice(0, 80) : '';
+    return {
+      id: `choice-${label.toLowerCase()}`,
+      label: summary ? `${label} — ${summary}` : `Option ${label}`,
+      reply: label,
+      primary: index === 0
+    };
+  }
+
+  function consecutiveLetteredOptions(prose) {
+    const found = [...String(prose || '').matchAll(/^[ \t]*(?:[-*]\s*)?([A-Z])[.)]\s+\S/gm)].map((match) => match[1]);
+    if (found.length < 2 || found[0] !== 'A') return [];
+    const labels = [];
+    for (let index = 0; index < found.length; index += 1) {
+      const expected = String.fromCharCode(65 + index);
+      if (found[index] !== expected) break;
+      labels.push(expected);
+    }
+    return labels.length >= 2 ? labels : [];
+  }
+
   function detectEnumeratedChoices(prose, tail) {
     // Collapse "X, Y, or Z" down to a plain "X, Y, Z" comma list first - matching a
     // separator that can be ",", "/", " or ", or ", or " all at once in a single regex
     // reliably is fiddly (the comma-then-"or" combo needs two separator tokens back to
     // back), so it's simpler to normalize the English "or" away before splitting.
     const normalizedTail = tail.replace(/,?\s+or\s+/gi, ', ');
-    const named = normalizedTail.match(/\b([A-D](?:\s*[,/]\s*[A-D]){1,3})\s*\?\s*$/i)
-      || normalizedTail.match(/\b([1-4](?:\s*[,/]\s*[1-4]){1,3})\s*\?\s*$/i);
-    if (!named) return [];
-    const labels = [...new Set(named[1].toUpperCase().split(/\s*[,/]\s*/).filter(Boolean))];
-    if (labels.length < 2) return [];
-    return labels.map((label, index) => {
-      const lineMatch = prose.match(new RegExp(`^[ \\t]*(?:[-*]\\s*)?${label}[.)]\\s+(.+)$`, 'mi'));
-      const summary = lineMatch ? lineMatch[1].replace(/[:.,;]?\s*$/, '').trim().slice(0, 60) : '';
-      return {
-        id: `choice-${label.toLowerCase()}`,
-        label: summary ? `${label} — ${summary}` : `Option ${label}`,
-        reply: label,
-        primary: index === 0
-      };
-    });
+    const named = normalizedTail.match(/\b([A-Z](?:\s*[,/]\s*[A-Z]){1,7})\s*\?\s*$/i)
+      || normalizedTail.match(/\b([1-9](?:\s*[,/]\s*[1-9]){1,8})\s*\?\s*$/i);
+    if (named) {
+      const labels = [...new Set(named[1].toUpperCase().split(/\s*[,/]\s*/).filter(Boolean))];
+      if (labels.length >= 2) return labels.map((label, index) => choiceFromLabel(prose, label, index));
+    }
+    const lettered = consecutiveLetteredOptions(prose);
+    if (lettered.length >= 2 && /\b(?:which|choose|pick|select|option)\b/i.test(tail)) {
+      return lettered.map((label, index) => choiceFromLabel(prose, label, index));
+    }
+    return [];
   }
 
   function detectPromptActions(value) {

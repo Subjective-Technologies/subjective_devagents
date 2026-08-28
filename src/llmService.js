@@ -191,6 +191,12 @@ function cleanChatTitle(raw) {
   return text.replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
+function clipText(value, max = 120) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
 function conversationKey(item) {
   return `${item.provider}:${sessionIdentity(item)}`;
 }
@@ -275,6 +281,7 @@ class LlmService {
     // Passed in from main.js to avoid a circular require between llmService.js and
     // suSessionManager.js.
     this.suSessionManager = options.suSessionManager || null;
+    this.log = typeof options.log === 'function' ? options.log : () => {};
     this.busy = new Set();
     this._historyCache = null;
     this._sortedCache = null;
@@ -589,6 +596,12 @@ class LlmService {
     if (local) local.label = clean;
     this.labelOverrides[key] = clean;
     this._saveState();
+    this.log('info', 'LLM conversation renamed', {
+      target: key,
+      label: clean,
+      local: Boolean(local),
+      previous: local ? undefined : 'override-only'
+    });
     return { ok: true, conversation: this.findConversation(key) };
   }
 
@@ -657,7 +670,12 @@ class LlmService {
     // a slim projection without exportPath, so using listConversations() here made
     // click-to-open return an empty transcript.
     const metadata = this._historyConversations().find((conversation) => conversation.target === target) || null;
-    if (!metadata) return null;
+    if (!metadata) {
+      if (options.includeMessages === true) {
+        this.log('error', 'LLM conversation not found', { target });
+      }
+      return null;
+    }
     if (options.includeMessages !== true || !metadata.exportPath) return this._withLabelOverride(metadata);
     const payload = safeJson(metadata.exportPath);
     if (!payload) return this._withLabelOverride(metadata);
@@ -739,23 +757,42 @@ class LlmService {
   async refreshHistory() {
     this._historyCache = null;
     this._sortedCache = null;
+    const started = Date.now();
+    this.log('info', 'LLM history refresh start', { contextDir: this.contextDir });
     const response = await this._runPipeline(this.historyRuntime, {
       context_folder: this.contextDir,
       max_files: 500
     }, 1800);
     this._historyCache = null;
     this._sortedCache = null;
-    return this._pipelineResult(response);
+    const result = this._pipelineResult(response);
+    this.log(result.success ? 'info' : 'error', 'LLM history refresh done', {
+      ok: Boolean(result.success),
+      status: result.status || '',
+      error: result.error || '',
+      ms: Date.now() - started,
+      conversations: this.countConversations()
+    });
+    return result;
   }
 
   async sendMessage(target, text, files = []) {
     const clean = String(text || '').trim();
     if (!clean) return { ok: false, status: 'invalid_request', error: 'Message is empty.' };
     const source = this.findConversation(target, { includeMessages: true });
-    if (!source) return { ok: false, status: 'not_found', error: 'Conversation was not found.' };
+    if (!source) {
+      this.log('error', 'LLM send aborted: conversation not found', { target, promptChars: clean.length });
+      return { ok: false, status: 'not_found', error: 'Conversation was not found.' };
+    }
     const provider = writableProvider(source.provider);
-    if (!provider) return { ok: false, status: 'read_only', error: `${source.provider} history has no writable datasource.` };
-    if (this.busy.has(target)) return { ok: false, status: 'busy', error: `${provider.label} is already responding in this conversation.` };
+    if (!provider) {
+      this.log('error', 'LLM send aborted: read-only provider', { target, provider: source.provider });
+      return { ok: false, status: 'read_only', error: `${source.provider} history has no writable datasource.` };
+    }
+    if (this.busy.has(target)) {
+      this.log('warn', 'LLM send aborted: already busy', { target, provider: source.provider });
+      return { ok: false, status: 'busy', error: `${provider.label} is already responding in this conversation.` };
+    }
 
     let conversation = this.local.find((item) => item.target === target);
     if (!conversation) {
@@ -778,6 +815,11 @@ class LlmService {
     if (runningAsOtherUser) {
       const sessionStatus = this.suSessionManager ? this.suSessionManager.getStatus(conversation.osUser) : { status: 'idle' };
       if (sessionStatus.status !== 'ready') {
+        this.log('error', 'LLM send aborted: OS user session not ready', {
+          target,
+          osUser: conversation.osUser,
+          sessionStatus: sessionStatus.status
+        });
         return {
           ok: false,
           status: 'os_user_not_connected',
@@ -786,12 +828,40 @@ class LlmService {
       }
     }
 
+    // The message is recorded before the turn runs so a long agent reply still shows the
+    // user's own line, but it must not survive a turn that never happened - an unsent
+    // message left in the transcript reads exactly like a delivered one.
+    const previousUpdatedAt = conversation.updatedAt;
+    const previousSortAt = conversation.sortAt;
     const userMessage = { role: 'user', text: clean, time: Date.now() };
     conversation.messages.push(userMessage);
     conversation.updatedAt = userMessage.time;
     conversation.sortAt = userMessage.time;
     this._saveState();
     this.busy.add(target);
+    const started = Date.now();
+    this.log('info', 'LLM send start', {
+      target,
+      provider: source.provider,
+      sessionId: conversation.sessionId || '',
+      newSession: !conversation.sessionId,
+      osUser: conversation.osUser || currentOsUsername(),
+      sourceUser: conversation.sourceUser || '',
+      origin: conversation.origin,
+      workspace: conversation.workspace,
+      files: Array.isArray(files) ? files.length : 0,
+      promptChars: clean.length,
+      promptPreview: clipText(clean)
+    });
+
+    const rollbackUserMessage = () => {
+      const index = conversation.messages.lastIndexOf(userMessage);
+      if (index === -1) return;
+      conversation.messages.splice(index, 1);
+      conversation.updatedAt = previousUpdatedAt;
+      conversation.sortAt = previousSortAt;
+      this._saveState();
+    };
 
     try {
       const request = {
@@ -816,6 +886,17 @@ class LlmService {
         : await this._runPipeline(runtimePath, request, AGENT_TURN_WRAPPER_TIMEOUT_SECONDS);
       const result = this._pipelineResult(pipelineResponse);
       if (!result.success) {
+        rollbackUserMessage();
+        this.log('error', 'LLM send failed', {
+          target,
+          provider: source.provider,
+          status: result.status || '',
+          error: clipText(result.error, 400),
+          sessionId: conversation.sessionId || '',
+          osUser: conversation.osUser || currentOsUsername(),
+          authFailure: this._isAuthFailure(result),
+          ms: Date.now() - started
+        });
         const failure = { ok: false, ...result, userMessage };
         if (this._isAuthFailure(failure)) {
           failure.sessions = await this.listProviderSessions(source.provider);
@@ -835,6 +916,14 @@ class LlmService {
       conversation.updatedAt = assistantMessage.time;
       conversation.sortAt = assistantMessage.time;
       this._saveState();
+      this.log('info', 'LLM send ok', {
+        target,
+        provider: source.provider,
+        sessionId: conversation.sessionId,
+        responseChars: String(result.response || '').length,
+        responsePreview: clipText(result.response),
+        ms: Date.now() - started
+      });
       return {
         ok: true,
         result,
@@ -842,6 +931,15 @@ class LlmService {
         userMessage,
         assistantMessage
       };
+    } catch (error) {
+      rollbackUserMessage();
+      this.log('error', 'LLM send crashed', {
+        target,
+        provider: source.provider,
+        message: error.message,
+        stack: error.stack
+      });
+      throw error;
     } finally {
       this.busy.delete(target);
     }
@@ -858,9 +956,19 @@ class LlmService {
   }
 
   _runPipeline(runtimePath, payload, timeoutSeconds) {
+    const action = payload && typeof payload === 'object' ? String(payload.action || 'history') : 'history';
+    const started = Date.now();
+    this.log('info', 'LLM pipeline spawn', {
+      action,
+      runtime: path.basename(runtimePath),
+      timeoutSeconds,
+      sessionId: payload?.session_id || '',
+      workspace: payload?.working_directory || payload?.context_folder || ''
+    });
     return new Promise((resolve) => {
       if (!fs.existsSync(runtimePath) || !fs.existsSync(this.pipelineRuntime)) {
         const missing = !fs.existsSync(runtimePath) ? runtimePath : this.pipelineRuntime;
+        this.log('error', 'LLM pipeline runtime missing', { runtime: missing, action });
         resolve({ success: false, status: 'runtime_missing', error: `Pipeline runtime is missing: ${missing}` });
         return;
       }
@@ -891,8 +999,24 @@ class LlmService {
       let stderr = '';
       child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
       child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-      child.on('error', (error) => resolve({ success: false, status: 'runtime_error', error: error.message }));
-      child.on('close', () => resolve(this._parsePipelineOutput(stdout, stderr)));
+      child.on('error', (error) => {
+        this.log('error', 'LLM pipeline spawn error', { action, runtime: path.basename(runtimePath), message: error.message, ms: Date.now() - started });
+        resolve({ success: false, status: 'runtime_error', error: error.message });
+      });
+      child.on('close', (code) => {
+        const parsed = this._parsePipelineOutput(stdout, stderr);
+        this.log(parsed.success === false ? 'error' : 'info', 'LLM pipeline exit', {
+          action,
+          runtime: path.basename(runtimePath),
+          exitCode: code,
+          ok: parsed.success !== false,
+          status: parsed.status || parsed.result?.pipeline_result?.status || '',
+          stderrChars: String(stderr || '').length,
+          stderrPreview: clipText(stderr, 240),
+          ms: Date.now() - started
+        });
+        resolve(parsed);
+      });
       child.stdin.end(JSON.stringify(payload));
     });
   }
@@ -916,13 +1040,29 @@ class LlmService {
       const missing = !fs.existsSync(runtimePath) ? runtimePath : this.pipelineRuntime;
       return { success: false, status: 'runtime_missing', error: `Pipeline runtime is missing: ${missing}` };
     }
+    const started = Date.now();
+    this.log('info', 'LLM pipeline as OS user', {
+      osUser,
+      action: payload && typeof payload === 'object' ? String(payload.action || '') : '',
+      runtime: path.basename(runtimePath),
+      timeoutSeconds,
+      sessionId: payload?.session_id || ''
+    });
     try {
       const argv = [this.pythonPath, this.pipelineRuntime, runtimePath, '--timeout', String(timeoutSeconds)];
       const bridged = await this.suSessionManager.runInSession(osUser, argv, JSON.stringify(payload), {
         timeoutMs: timeoutSeconds * 1000 + 10000
       });
-      return this._parsePipelineOutput(bridged.stdout, bridged.stderr);
+      const parsed = this._parsePipelineOutput(bridged.stdout, bridged.stderr);
+      this.log(parsed.success === false ? 'error' : 'info', 'LLM pipeline as OS user done', {
+        osUser,
+        ok: parsed.success !== false,
+        status: parsed.status || '',
+        ms: Date.now() - started
+      });
+      return parsed;
     } catch (error) {
+      this.log('error', 'LLM pipeline as OS user failed', { osUser, message: error.message, ms: Date.now() - started });
       return { success: false, status: 'runtime_error', error: error.message };
     }
   }

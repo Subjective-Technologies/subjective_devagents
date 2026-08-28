@@ -171,9 +171,18 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
             # History-imported conversations carry chat ids cursor-agent may not
             # know (IDE composer sessions, wiped CLI state). Fall back to a fresh
             # chat instead of a dead end - context is lost but the user can talk.
-            if not result["success"] and resume_id and self._looks_like_unknown_session(result):
+            # Retry as a fresh chat when the chat id itself is the problem. Auth failures
+            # would fail identically, and a timeout already cost the user the full turn
+            # budget - retrying either one just doubles the wait.
+            if (
+                not result["success"]
+                and resume_id
+                and result.get("status") not in ("authentication_required", "timeout")
+            ):
                 BBLogger.log(
-                    f"[SubjectiveCursorDataSource] Resume of {resume_id} failed; starting new chat"
+                    f"[SubjectiveCursorDataSource] Resume of {resume_id} failed "
+                    f"(status={result.get('status')}, unknown_session="
+                    f"{self._looks_like_unknown_session(result)}); starting new chat"
                 )
                 self.session_id = None
                 result = self._run_turn(prompt, None)
@@ -205,7 +214,8 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
         BBLogger.log(
             "[SubjectiveCursorDataSource] Starting Cursor turn "
             f"mode={'resume' if resume_id else 'new'} chat={resume_id or '-'} "
-            f"workspace={self.working_directory}"
+            f"workspace={self.working_directory} timeout={self.timeout}s "
+            f"prompt_chars={len(prompt)}"
         )
         try:
             completed = subprocess.run(
@@ -225,8 +235,25 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
         stderr = completed.stderr or ""
         parsed = self._parse_output(stdout)
         session_id = parsed["session_id"] or resume_id or ""
+        BBLogger.log(
+            "[SubjectiveCursorDataSource] Cursor turn finished "
+            f"exit={completed.returncode} chat={session_id or '-'} "
+            f"text_chars={len(parsed.get('text') or '')} "
+            f"events={len(parsed.get('events') or [])} "
+            f"stderr_chars={len(stderr)}"
+        )
 
-        if completed.returncode != 0 and not parsed["text"]:
+        # cursor-agent does not always signal failure through the exit code: a stale
+        # login prints "Error: Authentication required..." on stdout and exits 0.
+        # `-p --output-format json` emits JSON on every real turn, so "exit 0, nothing
+        # parseable, and an error-shaped line" is a failed turn - without this it was
+        # reported as success and the error text became the assistant's reply.
+        silent_failure = (
+            completed.returncode == 0
+            and not parsed["text"]
+            and self._looks_like_cli_error(stdout, stderr)
+        )
+        if (completed.returncode != 0 and not parsed["text"]) or silent_failure:
             blob = f"{stderr}\n{stdout}"
             auth_fail = "authentication required" in blob.lower() or "agent login" in blob.lower()
             result = {
@@ -318,14 +345,86 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
                     text = value.strip()
             content = obj.get("content")
             if isinstance(content, list):
-                parts = [
-                    str(part.get("text") or "")
-                    for part in content
-                    if isinstance(part, dict) and part.get("text")
-                ]
+                parts = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("text"):
+                        parts.append(str(part.get("text") or ""))
+                    else:
+                        ask = self._format_ask_tool(part)
+                        if ask:
+                            parts.append(ask)
                 if parts:
                     text = "\n".join(parts).strip()
+            ask = self._format_ask_tool(obj)
+            if ask:
+                text = ask if not text else f"{text}\n\n{ask}"
         return {"text": text, "session_id": session_id, "events": events}
+
+    _ASK_TOOL_NAMES = {
+        "askquestion",
+        "ask_question",
+        "askuserquestion",
+        "ask_user_question",
+        "askuser",
+    }
+
+    def _format_ask_tool(self, value) -> str:
+        if not isinstance(value, dict):
+            return ""
+        name = str(value.get("name") or value.get("toolName") or value.get("tool_name") or "").replace("-", "").lower()
+        value_type = str(value.get("type") or "").lower()
+        if name not in self._ASK_TOOL_NAMES and value_type not in self._ASK_TOOL_NAMES:
+            return ""
+        payload = value.get("input") or value.get("arguments") or value
+        if not isinstance(payload, dict):
+            return ""
+        title = str(payload.get("title") or payload.get("prompt") or "Question").strip()
+        questions = payload.get("questions")
+        if not isinstance(questions, list) or not questions:
+            options = payload.get("options")
+            questions = [{"prompt": title, "options": options}] if options else []
+        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        lines: list[str] = []
+        if title:
+            lines.append(title)
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            prompt = str(question.get("prompt") or question.get("question") or "").strip()
+            if prompt and prompt != title:
+                lines.append(prompt)
+            options = question.get("options") or []
+            used: list[str] = []
+            if isinstance(options, list):
+                for index, option in enumerate(options):
+                    if isinstance(option, dict):
+                        label = str(option.get("label") or option.get("id") or "").strip()
+                    else:
+                        label = str(option).strip()
+                    if not label:
+                        continue
+                    letter = letters[index] if index < len(letters) else str(index + 1)
+                    lines.append(f"{letter}. {label}")
+                    used.append(letter)
+            if len(used) >= 2:
+                listed = ", ".join(used[:-1]) + f", or {used[-1]}"
+                lines.append(f"Which — {listed}?")
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _looks_like_cli_error(stdout: str, stderr: str) -> bool:
+        for stream in (stderr, stdout):
+            head = str(stream or "").strip()
+            if not head:
+                continue
+            lowered = head.lower()
+            if lowered.startswith("error:") or lowered.startswith("error "):
+                return True
+            if "authentication required" in lowered or "agent login" in lowered:
+                return True
+        return False
 
     @staticmethod
     def _looks_like_unknown_session(result: dict) -> bool:

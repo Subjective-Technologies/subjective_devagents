@@ -444,7 +444,9 @@ class SubjectiveClaudeCliDataSource(SubjectiveDataSource):
 
         BBLogger.log(
             "[SubjectiveClaudeCliDataSource] Claude turn completed "
-            f"session={parsed['session_id'] or self.session_id or '-'}"
+            f"session={parsed['session_id'] or self.session_id or '-'} "
+            f"exit={completed.returncode} "
+            f"response_chars={len(response)}"
         )
         return {
             "success": True,

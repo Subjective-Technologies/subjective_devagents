@@ -1286,7 +1286,8 @@ app.whenReady().then(() => {
   llmService = new LlmService({
     root: path.resolve(__dirname, '..'),
     appHome: applicationHome,
-    suSessionManager
+    suSessionManager,
+    log
   });
   for (const conversation of llmService.listConversations().filter((item) => item.activeOnIrc)) {
     activeLlmIrcChannels.set(conversation.ircChannel.toLowerCase(), conversation.target);

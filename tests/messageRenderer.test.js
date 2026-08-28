@@ -77,6 +77,19 @@ test('a closing question that names lettered/numbered options gets one button pe
     'Which fix should I apply - 1, 2, 3, or 4?'
   ].join('\n')).map((item) => item.id);
   assert.deepEqual(numbered, ['choice-1', 'choice-2', 'choice-3', 'choice-4', 'other']);
+
+  const five = detectPromptActions([
+    'A. Check logs',
+    'B. Fix frozen chats',
+    'C. Show hidden LLM questions',
+    'D. Stop IRC reconnect spam',
+    'E. All of the above',
+    '',
+    'Which — A, B, C, D, or E?'
+  ].join('\n'));
+  assert.deepEqual(five.map((item) => item.id), ['choice-a', 'choice-b', 'choice-c', 'choice-d', 'choice-e', 'other']);
+  assert.equal(five[4].reply, 'E');
+  assert.match(five[4].label, /^E — All of the above/);
 });
 
 test('an unrelated numbered list followed by a plain yes/no question does not become a choice menu', () => {

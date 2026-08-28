@@ -14,6 +14,11 @@
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
+    // 524/504/502: Cloudflare (or another proxy) gave up waiting. The Node turn can
+    // still be running; llm-message arrives on the WebSocket. Do not treat as a failed send.
+    if (!response.ok && (response.status === 524 || response.status === 504 || response.status === 502)) {
+      return { ok: true, pending: true, proxyTimeout: response.status };
+    }
     if (!response.ok && response.status >= 500) return { ok: false, error: `Server error (${response.status})` };
     try {
       return await response.json();

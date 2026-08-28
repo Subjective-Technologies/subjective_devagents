@@ -210,9 +210,20 @@ function createApp(core, options = {}) {
     },
     'GET /api/llm/conversation': async (query) => {
       try {
-        const conversation = core.llmService.findConversation(String(query.target || ''), { includeMessages: true });
+        const target = String(query.target || '');
+        const conversation = core.llmService.findConversation(target, { includeMessages: true });
+        log(conversation ? 'info' : 'error', 'LLM conversation hydrate', {
+          target,
+          ok: Boolean(conversation),
+          provider: conversation?.provider || '',
+          label: conversation?.label || '',
+          sessionId: conversation?.sessionId || '',
+          messageCount: conversation?.messages?.length || 0,
+          origin: conversation?.origin || ''
+        });
         return conversation ? { ok: true, conversation } : { ok: false, error: 'Conversation was not found.' };
       } catch (error) {
+        log('error', 'LLM conversation hydrate crashed', { target: query.target, message: error.message });
         return { ok: false, error: error.message };
       }
     },
@@ -230,6 +241,7 @@ function createApp(core, options = {}) {
       try {
         const result = core.llmService.renameConversation(String(body?.target || ''), String(body?.name || ''));
         if (result.ok && result.conversation) {
+          log('info', 'LLM conversation renamed', { target: result.conversation.target, label: result.conversation.label });
           core._broadcast('llm-conversation-renamed', { target: result.conversation.target, label: result.conversation.label });
         }
         return result;
@@ -254,7 +266,30 @@ function createApp(core, options = {}) {
     'POST /api/llm/send-message': async (_query, body) => {
       const target = String(body?.target || '');
       const text = String(body?.text || '').trim();
-      return core.sendLlmMessage(target, text, body?.files || []);
+      const files = body?.files || [];
+      if (!target || !text) return { ok: false, status: 'invalid_request', error: 'Missing target or text.' };
+      const conversation = core.llmService.findConversation(target);
+      if (!conversation) return { ok: false, status: 'not_found', error: 'Conversation was not found.' };
+      // Cloudflare (and most reverse proxies) close idle HTTP at ~100s with 524.
+      // Cursor/Claude/Codex turns are allowed 30 minutes. Accept here and deliver
+      // the assistant reply on the WebSocket (llm-message / llm-busy / system).
+      log('info', 'LLM send accepted (async)', {
+        target,
+        provider: conversation.provider,
+        promptChars: text.length,
+        files: files.length
+      });
+      core.sendLlmMessage(target, text, files).then((result) => {
+        log(result?.ok ? 'info' : 'error', 'LLM send background finished', {
+          target,
+          ok: Boolean(result?.ok),
+          status: result?.status || '',
+          error: result?.error || ''
+        });
+      }).catch((error) => {
+        log('error', 'LLM send background crash', { target, message: error.message, stack: error.stack });
+      });
+      return { ok: true, pending: true, target };
     },
     'GET /api/system/users': async () => {
       const { listSystemUsers } = require('./systemUsers');
@@ -335,8 +370,10 @@ function createApp(core, options = {}) {
 
   const wss = new WebSocketServer({ server, path: '/ws' });
   wss.on('connection', (socket) => {
+    log('info', 'WebSocket client connected', { clients: wss.clients.size });
     socket.send(JSON.stringify({ type: 'config', ...core.publicConfig() }));
     socket.send(JSON.stringify({ type: 'status', state: core.connected ? 'connected' : 'idle', text: core.connected ? `Connected to ${core.config.host}:${core.config.port}` : 'Ready' }));
+    socket.on('close', () => log('info', 'WebSocket client disconnected', { clients: wss.clients.size }));
   });
 
   core.on('event', (event) => {
@@ -381,13 +418,14 @@ if (require.main === module) {
       if (refreshing) return;
       refreshing = true;
       try {
+        const started = Date.now();
         const result = await core.llmService.refreshHistory();
         if (!result.success) {
-          defaultLog('error', 'Local chat history pipeline failed', { reason, status: result.status, error: result.error });
+          defaultLog('error', 'Local chat history pipeline failed', { reason, status: result.status, error: result.error, ms: Date.now() - started });
           return;
         }
         const count = core.llmService.countConversations();
-        defaultLog('info', 'Local chat history refreshed', { reason, count });
+        defaultLog('info', 'Local chat history refreshed', { reason, count, ms: Date.now() - started });
         core._broadcast('llm-history-refreshed', { count });
       } catch (error) {
         defaultLog('error', 'Local chat history pipeline crashed', { reason, message: error.message, stack: error.stack });
