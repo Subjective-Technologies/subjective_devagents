@@ -156,6 +156,19 @@ body.chats-collapsed .right-rail .user-list {
 }
 
 @media (max-width: 720px) {
+  .frame-layout-picker,
+  .frame-broadcast {
+    display: none !important;
+  }
+
+  .chat-frames[data-layout="split-h"],
+  .chat-frames[data-layout="split-v"],
+  .chat-frames[data-layout="quad"] {
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr) !important;
+  }
+}
+
+@media (max-width: 720px) {
   .content-grid {
     grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) !important;

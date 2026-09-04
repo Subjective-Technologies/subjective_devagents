@@ -1343,9 +1343,11 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('llm:get-conversation', (_event, payload) => {
+  ipcMain.handle('llm:get-conversation', async (_event, payload) => {
     try {
-      const conversation = llmService.findConversation(String(payload?.target || ''), { includeMessages: true });
+      const target = String(payload?.target || '');
+      const live = await llmService.reloadConversation(target);
+      const conversation = live || llmService.findConversation(target, { includeMessages: true });
       return conversation ? { ok: true, conversation } : { ok: false, error: 'Conversation was not found.' };
     } catch (error) {
       log('error', 'Failed to load LLM conversation', { message: error.message, stack: error.stack });
@@ -1387,6 +1389,35 @@ app.whenReady().then(() => {
     if (!conversation) return { ok: false, error: 'Conversation was not found.' };
     llmService.markActive(conversation.target);
     return activateLlmIrcChannel(conversation);
+  });
+
+  ipcMain.handle('llm:reload-conversation', async (_event, payload) => {
+    try {
+      const conversation = await llmService.reloadConversation(String(payload?.target || ''));
+      if (conversation) emit('llm-conversation', { conversation });
+      return conversation ? { ok: true, conversation } : { ok: false, error: 'Conversation was not found.' };
+    } catch (error) {
+      log('error', 'Failed to live-reload LLM conversation', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('llm:refresh-history', async () => {
+    try {
+      const result = await llmService.refreshHistory();
+      if (result.status === 'deferred') return { ok: true, deferred: true, status: 'deferred' };
+      if (!result.success) {
+        log('error', 'Manual history refresh failed', { status: result.status, error: result.error });
+        return { ok: false, status: result.status, error: result.error || 'History refresh failed.' };
+      }
+      const count = llmService.countConversations();
+      log('info', 'Manual history refresh completed', { count });
+      emit('llm-history-refreshed', { count });
+      return { ok: true, count };
+    } catch (error) {
+      log('error', 'Manual history refresh crashed', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message };
+    }
   });
 
   ipcMain.handle('llm:status', async (_event, payload) => {

@@ -141,6 +141,16 @@
         normalized.push({ type: 'code', code: text, language: 'text', label: message.toolName || message.tool_name || 'Tool', message });
         continue;
       }
+      if (kind === 'code' && text) {
+        normalized.push({
+          type: 'code',
+          code: text,
+          language: message.language || 'diff',
+          label: message.toolName || message.tool_name || 'Change',
+          message
+        });
+        continue;
+      }
       const toolLikeRole = ['command', 'function', 'system', 'tool', 'unknown'].includes(role);
       const parsed = toolLikeRole ? structuredCommand(text) : null;
       if (parsed) {

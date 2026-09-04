@@ -21,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const { isValidUsername } = require('./systemUsers');
+const { tailConversationForClient } = require('./llmService');
 
 const ROOT = path.resolve(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -170,6 +171,44 @@ function createApp(core, options = {}) {
     res.end(body);
   }
 
+  // Shared with the interval refresh and the manual refresh API so a button click
+  // cannot stack a second LocalChats pipeline on top of an in-flight run.
+  let historyRefreshing = false;
+  async function refreshHistory(reason) {
+    if (historyRefreshing) return { ok: true, deferred: true, status: 'busy' };
+    historyRefreshing = true;
+    try {
+      const started = Date.now();
+      const result = await core.llmService.refreshHistory();
+      if (result.status === 'deferred') {
+        log('info', 'Local chat history refresh deferred', { reason });
+        return { ok: true, deferred: true, status: 'deferred' };
+      }
+      if (!result.success) {
+        log('error', 'Local chat history pipeline failed', {
+          reason,
+          status: result.status,
+          error: result.error,
+          ms: Date.now() - started
+        });
+        return { ok: false, status: result.status, error: result.error || 'History refresh failed.' };
+      }
+      const count = core.llmService.countConversations();
+      log('info', 'Local chat history refreshed', { reason, count, ms: Date.now() - started });
+      core._broadcast('llm-history-refreshed', { count });
+      return { ok: true, count };
+    } catch (error) {
+      log('error', 'Local chat history pipeline crashed', {
+        reason,
+        message: error.message,
+        stack: error.stack
+      });
+      return { ok: false, error: error.message };
+    } finally {
+      historyRefreshing = false;
+    }
+  }
+
   // Every handler receives (query, body) and returns a plain object to be sent as JSON -
   // deliberately the same request/response shape as an ipcMain.handle() callback so each
   // one reads as a direct translation of main.js's handlers.
@@ -211,7 +250,10 @@ function createApp(core, options = {}) {
     'GET /api/llm/conversation': async (query) => {
       try {
         const target = String(query.target || '');
-        const conversation = core.llmService.findConversation(target, { includeMessages: true });
+        const live = await core.llmService.reloadConversation(target);
+        const conversation = tailConversationForClient(
+          live || core.llmService.findConversation(target, { includeMessages: true })
+        );
         log(conversation ? 'info' : 'error', 'LLM conversation hydrate', {
           target,
           ok: Boolean(conversation),
@@ -219,6 +261,8 @@ function createApp(core, options = {}) {
           label: conversation?.label || '',
           sessionId: conversation?.sessionId || '',
           messageCount: conversation?.messages?.length || 0,
+          totalMessages: conversation?.messageCount || 0,
+          truncated: Boolean(conversation?.truncated),
           origin: conversation?.origin || ''
         });
         return conversation ? { ok: true, conversation } : { ok: false, error: 'Conversation was not found.' };
@@ -254,6 +298,23 @@ function createApp(core, options = {}) {
       if (!conversation) return { ok: false, error: 'Conversation was not found.' };
       core.llmService.markActive(conversation.target);
       return core.activateLlmIrcChannel(conversation);
+    },
+    'POST /api/llm/refresh-history': async () => refreshHistory('manual'),
+    'POST /api/llm/reload-conversation': async (_query, body) => {
+      try {
+        const target = String(body?.target || '');
+        const conversation = tailConversationForClient(await core.llmService.reloadConversation(target));
+        log(conversation ? 'info' : 'error', 'LLM conversation live reload', {
+          target,
+          ok: Boolean(conversation),
+          messageCount: conversation?.messages?.length || 0
+        });
+        if (conversation) core._broadcast('llm-conversation', { conversation });
+        return conversation ? { ok: true, conversation } : { ok: false, error: 'Conversation was not found.' };
+      } catch (error) {
+        log('error', 'LLM conversation live reload crashed', { target: body?.target, message: error.message });
+        return { ok: false, error: error.message };
+      }
     },
     'GET /api/llm/status': async (query) => {
       const result = await core.llmService.status(query.provider);
@@ -402,7 +463,14 @@ if (require.main === module) {
 
   server.listen(PORT, BIND_HOST, () => {
     defaultLog('info', 'Subjective Chat web server listening', { host: BIND_HOST, port: PORT, appHome: core.applicationHome });
-    core.connectIrc();
+    // My Agents is the LLM UI. IRC is optional and the default host is often
+    // down; reconnect storms painted the status bar as errors on every send.
+    // Opt in with SUBJECTIVE_CHAT_IRC=1.
+    if (process.env.SUBJECTIVE_CHAT_IRC === '1') {
+      core.connectIrc();
+    } else {
+      defaultLog('info', 'IRC skipped (set SUBJECTIVE_CHAT_IRC=1 to enable)');
+    }
     // Serve whatever the manifest already has right away (no blank sidebar),
     // then run the history pipeline. The pipeline is incremental: it walks
     // candidates newest-first and skips manifest-fingerprinted unchanged files,
@@ -413,26 +481,6 @@ if (require.main === module) {
     setImmediate(() => {
       core._broadcast('llm-history-refreshed', { count: core.llmService.countConversations() });
     });
-    let refreshing = false;
-    const refreshHistory = async (reason) => {
-      if (refreshing) return;
-      refreshing = true;
-      try {
-        const started = Date.now();
-        const result = await core.llmService.refreshHistory();
-        if (!result.success) {
-          defaultLog('error', 'Local chat history pipeline failed', { reason, status: result.status, error: result.error, ms: Date.now() - started });
-          return;
-        }
-        const count = core.llmService.countConversations();
-        defaultLog('info', 'Local chat history refreshed', { reason, count, ms: Date.now() - started });
-        core._broadcast('llm-history-refreshed', { count });
-      } catch (error) {
-        defaultLog('error', 'Local chat history pipeline crashed', { reason, message: error.message, stack: error.stack });
-      } finally {
-        refreshing = false;
-      }
-    };
     refreshHistory('startup');
     const refreshEveryMs = Number(process.env.SUBJECTIVE_CHAT_HISTORY_REFRESH_MS || 10 * 60 * 1000);
     if (refreshEveryMs > 0) setInterval(() => refreshHistory('interval'), refreshEveryMs).unref();

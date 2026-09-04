@@ -780,7 +780,118 @@ img.provider-avatar[src$="cursor.svg"] {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.chat-frames {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 0 0 8px;
+}
+
+.chat-frames[data-layout="single"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.chat-frames[data-layout="split-h"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr) minmax(0, 1fr); }
+.chat-frames[data-layout="split-v"] { grid-template: minmax(0, 1fr) minmax(0, 1fr) / minmax(0, 1fr); }
+.chat-frames[data-layout="quad"] { grid-template: minmax(0, 1fr) minmax(0, 1fr) / minmax(0, 1fr) minmax(0, 1fr); }
+
+.chat-frame {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: #070707;
+  overflow: hidden;
+}
+
+.chat-frame.is-focused {
+  border-color: rgba(212, 175, 55, 0.55);
+}
+
+.chat-frame.is-drop {
+  border-color: #d4af37;
+  box-shadow: inset 0 0 0 1px #d4af37;
+}
+
+.frame-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.frame-head .frame-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.frame-clear,
+.frame-refresh {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.frame-refresh.is-busy {
+  opacity: 0.55;
+  animation: frame-refresh-spin 0.8s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes frame-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.frame-layout-picker {
+  display: flex;
+  gap: 4px;
+}
+
+.frame-layout-picker button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.frame-layout-picker button[aria-pressed="true"] {
+  border-color: #d4af37;
+  color: #d4af37;
+}
+
+.frame-broadcast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conversation-row.in-frame .conversation-label {
+  color: #d4af37;
 }
 
 .transcript {

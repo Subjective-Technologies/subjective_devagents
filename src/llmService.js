@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { listProviderSessions, sessionsForProvider } = require('./providerSessions');
+const { injectIntoCursorDom } = require('./cursorDomInject');
 
 const PROVIDER_ICONS = Object.freeze({
   codex: '../assets/providers/codex.svg',
@@ -56,6 +57,12 @@ const DEFAULT_PROVIDER = 'codex';
 // cuts the run off before the datasource's own timeout has a chance to report cleanly.
 const AGENT_TURN_TIMEOUT_SECONDS = 1800;
 const AGENT_TURN_WRAPPER_TIMEOUT_SECONDS = AGENT_TURN_TIMEOUT_SECONDS + 60;
+const CURSOR_INJECT_POLL_MS = Number(process.env.CURSOR_INJECT_POLL_MS || 2000);
+const CURSOR_INJECT_POLL_MAX_MS = Number(process.env.CURSOR_INJECT_POLL_MAX_MS || AGENT_TURN_TIMEOUT_SECONDS * 1000);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function providerKey(provider) {
   return String(provider || 'unknown').trim().toLowerCase().replace(/[\s_]+/g, '-');
@@ -182,6 +189,37 @@ function cleanVisibleMessage(raw, role = 'user') {
   return { role: originalRole, text: stripped };
 }
 
+const HYDRATE_MESSAGE_LIMIT = 80;
+
+function isGenericProviderLabel(label, provider) {
+  const text = String(label || '').trim();
+  if (!text) return true;
+  if (/^(cursor|codex|claude|chatgpt|gemini|grok|chat)\s+conversation$/i.test(text)) return true;
+  const name = String(provider || '').trim();
+  return Boolean(name) && new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+conversation$`, 'i').test(text);
+}
+
+function preferConversationLabel(existing, incoming, provider) {
+  const next = String(incoming || '').trim();
+  const prev = String(existing || '').trim();
+  if (!next) return prev;
+  if (prev && isGenericProviderLabel(next, provider) && !isGenericProviderLabel(prev, provider)) return prev;
+  return next;
+}
+
+function tailConversationForClient(conversation, limit = HYDRATE_MESSAGE_LIMIT) {
+  if (!conversation || !Array.isArray(conversation.messages)) return conversation;
+  const total = conversation.messages.length;
+  if (total <= limit) return conversation;
+  return {
+    ...conversation,
+    messages: conversation.messages.slice(-limit),
+    messageCount: Number(conversation.messageCount || total),
+    truncated: true,
+    hiddenBefore: total - limit
+  };
+}
+
 function cleanChatTitle(raw) {
   const cleaned = cleanVisibleMessage(raw, 'user');
   let text = cleaned && cleaned.role !== 'system' ? cleaned.text : String(raw || '').trim();
@@ -212,6 +250,14 @@ function sessionIdentity(item) {
 function uuidFromPath(filePath) {
   const match = String(filePath || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   return match ? match[0].toLowerCase() : '';
+}
+
+function composerIdFromSource(filePath) {
+  const source = String(filePath || '');
+  const composer = source.match(/#composer:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  if (composer) return composer[1].toLowerCase();
+  if (source.includes('agent-transcripts')) return uuidFromPath(source);
+  return '';
 }
 
 function currentOsUsername() {
@@ -275,6 +321,7 @@ class LlmService {
     this.claudeRuntime = options.claudeRuntime || path.join(this.root, 'pipelines', 'claude', 'run.py');
     this.cursorRuntime = options.cursorRuntime || path.join(this.root, 'pipelines', 'cursor', 'run.py');
     this.historyRuntime = options.historyRuntime || path.join(this.root, 'pipelines', 'history', 'run.py');
+    this.reloadRuntime = options.reloadRuntime || path.join(this.root, 'pipelines', 'history', 'reload_one.py');
     this.pipelineRuntime = options.pipelineRuntime || path.join(this.root, 'src', 'pipeline_runtime.py');
     this.spawn = options.spawn || spawn;
     // Optional: only needed for conversations with `osUser` set ("Continue as…").
@@ -682,11 +729,133 @@ class LlmService {
     return this._withLabelOverride(this._normalizeConversation({
       ...payload,
       target: metadata.target,
+      label: preferConversationLabel(metadata.label, payload.label || payload.title || payload.chat_name, metadata.provider),
       sessionId: metadata.sessionId || payload.sessionId || payload.thread_id || payload.session_id,
       sourceFile: metadata.sourceFile || payload.source_file,
       exportPath: metadata.exportPath,
       loaded: true
     }, 'history', metadata.exportPath));
+  }
+
+  async reloadConversation(target) {
+    const metadata = this.findConversation(target, { includeMessages: false });
+    if (!metadata) return null;
+    const sourceFile = String(metadata.sourceFile || '').trim();
+    const sessionId = String(metadata.sessionId || '').trim();
+    if (!sourceFile && !sessionId) {
+      return this.findConversation(target, { includeMessages: true });
+    }
+    const started = Date.now();
+    this.log('info', 'LLM live reload start', {
+      target,
+      provider: metadata.provider,
+      sourceFile,
+      sessionId
+    });
+    const response = await this._runJsonScript(this.reloadRuntime, {
+      source_file: sourceFile,
+      session_id: sessionId,
+      provider: metadata.provider || ''
+    }, 45);
+    const transcript = response && response.success ? response.transcript : null;
+    if (!transcript || !Array.isArray(transcript.messages)) {
+      this.log('warn', 'LLM live reload empty', {
+        target,
+        error: response?.error || '',
+        ms: Date.now() - started
+      });
+      return this.findConversation(target, { includeMessages: true });
+    }
+    this._writeLiveExport(metadata, transcript);
+    this._historyCache = null;
+    this._sortedCache = null;
+    const normalized = this._normalizeConversation({
+      ...transcript,
+      type: 'localchat',
+      target: metadata.target,
+      label: preferConversationLabel(metadata.label, transcript.title || transcript.chat_name, metadata.provider),
+      sessionId: metadata.sessionId || sessionId || uuidFromPath(transcript.source_file || sourceFile),
+      sourceFile: metadata.sourceFile || transcript.source_file || sourceFile,
+      exportPath: metadata.exportPath,
+      loaded: true
+    }, 'history', metadata.exportPath);
+    const local = this.local.find((item) => item.target === target);
+    if (local && normalized) {
+      local.messages = normalized.messages;
+      local.messageCount = normalized.messages.length;
+      local.updatedAt = normalized.updatedAt;
+      local.sortAt = normalized.sortAt;
+      local.historyExportPath = metadata.exportPath || local.historyExportPath;
+      local.sourceFile = normalized.sourceFile || local.sourceFile;
+      const composerId = composerIdFromSource(local.sourceFile || '');
+      if (composerId) local.sessionId = composerId;
+      this._saveState();
+    }
+    this.log('info', 'LLM live reload ok', {
+      target,
+      messageCount: normalized ? normalized.messages.length : 0,
+      ms: Date.now() - started
+    });
+    return this.findConversation(target, { includeMessages: true });
+  }
+
+  _writeLiveExport(metadata, transcript) {
+    const exportPath = String(metadata.exportPath || '').trim();
+    if (!exportPath) return;
+    const existing = safeJson(exportPath) || { type: 'localchat' };
+    const next = {
+      ...existing,
+      type: 'localchat',
+      title: transcript.title || existing.title,
+      chat_name: transcript.title || existing.chat_name,
+      product: transcript.product || existing.product,
+      source_file: transcript.source_file || existing.source_file || metadata.sourceFile,
+      last_activity_at: transcript.last_activity_at || Date.now() / 1000,
+      message_count: Array.isArray(transcript.messages) ? transcript.messages.length : 0,
+      messages: transcript.messages || []
+    };
+    try {
+      fs.mkdirSync(path.dirname(exportPath), { recursive: true });
+      fs.writeFileSync(exportPath, `${JSON.stringify(next, null, 2)}\n`);
+    } catch (error) {
+      this.log('error', 'LLM live reload export write failed', { exportPath, message: error.message });
+    }
+  }
+
+  _runJsonScript(scriptPath, payload, timeoutSeconds) {
+    return new Promise((resolve) => {
+      if (!fs.existsSync(scriptPath)) {
+        resolve({ success: false, error: `Reload script missing: ${scriptPath}` });
+        return;
+      }
+      const child = this.spawn(this.pythonPath, [scriptPath], {
+        cwd: this.root,
+        env: { ...process.env },
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
+        try { child.kill('SIGTERM'); } catch (_error) { /* ignore */ }
+      }, Math.max(5, Number(timeoutSeconds) || 45) * 1000);
+      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        resolve({ success: false, error: error.message });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        const lines = String(stdout || '').trim().split('\n').filter(Boolean);
+        try {
+          resolve(JSON.parse(lines[lines.length - 1] || '{}'));
+        } catch (_error) {
+          resolve({ success: false, error: String(stderr || stdout || `exit ${code}`).trim() });
+        }
+      });
+      child.stdin.write(JSON.stringify(payload || {}));
+      child.stdin.end();
+    });
   }
 
   _hydrateLocalConversation(conversation) {
@@ -696,6 +865,7 @@ class LlmService {
     const history = this._normalizeConversation({
       ...payload,
       target: conversation.target,
+      label: preferConversationLabel(conversation.label, payload.label || payload.title || payload.chat_name, conversation.provider),
       exportPath: conversation.historyExportPath,
       loaded: true
     }, 'history', conversation.historyExportPath);
@@ -755,6 +925,11 @@ class LlmService {
   }
 
   async refreshHistory() {
+    if (this.busy.size) {
+      this._historyRefreshDeferred = true;
+      this.log('info', 'LLM history refresh deferred (send in flight)', { busy: [...this.busy] });
+      return { success: true, status: 'deferred' };
+    }
     this._historyCache = null;
     this._sortedCache = null;
     const started = Date.now();
@@ -774,6 +949,34 @@ class LlmService {
       conversations: this.countConversations()
     });
     return result;
+  }
+
+  async _injectIntoOpenCursor(text) {
+    return injectIntoCursorDom(text);
+  }
+
+  async _waitForCursorIdeReply(target, userMessage, timeoutMs) {
+    const maxMs = Number(timeoutMs || process.env.CURSOR_INJECT_POLL_MAX_MS || CURSOR_INJECT_POLL_MAX_MS);
+    const interval = Number(process.env.CURSOR_INJECT_POLL_MS || CURSOR_INJECT_POLL_MS);
+    const deadline = Date.now() + maxMs;
+    while (true) {
+      try {
+        const live = await this.reloadConversation(target);
+        if (live && Array.isArray(live.messages)) {
+          const reply = [...live.messages].reverse().find((message) => (
+            message.role === 'assistant'
+            && Number(message.time || 0) >= Number(userMessage.time || 0)
+            && String(message.text || '').trim()
+          ));
+          if (reply) return { ok: true, conversation: live, assistantMessage: reply };
+        }
+      } catch (error) {
+        this.log('warn', 'Cursor DOM inject poll failed', { target, message: error.message });
+      }
+      if (Date.now() >= deadline) break;
+      await sleep(interval);
+    }
+    return { ok: false, error: 'Cursor tab did not produce a reply yet' };
   }
 
   async sendMessage(target, text, files = []) {
@@ -840,11 +1043,29 @@ class LlmService {
     this._saveState();
     this.busy.add(target);
     const started = Date.now();
+    let originalSessionId = String(conversation.sessionId || source.sessionId || '').trim();
+    // IDE composer UUID and a later cursor-agent chat id are different. If we
+    // --resume the CLI id, web talks to a fork and Cursor's open tab never
+    // sees the turn. Prefer the composer id baked into sourceFile.
+    if (provider.bundle === 'cursor') {
+      const composerId = composerIdFromSource(conversation.sourceFile || source.sourceFile || '');
+      if (composerId && composerId !== originalSessionId.toLowerCase()) {
+        this.log('warn', 'LLM send rebound Cursor session to IDE composer', {
+          target,
+          from: originalSessionId,
+          to: composerId
+        });
+      }
+      if (composerId) {
+        originalSessionId = composerId;
+        conversation.sessionId = composerId;
+      }
+    }
     this.log('info', 'LLM send start', {
       target,
       provider: source.provider,
-      sessionId: conversation.sessionId || '',
-      newSession: !conversation.sessionId,
+      sessionId: originalSessionId,
+      newSession: !originalSessionId,
       osUser: conversation.osUser || currentOsUsername(),
       sourceUser: conversation.sourceUser || '',
       origin: conversation.origin,
@@ -864,13 +1085,66 @@ class LlmService {
     };
 
     try {
+      const composerId = provider.bundle === 'cursor'
+        ? composerIdFromSource(conversation.sourceFile || source.sourceFile || '')
+        : '';
+      if (composerId) {
+        const injected = await this._injectIntoOpenCursor(clean);
+        this.log(injected.ok ? 'info' : 'info', 'Cursor DOM inject', {
+          target,
+          ok: injected.ok,
+          error: injected.error || '',
+          via: injected.via || ''
+        });
+        if (injected.ok) {
+          const waited = await this._waitForCursorIdeReply(target, userMessage);
+          conversation.sessionId = originalSessionId;
+          if (waited.ok) {
+            this._saveState();
+            this.log('info', 'LLM send ok via Cursor DOM', {
+              target,
+              sessionId: conversation.sessionId,
+              ms: Date.now() - started
+            });
+            return {
+              ok: true,
+              result: { success: true, response: waited.assistantMessage.text, via: 'cdp-dom' },
+              conversation: waited.conversation || this._hydrateLocalConversation(conversation),
+              userMessage,
+              assistantMessage: waited.assistantMessage,
+              cursorIdeHint: false,
+              cursorDomInjected: true
+            };
+          }
+          const pending = {
+            role: 'assistant',
+            text: 'Typed into the open Cursor tab. Click ↻ when the reply lands.',
+            time: Date.now()
+          };
+          conversation.messages.push(pending);
+          conversation.updatedAt = pending.time;
+          conversation.sortAt = pending.time;
+          this._saveState();
+          return {
+            ok: true,
+            result: { success: true, response: pending.text, via: 'cdp-dom-pending' },
+            conversation: this._hydrateLocalConversation(conversation),
+            userMessage,
+            assistantMessage: pending,
+            cursorIdeHint: false,
+            cursorDomInjected: true
+          };
+        }
+      }
       const request = {
         action: 'send',
         prompt: clean,
         files,
-        session_id: conversation.sessionId,
-        new_session: !conversation.sessionId,
+        target,
+        session_id: originalSessionId,
+        new_session: !originalSessionId,
         working_directory: conversation.workspace,
+        source_file: conversation.sourceFile || source.sourceFile || '',
         timeout: AGENT_TURN_TIMEOUT_SECONDS
       };
       // Codex sandboxes per request; Claude takes an equivalent permission
@@ -910,7 +1184,8 @@ class LlmService {
         }
         return failure;
       }
-      conversation.sessionId = String(result.session_id || conversation.sessionId || '');
+      if (originalSessionId) conversation.sessionId = originalSessionId;
+      else conversation.sessionId = String(result.session_id || conversation.sessionId || '');
       const assistantMessage = { role: 'assistant', text: String(result.response || ''), time: Date.now() };
       conversation.messages.push(assistantMessage);
       conversation.updatedAt = assistantMessage.time;
@@ -924,12 +1199,22 @@ class LlmService {
         responsePreview: clipText(result.response),
         ms: Date.now() - started
       });
+      let shown = this._hydrateLocalConversation(conversation);
+      try {
+        const reloaded = await this.reloadConversation(target);
+        if (reloaded && Array.isArray(reloaded.messages) && reloaded.messages.length >= conversation.messages.length) {
+          shown = reloaded;
+        }
+      } catch (error) {
+        this.log('warn', 'LLM post-send live reload failed', { target, message: error.message });
+      }
       return {
         ok: true,
         result,
-        conversation: this._hydrateLocalConversation(conversation),
+        conversation: shown,
         userMessage,
-        assistantMessage
+        assistantMessage,
+        cursorIdeHint: Boolean(provider.bundle === 'cursor' && composerIdFromSource(conversation.sourceFile || source.sourceFile || ''))
       };
     } catch (error) {
       rollbackUserMessage();
@@ -942,6 +1227,14 @@ class LlmService {
       throw error;
     } finally {
       this.busy.delete(target);
+      if (this._historyRefreshDeferred && this.busy.size === 0) {
+        this._historyRefreshDeferred = false;
+        setImmediate(() => {
+          this.refreshHistory().catch((error) => {
+            this.log('error', 'LLM deferred history refresh failed', { message: error.message });
+          });
+        });
+      }
     }
   }
 
@@ -998,7 +1291,11 @@ class LlmService {
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.stderr.on('data', (chunk) => {
+        const text = chunk.toString();
+        stderr += text;
+        this._consumeProgress(text, payload);
+      });
       child.on('error', (error) => {
         this.log('error', 'LLM pipeline spawn error', { action, runtime: path.basename(runtimePath), message: error.message, ms: Date.now() - started });
         resolve({ success: false, status: 'runtime_error', error: error.message });
@@ -1019,6 +1316,23 @@ class LlmService {
       });
       child.stdin.end(JSON.stringify(payload));
     });
+  }
+
+  _consumeProgress(chunk, payload) {
+    if (!chunk || typeof this.onProgress !== 'function') return;
+    const lines = String(chunk).split(/\r?\n/);
+    for (const line of lines) {
+      const prefix = 'SUBJECTIVE_PROGRESS ';
+      const index = line.indexOf(prefix);
+      if (index === -1) continue;
+      try {
+        const body = JSON.parse(line.slice(index + prefix.length));
+        const text = String(body.text || '').trim();
+        if (text) this.onProgress({ text, target: payload?.target || '', sessionId: payload?.session_id || '' });
+      } catch (_error) {
+        /* ignore partial JSON */
+      }
+    }
   }
 
   _parsePipelineOutput(stdout, stderr) {
@@ -1070,17 +1384,22 @@ class LlmService {
 
 module.exports = {
   CODEX_ICON,
+  HYDRATE_MESSAGE_LIMIT,
   PROVIDER_ICONS,
   WRITABLE_PROVIDERS,
   LlmService,
   cleanVisibleMessage,
   epochMs,
   exportFilenameTime,
+  composerIdFromSource,
   ircChannelName,
+  isGenericProviderLabel,
   normalizeRole,
+  preferConversationLabel,
   providerIcon,
   providerLabel,
   resolveSourceUser,
   sourceUserFromPath,
-  sessionIdentity
+  sessionIdentity,
+  tailConversationForClient
 };

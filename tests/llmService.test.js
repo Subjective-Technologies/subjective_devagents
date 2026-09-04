@@ -6,7 +6,18 @@ const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const test = require('node:test');
 
-const { LlmService, exportFilenameTime, providerIcon, providerLabel, cleanVisibleMessage } = require('../src/llmService');
+const {
+  LlmService,
+  exportFilenameTime,
+  providerIcon,
+  providerLabel,
+  cleanVisibleMessage,
+  isGenericProviderLabel,
+  preferConversationLabel,
+  tailConversationForClient,
+  composerIdFromSource,
+  HYDRATE_MESSAGE_LIMIT
+} = require('../src/llmService');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'subjective-chat-'));
@@ -512,9 +523,11 @@ test('sendMessage routes osUser conversations through SuSessionManager.runInSess
     action: 'send',
     prompt: 'hello as bob',
     files: [],
+    target: sibling.target,
     session_id: '',
     new_session: true,
     working_directory: sibling.workspace,
+    source_file: sibling.sourceFile || '',
     timeout: 1800,
     sandbox_mode: 'workspace-write'
   });
@@ -592,4 +605,143 @@ test('history hydrate shows Cursor user_query text, not the XML envelope', (t) =
     { role: 'system', text: 'Task finished: Restart Vite proxying API to wittycoast' },
     { role: 'assistant', text: '3 passed / 3 skipped' }
   ]);
+});
+
+test('tailConversationForClient keeps the last window and the original count', (t) => {
+  const messages = Array.from({ length: HYDRATE_MESSAGE_LIMIT + 20 }, (_, index) => ({
+    role: index % 2 ? 'assistant' : 'user',
+    text: `m${index}`
+  }));
+  const tailed = tailConversationForClient({ label: 'manager', messages, messageCount: messages.length });
+  assert.equal(tailed.truncated, true);
+  assert.equal(tailed.hiddenBefore, 20);
+  assert.equal(tailed.messages.length, HYDRATE_MESSAGE_LIMIT);
+  assert.equal(tailed.messages[0].text, 'm20');
+  assert.equal(tailed.messageCount, HYDRATE_MESSAGE_LIMIT + 20);
+  assert.equal(tailConversationForClient({ messages: messages.slice(0, 3) }).truncated, undefined);
+});
+
+test('composerIdFromSource prefers #composer UUID over other path ids', () => {
+  assert.equal(
+    composerIdFromSource('/home/u/.config/Cursor/User/globalStorage/state.vscdb#composer:1ee97ef1-f0b3-4f25-b98c-b218ae44b3df'),
+    '1ee97ef1-f0b3-4f25-b98c-b218ae44b3df'
+  );
+  assert.equal(composerIdFromSource('/tmp/no-composer.jsonl'), '');
+});
+
+test('Cursor send resumes the IDE composer id, not a leftover CLI fork id', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  let captured = null;
+  service._runPipeline = async (_runtimePath, request) => {
+    captured = request;
+    return {
+      success: true,
+      result: { pipeline_result: { success: true, response: 'ok', session_id: '2ac36edd-6007-4759-be86-0a7455a088c6' } }
+    };
+  };
+  service.reloadConversation = async () => null;
+  const created = service.createConversation({ provider: 'cursor', name: 'agents_chat_dashboard' });
+  const local = service.local.find((item) => item.target === created.target);
+  local.sessionId = '2ac36edd-6007-4759-be86-0a7455a088c6';
+  local.sourceFile = '/home/subjective/.config/Cursor/User/globalStorage/state.vscdb#composer:1ee97ef1-f0b3-4f25-b98c-b218ae44b3df';
+  await service.sendMessage(created.target, 'hello from web');
+  assert.equal(captured.session_id, '1ee97ef1-f0b3-4f25-b98c-b218ae44b3df');
+  assert.equal(local.sessionId, '1ee97ef1-f0b3-4f25-b98c-b218ae44b3df');
+});
+
+test('Cursor IDE send types into the open tab when CDP inject works', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  let pipelineCalls = 0;
+  service._runPipeline = async () => {
+    pipelineCalls += 1;
+    return { success: true, result: { pipeline_result: { success: true, response: 'cli-fork' } } };
+  };
+  service._injectIntoOpenCursor = async () => ({ ok: true, via: 'cdp-dom' });
+  service.reloadConversation = async () => ({
+    messages: [
+      { role: 'user', text: 'hello from web', time: Date.now() - 10 },
+      { role: 'assistant', text: 'same tab reply', time: Date.now() }
+    ]
+  });
+  const created = service.createConversation({ provider: 'cursor', name: 'agents_chat_dashboard' });
+  const local = service.local.find((item) => item.target === created.target);
+  local.sourceFile = '/home/subjective/.config/Cursor/User/globalStorage/state.vscdb#composer:1ee97ef1-f0b3-4f25-b98c-b218ae44b3df';
+  const result = await service.sendMessage(created.target, 'hello from web');
+  assert.equal(pipelineCalls, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.cursorDomInjected, true);
+  assert.equal(result.cursorIdeHint, false);
+  assert.equal(result.assistantMessage.text, 'same tab reply');
+});
+
+test('preferConversationLabel keeps a real title over a generic provider fallback', () => {
+  assert.equal(isGenericProviderLabel('cursor conversation'), true);
+  assert.equal(isGenericProviderLabel('Hey you there ?'), false);
+  assert.equal(preferConversationLabel('Hey you there ?', 'cursor conversation', 'cursor'), 'Hey you there ?');
+  assert.equal(preferConversationLabel('cursor conversation', 'manager', 'cursor'), 'manager');
+});
+
+test('refreshHistory defers while a send is marked busy', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  service.busy.add('llm:cursor:busy');
+  const result = await service.refreshHistory();
+  assert.equal(result.status, 'deferred');
+  assert.equal(service._historyRefreshDeferred, true);
+});
+
+test('reloadConversation replaces stale export with live transcript', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  writeChat(paths.contextDir, 'cursor-Localchats-test-context.json', {
+    title: 'agents_chat_dashboard',
+    product: 'cursor',
+    thread_id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    source_file: '/tmp/state.vscdb#composer:bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+    source_mtime: Date.now(),
+    messages: [{ role: 'user', text: 'old only', timestamp: '2026-08-01T00:00:00Z' }]
+  });
+  const service = new LlmService({
+    ...paths,
+    reloadRuntime: path.join(__dirname, '..', 'pipelines', 'history', 'reload_one.py'),
+    spawn: () => {
+      const { EventEmitter } = require('node:events');
+      const { PassThrough } = require('node:stream');
+      const child = new EventEmitter();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.stdin = new PassThrough();
+      child.kill = () => {};
+      queueMicrotask(() => {
+        child.stdout.end(JSON.stringify({
+          success: true,
+          transcript: {
+            title: 'agents_chat_dashboard',
+            product: 'cursor',
+            source_file: '/tmp/state.vscdb#composer:bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+            messages: [
+              { role: 'user', text: 'old only', timestamp: '2026-08-01T00:00:00Z' },
+              { role: 'user', text: 'hello from cursor ide', timestamp: '2026-08-31T22:32:00Z' },
+              { role: 'assistant', kind: 'code', text: '--- a\n+++ a\n- old\n+ new', timestamp: '2026-08-31T22:33:00Z' }
+            ]
+          }
+        }));
+        child.emit('close', 0);
+      });
+      return child;
+    }
+  });
+  const listed = service.listConversations();
+  const target = listed[0].target;
+  const reloaded = await service.reloadConversation(target);
+  assert.equal(reloaded.messages.length, 3);
+  assert.equal(reloaded.messages.at(-1).kind, 'code');
+  assert.match(reloaded.messages.at(-1).text, /\+ new/);
+  const exported = JSON.parse(fs.readFileSync(listed[0].exportPath, 'utf8'));
+  assert.equal(exported.messages.length, 3);
 });

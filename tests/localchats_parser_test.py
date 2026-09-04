@@ -369,6 +369,111 @@ class LocalChatsParserTest(unittest.TestCase):
         self.assertIn("E. All of the above", messages[0]["text"])
         self.assertIn("Which — A, B, C, D, or E?", messages[0]["text"])
 
+    def test_cursor_tool_use_becomes_read_and_diff_cards(self):
+        records = [
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "I'll edit the file."},
+                        {"type": "tool_use", "name": "Read", "input": {"path": "/subjective/src/renderer.js"}},
+                        {
+                            "type": "tool_use",
+                            "name": "StrReplace",
+                            "input": {
+                                "path": "/subjective/src/renderer.js",
+                                "old_string": "const x = 1",
+                                "new_string": "const x = 2",
+                            },
+                        },
+                    ]
+                },
+            }
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+            handle.flush()
+            messages = self.datasource._parse_jsonl_messages(handle.name, "cursor")
+        kinds = [(m.get("role"), m.get("kind") or "", m.get("text", "")) for m in messages]
+        self.assertTrue(any(role == "assistant" and "I'll edit" in text for role, _kind, text in kinds))
+        self.assertTrue(any("Read `" in text for _role, _kind, text in kinds))
+        self.assertTrue(any(kind == "code" and "- const x = 1" in text for _role, kind, text in kinds))
+
+    def test_reload_composer_merges_jsonl_diff_cards(self):
+        composer_id = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "state.vscdb")
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute(
+                "INSERT INTO cursorDiskKV VALUES (?, ?)",
+                (
+                    f"composerData:{composer_id}",
+                    json.dumps({
+                        "composerId": composer_id,
+                        "name": "agents_chat_dashboard",
+                        "createdAt": 1,
+                        "lastUpdatedAt": 2,
+                    }),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO cursorDiskKV VALUES (?, ?)",
+                (
+                    f"bubbleId:{composer_id}:u1",
+                    json.dumps({"type": 1, "text": "add a refresh button", "createdAt": 10}),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO cursorDiskKV VALUES (?, ?)",
+                (
+                    f"bubbleId:{composer_id}:a1",
+                    json.dumps({"type": 2, "text": "I'll look at the frames.", "createdAt": 11}),
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            home = os.path.join(temp_dir, "home", "tester")
+            jsonl_dir = os.path.join(
+                home, ".cursor", "projects", "p", "agent-transcripts", composer_id
+            )
+            os.makedirs(jsonl_dir)
+            jsonl_path = os.path.join(jsonl_dir, f"{composer_id}.jsonl")
+            with open(jsonl_path, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "role": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "I'll look at the frames."},
+                            {
+                                "type": "tool_use",
+                                "name": "StrReplace",
+                                "input": {
+                                    "path": "/subjective/src/renderer.js",
+                                    "old_string": "old",
+                                    "new_string": "new",
+                                },
+                            },
+                        ]
+                    },
+                }) + "\n")
+
+            self.datasource.max_messages_per_chat = 0
+            self.datasource._active_user_homes = [{"home": home, "source_user": "tester"}]
+            transcript = self.datasource.reload_transcript(
+                source_file=f"{db_path}#composer:{composer_id}",
+                session_id=composer_id,
+                provider="cursor",
+            )
+            self.assertIsNotNone(transcript)
+            texts = [str(m.get("text") or "") for m in transcript["messages"]]
+            self.assertTrue(any("add a refresh button" in text for text in texts))
+            self.assertTrue(any("I'll look at the frames." in text for text in texts))
+            self.assertTrue(any("- old" in text and "+ new" in text for text in texts))
+            self.assertEqual(transcript["title"], "agents_chat_dashboard")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,15 +8,22 @@
 (function () {
   if (window.subjectiveChat) return;
 
-  async function api(method, path, body) {
+  // A proxy that gave up waiting. Only meaningful for calls that can legitimately outlive
+  // its patience - see the longRunning option below.
+  const PROXY_TIMEOUT_STATUSES = new Set([502, 504, 524]);
+
+  async function api(method, path, body, options = {}) {
     const response = await fetch(path, {
       method,
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
-    // 524/504/502: Cloudflare (or another proxy) gave up waiting. The Node turn can
-    // still be running; llm-message arrives on the WebSocket. Do not treat as a failed send.
-    if (!response.ok && (response.status === 524 || response.status === 504 || response.status === 502)) {
+    // 524/504/502: Cloudflare (or another proxy) gave up waiting. An agent turn can
+    // still be running; llm-message arrives on the WebSocket. Do not treat as a failed
+    // send. Scoped to longRunning calls on purpose: a read like /api/llm/conversations
+    // answers in milliseconds, so a 5xx there is a real error - reporting it as a
+    // successful empty result would blank the chat list.
+    if (!response.ok && PROXY_TIMEOUT_STATUSES.has(response.status) && options.longRunning) {
       return { ok: true, pending: true, proxyTimeout: response.status };
     }
     if (!response.ok && response.status >= 500) return { ok: false, error: `Server error (${response.status})` };
@@ -28,7 +35,7 @@
   }
 
   const get = (path) => api('GET', path);
-  const post = (path, body = {}) => api('POST', path, body);
+  const post = (path, body = {}, options) => api('POST', path, body, options);
 
   // --- live event stream --------------------------------------------------------------
 
@@ -206,12 +213,16 @@
       return get(`/api/llm/conversations?${params}`);
     },
     getLlmConversation: (target) => get(`/api/llm/conversation?target=${encodeURIComponent(target)}`),
+    reloadLlmConversation: (target) => post('/api/llm/reload-conversation', { target }, { longRunning: true }),
     activateLlmConversation: (target) => post('/api/llm/activate-conversation', { target }),
     createLlmConversation: (payload) => post('/api/llm/create-conversation', payload),
     renameLlmConversation: (target, name) => post('/api/llm/rename-conversation', { target, name }),
+    // LocalChats scan can take minutes on a cold archive; treat like an agent turn.
+    refreshLlmHistory: () => post('/api/llm/refresh-history', {}, { longRunning: true }),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),
     listProviderSessions: (provider) => get(`/api/llm/sessions?provider=${encodeURIComponent(provider || '')}`),
-    sendLlmMessage: (target, text, files = []) => post('/api/llm/send-message', { target, text, files }),
+    // The only request that routinely runs for minutes: one agent turn.
+    sendLlmMessage: (target, text, files = []) => post('/api/llm/send-message', { target, text, files }, { longRunning: true }),
     listSystemUsers: () => get('/api/system/users'),
     getSwitchUserStatus: (username) => get(`/api/switchuser/status?username=${encodeURIComponent(username || '')}`),
     showConversationContextMenu,

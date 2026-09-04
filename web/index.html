@@ -8,10 +8,10 @@
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
          the whole set. Bump on any change to these files. -->
-    <link rel="stylesheet" href="/styles.css?v=20260828d">
+    <link rel="stylesheet" href="/styles.css?v=20260901e">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
     <link rel="stylesheet" href="/contextMenu.css?v=20260826a">
-    <link rel="stylesheet" href="/layout.css?v=20260828d">
+    <link rel="stylesheet" href="/layout.css?v=20260901e">
   </head>
   <body data-accent="gold">
     <main class="app-shell">
@@ -37,6 +37,16 @@
             </div>
             <button id="mobileMenuButton" class="secondary-button mobile-menu-button" type="button" aria-label="Show chats and users">☰ Chats</button>
             <div class="top-actions" id="topActions">
+              <div class="frame-layout-picker" id="frameLayoutPicker" role="group" aria-label="Chat layout">
+                <button type="button" data-layout="single" title="One chat" aria-pressed="true">1</button>
+                <button type="button" data-layout="split-h" title="Two chats side by side" aria-pressed="false">2</button>
+                <button type="button" data-layout="split-v" title="Two chats stacked" aria-pressed="false">═</button>
+                <button type="button" data-layout="quad" title="Four chats" aria-pressed="false">4</button>
+              </div>
+              <label class="frame-broadcast" title="Send the same message to every open pane">
+                <input type="checkbox" id="frameBroadcast">
+                <span>All panes</span>
+              </label>
               <button id="settingsButton" class="icon-button subtle" title="Connection settings" aria-label="Connection settings">⚙</button>
               <button id="bookmarksButton" class="icon-button subtle" title="Bookmarks" aria-label="Bookmarks">☆</button>
               <button id="sendImageButton" class="icon-button" title="Send image with DCC" aria-label="Send image with DCC">+</button>
@@ -53,13 +63,7 @@
 
         <section class="content-grid">
           <div class="chat-main">
-            <div id="transcript" class="transcript" aria-live="polite"></div>
-            <form id="composer" class="composer">
-              <div id="pendingImages" class="pending-images" hidden></div>
-              <textarea id="messageInput" rows="2" autocomplete="off" placeholder="Message #subjective"></textarea>
-              <div id="commandPalette" class="command-palette" hidden></div>
-              <button type="submit">Send</button>
-            </form>
+            <div id="chatFrames" class="chat-frames" data-layout="single"></div>
           </div>
 
           <aside class="right-rail">
@@ -212,8 +216,8 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js?v=20260828d"></script>
-    <script src="/messageRenderer.js?v=20260828d"></script>
-    <script src="/renderer.js?v=20260828d"></script>
+    <script src="/webBridge.js?v=20260901e"></script>
+    <script src="/messageRenderer.js?v=20260901e"></script>
+    <script src="/renderer.js?v=20260901e"></script>
   </body>
 </html>

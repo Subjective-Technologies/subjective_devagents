@@ -1,7 +1,10 @@
-const transcript = document.getElementById('transcript');
-const composer = document.getElementById('composer');
-const input = document.getElementById('messageInput');
-const pendingImagesEl = document.getElementById('pendingImages');
+const chatFrames = document.getElementById('chatFrames');
+const frameLayoutPicker = document.getElementById('frameLayoutPicker');
+const frameBroadcast = document.getElementById('frameBroadcast');
+let transcript = document.getElementById('transcript');
+let composer = document.getElementById('composer');
+let input = document.getElementById('messageInput');
+let pendingImagesEl = document.getElementById('pendingImages');
 const statusPill = document.getElementById('statusPill');
 const statusText = document.getElementById('statusText');
 const connectButton = document.getElementById('connectButton');
@@ -30,7 +33,7 @@ const tlsInput = document.getElementById('tlsInput');
 const channelInput = document.getElementById('channelInput');
 const nickInput = document.getElementById('nickInput');
 const realnameInput = document.getElementById('realnameInput');
-const commandPalette = document.getElementById('commandPalette');
+let commandPalette = document.getElementById('commandPalette');
 const mobileMenuButton = document.getElementById('mobileMenuButton');
 const mobileDrawer = document.getElementById('mobileDrawer');
 const mobileDrawerClose = document.getElementById('mobileDrawerClose');
@@ -110,6 +113,7 @@ function activeCommandList(value = input.value) {
 function hideCommandPalette() {
   commandMatches = [];
   commandMatchIndex = 0;
+  if (!commandPalette) return;
   commandPalette.hidden = true;
   commandPalette.replaceChildren();
 }
@@ -117,6 +121,7 @@ function hideCommandPalette() {
 function renderCommandPalette(items) {
   commandMatches = items;
   commandMatchIndex = 0;
+  if (!commandPalette) return;
   commandPalette.replaceChildren();
 
   if (!items.length) {
@@ -180,6 +185,352 @@ function isMobileLayout() {
   return Boolean(mobileDrawer) && window.matchMedia('(max-width: 720px)').matches;
 }
 
+const CHAT_FRAME_LAYOUTS = Object.freeze({
+  single: { count: 1 },
+  'split-h': { count: 2 },
+  'split-v': { count: 2 },
+  quad: { count: 4 }
+});
+const CHAT_FRAME_STORAGE = 'subjective-chat-frames';
+let chatLayout = 'single';
+let frameTargets = [''];
+let focusedFrame = 0;
+
+function framesEnabled() {
+  return Boolean(chatFrames);
+}
+
+function visibleFrameTargets() {
+  const count = CHAT_FRAME_LAYOUTS[chatLayout]?.count || 1;
+  return frameTargets.slice(0, count).filter(Boolean);
+}
+
+function isTargetOnScreen(target) {
+  if (!framesEnabled()) return target === activeTarget;
+  return visibleFrameTargets().includes(target);
+}
+
+function persistChatFrames() {
+  if (!framesEnabled()) return;
+  try {
+    localStorage.setItem(CHAT_FRAME_STORAGE, JSON.stringify({
+      layout: chatLayout,
+      targets: frameTargets,
+      focused: focusedFrame,
+      broadcast: Boolean(frameBroadcast?.checked)
+    }));
+  } catch (_error) {
+    /* ignore quota / private mode */
+  }
+}
+
+function restoreChatFrames() {
+  if (!framesEnabled()) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAT_FRAME_STORAGE) || 'null');
+    if (!saved || !CHAT_FRAME_LAYOUTS[saved.layout]) return;
+    chatLayout = isMobileLayout() ? 'single' : saved.layout;
+    const count = CHAT_FRAME_LAYOUTS[chatLayout].count;
+    frameTargets = Array.from({ length: count }, (_, index) => String(saved.targets?.[index] || ''));
+    focusedFrame = Math.min(Math.max(0, Number(saved.focused) || 0), count - 1);
+    if (frameBroadcast) frameBroadcast.checked = Boolean(saved.broadcast);
+  } catch (_error) {
+    chatLayout = 'single';
+    frameTargets = [''];
+    focusedFrame = 0;
+  }
+}
+
+function bindFocusedFrameDom(frameEl) {
+  if (!frameEl) return;
+  transcript = frameEl.querySelector('.transcript');
+  composer = frameEl.querySelector('.composer');
+  input = frameEl.querySelector('textarea');
+  pendingImagesEl = frameEl.querySelector('.pending-images');
+  commandPalette = frameEl.querySelector('.command-palette');
+}
+
+function attachFrameComposer(frameEl) {
+  const form = frameEl.querySelector('.composer');
+  const textarea = frameEl.querySelector('textarea');
+  if (!form || form.dataset.bound === '1') return;
+  form.dataset.bound = '1';
+  form.addEventListener('submit', onComposerSubmit);
+  textarea.addEventListener('keydown', onComposerKeydown);
+  textarea.addEventListener('input', () => updateCommandPalette());
+  textarea.addEventListener('blur', () => {
+    window.setTimeout(() => {
+      if (document.activeElement !== input) hideCommandPalette();
+    }, 120);
+  });
+  textarea.addEventListener('paste', onComposerPaste);
+}
+
+function createChatFrame(index) {
+  const frame = document.createElement('article');
+  frame.className = 'chat-frame';
+  frame.dataset.frame = String(index);
+  frame.tabIndex = 0;
+  frame.innerHTML = `
+    <header class="frame-head">
+      <img class="frame-icon provider-icon" alt="" hidden>
+      <strong class="frame-title">Drop a chat here</strong>
+      <button type="button" class="frame-refresh" hidden title="Refresh chat" aria-label="Refresh chat">↻</button>
+      <button type="button" class="frame-clear" hidden title="Clear pane" aria-label="Clear pane">×</button>
+    </header>
+    <div class="transcript" aria-live="polite"></div>
+    <form class="composer">
+      <div class="pending-images" hidden></div>
+      <textarea rows="2" autocomplete="off" placeholder="Drop a chat from the list"></textarea>
+      <div class="command-palette" hidden></div>
+      <button type="submit">Send</button>
+    </form>
+  `;
+  frame.addEventListener('pointerdown', () => focusChatFrame(Number(frame.dataset.frame)));
+  frame.querySelector('.frame-refresh').addEventListener('click', (event) => {
+    event.stopPropagation();
+    refreshChatFrame(index);
+  });
+  frame.querySelector('.frame-clear').addEventListener('click', (event) => {
+    event.stopPropagation();
+    assignChatFrame(index, '');
+  });
+  frame.addEventListener('dragover', (event) => {
+    if (![...event.dataTransfer.types].includes('application/x-subjective-chat')) return;
+    event.preventDefault();
+    frame.classList.add('is-drop');
+  });
+  frame.addEventListener('dragleave', () => frame.classList.remove('is-drop'));
+  frame.addEventListener('drop', (event) => {
+    event.preventDefault();
+    frame.classList.remove('is-drop');
+    const target = event.dataTransfer.getData('application/x-subjective-chat');
+    if (target) assignChatFrame(index, target);
+  });
+  attachFrameComposer(frame);
+  return frame;
+}
+
+function syncChatFrame(frameEl, index) {
+  const target = frameTargets[index] || '';
+  const conversation = target ? conversations.get(target) : null;
+  frameEl.classList.toggle('is-focused', index === focusedFrame);
+  frameEl.classList.toggle('is-empty', !target);
+  const title = frameEl.querySelector('.frame-title');
+  const icon = frameEl.querySelector('.frame-icon');
+  const refresh = frameEl.querySelector('.frame-refresh');
+  const clear = frameEl.querySelector('.frame-clear');
+  const textarea = frameEl.querySelector('textarea');
+  title.textContent = conversation?.label || (target ? target : 'Drop a chat here');
+  title.title = title.textContent;
+  if (icon) {
+    icon.hidden = !conversation?.icon;
+    icon.src = conversation?.icon || '';
+    icon.alt = conversation?.provider || '';
+  }
+  if (refresh) refresh.hidden = !target;
+  if (clear) clear.hidden = !target;
+  if (textarea) {
+    textarea.disabled = Boolean(conversation?.kind === 'llm' && (!conversation.writable || conversation.busy));
+    textarea.placeholder = !conversation
+      ? 'Drop a chat from the list'
+      : (conversation.kind === 'llm' && !conversation.writable
+        ? `${providerName(conversation.provider)} history is read-only`
+        : (conversation.busy
+          ? `${providerName(conversation.provider)} is working…`
+          : `Message ${providerName(conversation.provider) || conversation.label}`));
+  }
+}
+
+function ensureChatFrameDom() {
+  if (!framesEnabled()) return;
+  if (isMobileLayout()) chatLayout = 'single';
+  const count = CHAT_FRAME_LAYOUTS[chatLayout]?.count || 1;
+  chatFrames.dataset.layout = chatLayout;
+  frameTargets = Array.from({ length: count }, (_, index) => frameTargets[index] || '');
+  if (focusedFrame >= count) focusedFrame = 0;
+  while (chatFrames.children.length > count) chatFrames.lastElementChild.remove();
+  while (chatFrames.children.length < count) {
+    chatFrames.appendChild(createChatFrame(chatFrames.children.length));
+  }
+  [...chatFrames.children].forEach((frameEl, index) => {
+    frameEl.dataset.frame = String(index);
+    syncChatFrame(frameEl, index);
+  });
+  if (frameLayoutPicker) {
+    for (const button of frameLayoutPicker.querySelectorAll('[data-layout]')) {
+      button.setAttribute('aria-pressed', String(button.dataset.layout === chatLayout));
+    }
+  }
+  bindFocusedFrameDom(chatFrames.children[focusedFrame]);
+}
+
+function renderFrameTranscript(frameEl, target) {
+  const node = frameEl?.querySelector('.transcript');
+  if (!node) return;
+  const previous = transcript;
+  transcript = node;
+  if (!target) {
+    node.replaceChildren();
+    const empty = document.createElement('article');
+    empty.className = 'entry system-entry frame-empty-hint';
+    empty.innerHTML = '<div class="bubble">Drag a chat from the list, or click one to open it here.</div>';
+    node.appendChild(empty);
+    transcript = previous;
+    return;
+  }
+  const conversation = ensureConversation(target);
+  renderOneTranscript(conversation);
+  frameEl.dataset.renderedCount = String(conversation.events.length);
+  if (frameEl === chatFrames.children[focusedFrame]) {
+    transcriptTarget = conversation.target;
+    transcriptRenderedCount = conversation.events.length;
+  }
+  transcript = previous;
+}
+
+function focusChatFrame(index, options = {}) {
+  if (!framesEnabled()) return;
+  const count = CHAT_FRAME_LAYOUTS[chatLayout]?.count || 1;
+  if (index < 0 || index >= count) return;
+  focusedFrame = index;
+  bindFocusedFrameDom(chatFrames.children[index]);
+  const target = frameTargets[index];
+  if (target && !options.skipActive) setActiveTarget(target, { skipFrame: true });
+  ensureChatFrameDom();
+  persistChatFrames();
+}
+
+function assignChatFrame(index, target, options = {}) {
+  if (!framesEnabled()) return;
+  const next = String(target || '');
+  if (next) {
+    const existing = frameTargets.indexOf(next);
+    if (existing >= 0 && existing !== index) {
+      focusChatFrame(existing);
+      return;
+    }
+  }
+  frameTargets[index] = next;
+  focusedFrame = index;
+  persistChatFrames();
+  if (next && !options.skipActive) setActiveTarget(next, { skipFrame: true });
+  ensureChatFrameDom();
+  renderVisibleFrameTranscripts();
+}
+
+function renderVisibleFrameTranscripts() {
+  if (!framesEnabled()) return;
+  ensureChatFrameDom();
+  [...chatFrames.children].forEach((frameEl, index) => {
+    renderFrameTranscript(frameEl, frameTargets[index]);
+  });
+}
+
+function initChatFrames() {
+  if (!framesEnabled()) return;
+  restoreChatFrames();
+  ensureChatFrameDom();
+  if (frameLayoutPicker) {
+    frameLayoutPicker.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-layout]');
+      if (!button || isMobileLayout()) return;
+      chatLayout = button.dataset.layout;
+      ensureChatFrameDom();
+      renderVisibleFrameTranscripts();
+      persistChatFrames();
+    });
+  }
+  if (frameBroadcast) {
+    frameBroadcast.addEventListener('change', persistChatFrames);
+  }
+}
+
+async function rehydrateConversation(target, { force = false } = {}) {
+  const conversation = conversations.get(target);
+  if (!conversation || conversation.kind !== 'llm') return;
+  if (conversation.loading || conversation.busy) return;
+  if (!force && conversation.hydrated) return;
+  conversation.loading = true;
+  if (force) conversation.hydrated = false;
+  if (isTargetOnScreen(target)) renderTranscript();
+  rendererLog('info', 'Rehydrate conversation start', {
+    target,
+    force,
+    provider: conversation.provider,
+    label: conversation.label
+  });
+  try {
+    const result = await window.subjectiveChat.getLlmConversation(target);
+    conversation.loading = false;
+    rendererLog(result?.ok ? 'info' : 'error', 'Rehydrate conversation done', {
+      target,
+      ok: Boolean(result?.ok),
+      error: result?.error || '',
+      messageCount: result?.conversation?.messages?.length || 0
+    });
+    if (result?.ok) upsertLlmConversation(result.conversation);
+    else if (force) addEvent('system', { target, text: result?.error || 'Could not refresh conversation history.' });
+  } catch (error) {
+    conversation.loading = false;
+    rendererLog('error', 'Rehydrate conversation crashed', { target, message: error.message });
+    if (force) addEvent('system', { target, text: error.message || 'Could not refresh conversation history.' });
+  }
+}
+
+async function refreshChatFrame(index) {
+  if (!framesEnabled()) return;
+  const frameEl = chatFrames.children[index];
+  const button = frameEl?.querySelector('.frame-refresh');
+  if (button?.disabled) return;
+  const target = frameTargets[index] || '';
+  if (button) {
+    button.disabled = true;
+    button.classList.add('is-busy');
+  }
+  rendererLog('info', 'Frame refresh start', { index, target });
+  try {
+    const targets = new Set(visibleFrameTargets());
+    if (target) targets.add(target);
+    const reloadOne = window.subjectiveChat.reloadLlmConversation
+      || ((item) => window.subjectiveChat.getLlmConversation(item));
+    await Promise.all([...targets].map(async (item) => {
+      const conversation = conversations.get(item);
+      if (conversation?.busy) return;
+      if (conversation) {
+        conversation.hydrated = false;
+        conversation.loading = true;
+      }
+      const result = await reloadOne(item);
+      if (conversation) conversation.loading = false;
+      if (result?.ok && result.conversation) {
+        upsertLlmConversation(result.conversation);
+        rendererLog('info', 'Frame live reload ok', {
+          target: item,
+          messageCount: result.conversation.messages?.length || 0
+        });
+      } else {
+        rendererLog('error', 'Frame live reload failed', { target: item, error: result?.error || '' });
+        addEvent('system', { target: item, text: result?.error || 'Could not reload this chat from the IDE.' });
+      }
+    }));
+    if (target) {
+      const conversation = conversations.get(target);
+      const count = conversation?.events?.filter((event) => event.kind === 'message' || event.kind === 'code' || event.kind === 'command').length || 0;
+      addEvent('system', { target, text: `Reloaded from ${conversation?.provider || 'IDE'} (${count} messages).` });
+    }
+  } catch (error) {
+    rendererLog('error', 'Frame refresh crashed', { index, target, message: error.message });
+    if (target) addEvent('system', { target, text: error.message || 'Refresh failed.' });
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.classList.remove('is-busy');
+    }
+    rendererLog('info', 'Frame refresh done', { index, target });
+  }
+}
+
 // Where each node lived before the drawer borrowed it, so widening the viewport
 // (rotating a phone to landscape, dragging the iframe wider) can put it back.
 const mobileNodeHomes = new WeakMap();
@@ -225,6 +576,11 @@ function unmountMobileLayout() {
 function syncMobileLayout() {
   if (isMobileLayout()) {
     mountMobileLayout();
+    if (framesEnabled() && chatLayout !== 'single') {
+      chatLayout = 'single';
+      ensureChatFrameDom();
+      renderVisibleFrameTranscripts();
+    }
     return;
   }
   if (mobileDrawer && mobileDrawer.open) closeMobileDrawer();
@@ -396,6 +752,18 @@ window.addEventListener('unhandledrejection', (event) => {
 let deferConversationRender = 0;
 let llmListTotal = 0;
 
+function isGenericProviderLabel(label) {
+  return /^(cursor|codex|claude|chatgpt|gemini|grok|chat)\s+conversation$/i.test(String(label || '').trim());
+}
+
+function preferConversationLabel(existing, incoming, provider) {
+  const next = String(incoming || '').trim();
+  const prev = String(existing || '').trim();
+  if (!next) return prev;
+  if (prev && isGenericProviderLabel(next, provider) && !isGenericProviderLabel(prev, provider)) return prev;
+  return next;
+}
+
 function ensureConversation(target, label = target, kind = target.startsWith('#') ? 'channel' : 'dm', metadata = {}) {
   if (!conversations.has(target)) {
     conversations.set(target, { target, label, kind, events: [], unread: 0, updatedAt: 0, sortAt: 0, ...metadata });
@@ -403,9 +771,10 @@ function ensureConversation(target, label = target, kind = target.startsWith('#'
     const conversation = conversations.get(target);
     const latestTimestamp = Math.max(Number(conversation.updatedAt || 0), Number(metadata.updatedAt || 0));
     const latestSortTimestamp = Math.max(Number(conversation.sortAt || 0), Number(metadata.sortAt || 0));
+    const keepLabel = preferConversationLabel(conversation.label, label, metadata.provider || conversation.provider);
     Object.assign(conversation, metadata, {
       target,
-      label,
+      label: keepLabel,
       kind,
       updatedAt: latestTimestamp,
       sortAt: latestSortTimestamp
@@ -415,10 +784,11 @@ function ensureConversation(target, label = target, kind = target.startsWith('#'
   return conversations.get(target);
 }
 
-function setActiveTarget(target) {
+function setActiveTarget(target, options = {}) {
   if (mobileDrawer && mobileDrawer.open) closeMobileDrawer();
   const conversation = ensureConversation(target);
   activeTarget = target;
+  if (framesEnabled() && !options.skipFrame) assignChatFrame(focusedFrame, target, { skipActive: true });
   conversation.unread = 0;
   topChannel.textContent = conversation.label;
   topChannel.title = conversation.label;
@@ -483,8 +853,8 @@ function addEvent(kind, data) {
     conversation.updatedAt = Math.max(Number(conversation.updatedAt || 0), messageTimestamp);
     conversation.sortAt = Math.max(Number(conversation.sortAt || 0), messageTimestamp);
   }
-  if (target !== activeTarget) conversation.unread += 1;
-  if (target === activeTarget && !appendTranscriptEntry(conversation)) renderTranscript();
+  if (!isTargetOnScreen(target) || (framesEnabled() && target !== activeTarget)) conversation.unread += 1;
+  if (isTargetOnScreen(target) && !appendTranscriptEntry(conversation)) renderTranscript();
   renderConversations();
 }
 
@@ -494,11 +864,23 @@ function addEvent(kind, data) {
 // a full render whenever the transcript is not exactly one event behind the model.
 function appendTranscriptEntry(conversation) {
   if (pendingTranscriptRender) return false;          // a full render is already queued
-  if (conversation.target !== activeTarget) return false;
-  if (transcriptTarget !== conversation.target) return false;
+  if (framesEnabled()) {
+    const frameIndex = frameTargets.indexOf(conversation.target);
+    if (frameIndex < 0) return false;
+    const frameEl = chatFrames.children[frameIndex];
+    if (frameEl) transcript = frameEl.querySelector('.transcript');
+  } else if (conversation.target !== activeTarget) {
+    return false;
+  }
+  if (transcriptTarget !== conversation.target && !framesEnabled()) return false;
   if (conversation.loading) return false;
+  if (!transcript) return false;
   const events = conversation.events;
-  if (transcriptRenderedCount !== events.length - 1) return false;
+  const frameEl = framesEnabled() ? chatFrames.children[frameTargets.indexOf(conversation.target)] : null;
+  const renderedCount = frameEl
+    ? Number(frameEl.dataset.renderedCount || -1)
+    : transcriptRenderedCount;
+  if (renderedCount !== events.length - 1) return false;
   const index = events.length - 1;
   // Action buttons belong to the final assistant message only, so the entry that was last
   // until now has to give them up. renderEntry() emits exactly one .entry per event, which
@@ -519,6 +901,7 @@ function appendTranscriptEntry(conversation) {
   if (thinking) transcript.insertBefore(node, thinking);
   else transcript.appendChild(node);
   transcriptRenderedCount = events.length;
+  if (frameEl) frameEl.dataset.renderedCount = String(events.length);
   transcript.scrollTop = transcript.scrollHeight;
   return true;
 }
@@ -531,16 +914,26 @@ let thinkingTimer = null;
 let thinkingFrame = 0;
 
 function tickThinkingRow() {
-  const row = transcript.querySelector('.thinking-entry');
-  if (!row) {
+  const roots = framesEnabled() ? [...chatFrames.querySelectorAll('.transcript')] : (transcript ? [transcript] : []);
+  const rows = roots.flatMap((node) => [...node.querySelectorAll('.thinking-entry')]);
+  if (!rows.length) {
     stopThinkingAnimation();
     return;
   }
   thinkingFrame += 1;
-  const elapsed = Math.max(0, Date.now() - Number(row.dataset.since || Date.now()));
-  row.querySelector('.thinking-spinner').textContent = THINKING_FRAMES[thinkingFrame % THINKING_FRAMES.length];
-  row.querySelector('.thinking-verb').textContent = THINKING_VERBS[Math.floor(elapsed / THINKING_VERB_MS) % THINKING_VERBS.length];
-  row.querySelector('.thinking-elapsed').textContent = `${Math.floor(elapsed / 1000)}s`;
+  for (const row of rows) {
+    const elapsed = Math.max(0, Date.now() - Number(row.dataset.since || Date.now()));
+    const spinner = row.querySelector('.thinking-spinner');
+    const verb = row.querySelector('.thinking-verb');
+    const clock = row.querySelector('.thinking-elapsed');
+    if (spinner) spinner.textContent = THINKING_FRAMES[thinkingFrame % THINKING_FRAMES.length];
+    if (verb) {
+      const target = row.dataset.target;
+      const live = target && conversations.get(target)?.progress;
+      verb.textContent = live || THINKING_VERBS[Math.floor(elapsed / THINKING_VERB_MS) % THINKING_VERBS.length];
+    }
+    if (clock) clock.textContent = `${Math.floor(elapsed / 1000)}s`;
+  }
 }
 
 function stopThinkingAnimation() {
@@ -558,6 +951,7 @@ function renderThinkingRow(conversation) {
   const item = document.createElement('article');
   item.className = 'entry thinking-entry';
   item.dataset.since = String(conversation.busySince || Date.now());
+  item.dataset.target = conversation.target || '';
   const avatar = conversation.icon
     ? `<img class="avatar provider-avatar" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(providerName(conversation.provider))}">`
     : `<div class="avatar">${initials(providerName(conversation.provider))}</div>`;
@@ -565,7 +959,7 @@ function renderThinkingRow(conversation) {
     ${avatar}
     <div class="thinking-bubble" role="status" aria-live="polite">
       <span class="thinking-spinner" aria-hidden="true">${THINKING_FRAMES[0]}</span>
-      <span class="thinking-verb">${THINKING_VERBS[0]}</span>
+      <span class="thinking-verb">${escapeHtml(conversation.progress || 'Working')}</span>
       <span class="thinking-ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="thinking-elapsed">0s</span>
     </div>
@@ -609,18 +1003,24 @@ function renderConversations() {
   scheduleRender();
 }
 
-function renderTranscriptNow() {
+function renderOneTranscript(conversation) {
+  if (!transcript || !conversation) return;
   transcript.replaceChildren();
-  const conversation = ensureConversation(activeTarget || config.channel);
-  transcriptTarget = conversation.target;
   if (conversation.kind === 'llm' && conversation.loading) {
     transcript.appendChild(renderEntry('system', { text: 'Loading conversation history…' }));
-    stopThinkingAnimation();
-    transcriptRenderedCount = -1;
     return;
   }
-  const finalEventIndex = conversation.events.length - 1;
-  for (const [index, event] of conversation.events.entries()) {
+  const TRANSCRIPT_WINDOW = 80;
+  const allEvents = conversation.events;
+  const hidden = allEvents.length > TRANSCRIPT_WINDOW ? allEvents.length - TRANSCRIPT_WINDOW : 0;
+  const visible = hidden ? allEvents.slice(-TRANSCRIPT_WINDOW) : allEvents;
+  if (hidden) {
+    transcript.appendChild(renderEntry('system', {
+      text: `Showing last ${TRANSCRIPT_WINDOW} of ${allEvents.length} messages.`
+    }));
+  }
+  const finalEventIndex = visible.length - 1;
+  for (const [index, event] of visible.entries()) {
     transcript.appendChild(renderEntry(event.kind, event.data, {
       conversation,
       actionable: index === finalEventIndex && Boolean(event.data.assistant)
@@ -628,12 +1028,27 @@ function renderTranscriptNow() {
   }
   if (conversation.kind === 'llm' && conversation.busy) {
     transcript.appendChild(renderThinkingRow(conversation));
-    startThinkingAnimation();
-  } else {
-    stopThinkingAnimation();
   }
-  transcriptRenderedCount = conversation.events.length;
   transcript.scrollTop = transcript.scrollHeight;
+}
+
+function renderTranscriptNow() {
+  if (framesEnabled()) {
+    renderVisibleFrameTranscripts();
+    const focused = conversations.get(frameTargets[focusedFrame] || activeTarget);
+    transcriptTarget = focused?.target || null;
+    transcriptRenderedCount = focused?.events.length ?? -1;
+    if (visibleFrameTargets().some((target) => conversations.get(target)?.busy)) startThinkingAnimation();
+    else stopThinkingAnimation();
+    return;
+  }
+  if (!transcript) return;
+  const conversation = ensureConversation(activeTarget || config.channel);
+  transcriptTarget = conversation.target;
+  renderOneTranscript(conversation);
+  transcriptRenderedCount = conversation.kind === 'llm' && conversation.loading ? -1 : conversation.events.length;
+  if (conversation.kind === 'llm' && conversation.busy) startThinkingAnimation();
+  else stopThinkingAnimation();
 }
 
 async function copyText(value) {
@@ -993,7 +1408,15 @@ function renderConversationsNow() {
       : conversation.label;
     row.dataset.target = conversation.target;
     row.classList.toggle('active', conversation.target === activeTarget);
+    row.classList.toggle('in-frame', framesEnabled() && frameTargets.includes(conversation.target));
     row.classList.toggle('busy', Boolean(conversation.busy));
+    if (framesEnabled() && conversation.kind === 'llm') {
+      row.draggable = true;
+      row.addEventListener('dragstart', (event) => {
+        event.dataTransfer.setData('application/x-subjective-chat', conversation.target);
+        event.dataTransfer.effectAllowed = 'copy';
+      });
+    }
     const icon = conversation.icon
       ? `<img class="conversation-provider-icon" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(conversation.provider)}">`
       : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
@@ -1251,11 +1674,15 @@ function dropOptimisticLlmEcho(conversation, text) {
   renderConversations();
 }
 
-async function sendTextMessages(lines) {
+async function sendTextMessages(lines, targetOverride) {
+  const sendTarget = targetOverride || activeTarget;
+  const previousTarget = activeTarget;
+  if (targetOverride) activeTarget = targetOverride;
+  try {
   for (const text of lines) {
     const outgoing = normalizeLiteralSlash(text).trim();
     if (!outgoing) continue;
-    rendererLog('info', 'Composer submit', { target: activeTarget, length: outgoing.length });
+    rendererLog('info', 'Composer submit', { target: sendTarget, length: outgoing.length });
     try {
       if (isSlashCommand(outgoing)) {
         const result = await window.subjectiveChat.executeCommand(outgoing, activeTarget);
@@ -1276,7 +1703,18 @@ async function sendTextMessages(lines) {
             error: result?.error || '',
             sessionId: result?.conversation?.sessionId || conversation.sessionId || ''
           });
-          if (result?.pending) return;
+          // HTTP returns pending immediately so Cloudflare cannot 524 the POST.
+          // Reply arrives on the WebSocket. Only mention a proxy timeout when
+          // one actually happened (502/504/524) — not on every normal accept.
+          if (result?.pending) {
+            if (result.proxyTimeout) {
+              addEvent('system', {
+                target: activeTarget,
+                text: `${providerName(conversation.provider)} is still working. The page proxy returned ${result.proxyTimeout}; the reply will appear here when it lands.`
+              });
+            }
+            return;
+          }
           if (!result.ok) {
             dropOptimisticLlmEcho(conversation, outgoing);
             const detail = result.error || result.status || 'Message was not sent.';
@@ -1301,6 +1739,9 @@ async function sendTextMessages(lines) {
       dropOptimisticLlmEcho(conversations.get(activeTarget), outgoing);
       addEvent('system', { target: activeTarget, text: `Message send failed: ${error.message}` });
     }
+  }
+  } finally {
+    activeTarget = previousTarget;
   }
 }
 
@@ -1357,6 +1798,7 @@ function clearPendingImages() {
 }
 
 function renderPendingImages() {
+  if (!pendingImagesEl) return;
   pendingImagesEl.replaceChildren();
   pendingImagesEl.hidden = pendingImages.length === 0;
   for (const image of pendingImages) {
@@ -1371,33 +1813,46 @@ function renderPendingImages() {
   }
 }
 
-composer.addEventListener('submit', async (event) => {
+async function onComposerSubmit(event) {
   event.preventDefault();
-  const lines = input.value
+  const form = event.currentTarget;
+  const frameEl = form.closest('.chat-frame');
+  if (frameEl) focusChatFrame(Number(frameEl.dataset.frame), { skipActive: false });
+  const box = (frameEl ? frameEl.querySelector('textarea') : input);
+  if (box) input = box;
+  const lines = String(input?.value || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   const images = pendingImages.map((image) => image.file);
   if (!lines.length && !images.length) return;
-  input.value = '';
+  if (input) input.value = '';
   hideCommandPalette();
   clearPendingImages();
-  const conversation = conversations.get(activeTarget);
-  if (conversation?.kind === 'llm' && images.length) {
-    try {
-      const files = await Promise.all(images.map(llmAttachment));
-      addOptimisticLlmEcho(conversation, lines.join('\n') || 'Review attached image.');
-      await window.subjectiveChat.sendLlmMessage(activeTarget, lines.join('\n') || 'Review attached image.', files);
-    } catch (error) {
-      addEvent('system', { target: activeTarget, text: `Attachment send failed: ${error.message}` });
+  const broadcast = Boolean(frameBroadcast?.checked) && framesEnabled();
+  const targets = broadcast
+    ? [...new Set(visibleFrameTargets())]
+    : [activeTarget];
+  for (const target of targets) {
+    const conversation = conversations.get(target);
+    if (conversation?.kind === 'llm' && images.length) {
+      try {
+        const files = await Promise.all(images.map(llmAttachment));
+        addOptimisticLlmEcho(conversation, lines.join('\n') || 'Review attached image.');
+        await window.subjectiveChat.sendLlmMessage(target, lines.join('\n') || 'Review attached image.', files);
+      } catch (error) {
+        addEvent('system', { target, text: `Attachment send failed: ${error.message}` });
+      }
+      continue;
     }
-    return;
+    await sendTextMessages(lines, target);
+    if (!broadcast) {
+      for (const file of images) await sendPastedImage(file);
+    }
   }
-  await sendTextMessages(lines);
-  for (const file of images) await sendPastedImage(file);
-});
+}
 
-input.addEventListener('keydown', (event) => {
+async function onComposerKeydown(event) {
   if (commandPalette.hidden === false) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -1423,21 +1878,11 @@ input.addEventListener('keydown', (event) => {
   }
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
-    composer.requestSubmit();
+    (event.currentTarget.closest('form') || composer)?.requestSubmit();
   }
-});
+}
 
-input.addEventListener('input', () => {
-  updateCommandPalette();
-});
-
-input.addEventListener('blur', () => {
-  window.setTimeout(() => {
-    if (document.activeElement !== input) hideCommandPalette();
-  }, 120);
-});
-
-input.addEventListener('paste', async (event) => {
+async function onComposerPaste(event) {
   const directFiles = [...event.clipboardData.files];
   const itemFiles = directFiles.length ? [] : [...event.clipboardData.items]
       .filter((item) => item.kind === 'file')
@@ -1452,7 +1897,19 @@ input.addEventListener('paste', async (event) => {
   recentPasteTime = now;
   event.preventDefault();
   addPendingImages(files);
-});
+}
+
+if (composer) composer.addEventListener('submit', onComposerSubmit);
+if (input) {
+  input.addEventListener('keydown', onComposerKeydown);
+  input.addEventListener('input', () => updateCommandPalette());
+  input.addEventListener('blur', () => {
+    window.setTimeout(() => {
+      if (document.activeElement !== input) hideCommandPalette();
+    }, 120);
+  });
+  input.addEventListener('paste', onComposerPaste);
+}
 
 connectButton.addEventListener('click', async () => {
   await window.subjectiveChat.connect();
@@ -1540,17 +1997,31 @@ function llmListMetadata(payload) {
 function upsertLlmConversation(payload) {
   if (!payload?.target) return null;
   const existing = conversations.get(payload.target);
-  const replaceEvents = payload.loaded !== false;
-  const conversation = ensureConversation(payload.target, payload.label, 'llm', llmListMetadata(payload));
+  const live = Boolean(existing?.busy || existing?.pendingEchoes?.length || existing?.loading);
+  const replaceEvents = payload.loaded !== false
+    && Array.isArray(payload.messages)
+    && !(existing?.hydrated && live);
+  const conversation = ensureConversation(
+    payload.target,
+    preferConversationLabel(existing?.label, payload.label, payload.provider || existing?.provider),
+    'llm',
+    llmListMetadata(payload)
+  );
   if (replaceEvents) {
     conversation.events = richMessages.normalizeToolMessages(payload.messages || []).map((entry) => {
       if (entry.type === 'command') return llmCommandEvent(entry, conversation);
       if (entry.type === 'code') return llmCodeEvent(entry, conversation);
       return llmMessageEvent(entry.message, conversation);
     });
+    if (payload.hiddenBefore) {
+      conversation.events.unshift({
+        kind: 'system',
+        data: { text: `Showing last ${payload.messages.length} of ${payload.messageCount || payload.messages.length + payload.hiddenBefore} messages.` }
+      });
+    }
     conversation.hydrated = true;
   }
-  if (conversation.target === activeTarget && (replaceEvents || !existing)) {
+  if (isTargetOnScreen(conversation.target) && (replaceEvents || !existing)) {
     renderTranscript();
     renderUsers();
   } else if (conversation.target === activeTarget && payload.label) {
@@ -1845,6 +2316,10 @@ window.subjectiveChat.onEvent((event) => {
       break;
     case 'llm-history-refreshed':
       rendererLog('info', 'History refresh event', { count: event.count, activeTarget });
+      if ([...conversations.values()].some((item) => item.busy)) {
+        rendererLog('info', 'History refresh skipped (send in flight)', { activeTarget });
+        break;
+      }
       loadLlmConversations();
       break;
     case 'conversation-rename-request':
@@ -1894,21 +2369,31 @@ window.subjectiveChat.onEvent((event) => {
       }
       break;
     }
+    case 'llm-progress': {
+      const conversation = conversations.get(event.target);
+      if (conversation && event.text) {
+        conversation.progress = event.text;
+        const row = document.querySelector(`.thinking-entry[data-target="${CSS.escape(event.target)}"] .thinking-verb`);
+        if (row) row.textContent = event.text;
+      }
+      break;
+    }
     case 'llm-busy': {
       const conversation = conversations.get(event.target);
       if (conversation) {
         conversation.busy = event.busy;
         conversation.busySince = event.busy ? Date.now() : 0;
+        if (!event.busy) conversation.progress = '';
         rendererLog('info', event.busy ? 'LLM busy' : 'LLM idle', {
           target: event.target,
           provider: conversation.provider,
           label: conversation.label
         });
-        if (event.target === activeTarget) {
-          input.disabled = event.busy;
-          input.placeholder = event.busy ? `${providerName(conversation.provider)} is working…` : `Message ${providerName(conversation.provider)}`;
-          // Agent replies arrive before busy clears, so re-render to re-enable
-          // the Allow/Deny and Run controls on the freshly rendered answer.
+        if (isTargetOnScreen(event.target)) {
+          if (event.target === activeTarget && input) {
+            input.disabled = event.busy;
+            input.placeholder = event.busy ? `${providerName(conversation.provider)} is working…` : `Message ${providerName(conversation.provider)}`;
+          }
           renderTranscript();
         }
         renderConversations();
@@ -1938,10 +2423,23 @@ window.subjectiveChat.onEvent((event) => {
 
 window.subjectiveChat.getConfig().then(async (appConfig) => {
   updateConfig(appConfig);
+  initChatFrames();
   activeTarget = config.channel;
   ensureConversation(config.channel, config.channel, 'channel');
-  setActiveTarget(config.channel);
+  const restored = framesEnabled() ? (frameTargets[focusedFrame] || visibleFrameTargets()[0]) : '';
+  if (restored) setActiveTarget(restored, { skipFrame: true });
+  else setActiveTarget(config.channel);
   await loadLlmConversations();
+  if (framesEnabled()) {
+    for (const target of visibleFrameTargets()) {
+      const conversation = conversations.get(target);
+      if (conversation?.kind === 'llm' && !conversation.hydrated && !conversation.loading) {
+        setActiveTarget(target, { skipFrame: true });
+      }
+    }
+    if (frameTargets[focusedFrame]) setActiveTarget(frameTargets[focusedFrame], { skipFrame: true });
+    renderVisibleFrameTranscripts();
+  }
   syncMobileLayout();
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;

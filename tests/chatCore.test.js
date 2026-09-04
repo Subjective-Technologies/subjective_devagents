@@ -193,6 +193,26 @@ test('answerLlmMessage on failure broadcasts a system error instead of llm-messa
   assert.match(systemEvent.text, /no memory of this attempt/);
 });
 
+test('IRC writes stay silent while disconnected so LLM sends do not look like failures', async (t) => {
+  const logs = [];
+  const { instance, cleanup } = core({ log: (level, message) => logs.push({ level, message }) });
+  t.after(cleanup);
+  const created = instance.llmService.createConversation({ name: 'IRC quiet', provider: 'codex', workspace: instance.root });
+  created.ircChannel = '#cursor-quiet';
+  instance.llmService.sendMessage = async () => ({
+    ok: true,
+    userMessage: { role: 'user', text: 'hi', time: 1 },
+    assistantMessage: { role: 'assistant', text: 'hello', time: 2 },
+    conversation: { target: created.target }
+  });
+
+  assert.equal(instance.writeIrc('PRIVMSG #x :y'), false);
+  assert.equal(instance.sendIrcText('#x', 'y'), false);
+  const response = await instance.sendLlmMessage(created.target, 'hi');
+  assert.equal(response.ok, true);
+  assert.ok(!logs.some((entry) => entry.level === 'error' && /IRC/i.test(entry.message)));
+});
+
 test('buildContextMenuModel short-circuits for a missing conversation and for a read-only one, without touching the system user list', async (t) => {
   const { instance, cleanup } = core();
   t.after(cleanup);

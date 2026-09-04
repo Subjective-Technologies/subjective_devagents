@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { pathToFileURL } = require('url');
-const { LlmService, providerLabel } = require('./llmService');
+const { LlmService, providerLabel, tailConversationForClient } = require('./llmService');
 const { listSystemUsers, isValidUsername } = require('./systemUsers');
 const { SuSessionManager } = require('./suSessionManager');
 
@@ -84,6 +84,10 @@ class ChatCore extends EventEmitter {
       suSessionManager: this.suSessionManager,
       log: (level, message, details) => this.logFn(level, message, details)
     });
+    this.llmService.onProgress = (progress) => {
+      if (!progress?.text) return;
+      this._broadcast('llm-progress', { target: progress.target || '', text: progress.text });
+    };
     for (const conversation of this.llmService.listConversations().filter((item) => item.activeOnIrc)) {
       if (!conversation.ircChannel) continue;
       this.activeLlmIrcChannels.set(conversation.ircChannel.toLowerCase(), conversation.target);
@@ -228,7 +232,6 @@ class ChatCore extends EventEmitter {
 
   writeIrc(command) {
     if (!this.socket || !this.connected) {
-      this.log('error', 'Attempted IRC write while disconnected', { command });
       return false;
     }
     this.socket.write(`${command}\r\n`);
@@ -236,6 +239,7 @@ class ChatCore extends EventEmitter {
   }
 
   sendIrcText(target, text) {
+    if (!this.socket || !this.connected) return false;
     const clean = String(text || '').replace(/[\r\n]+/g, ' ').trim();
     if (!clean) return false;
     const chunks = clean.match(/.{1,380}(?:\s+|$)|.{1,380}/g) || [clean];
@@ -948,8 +952,14 @@ class ChatCore extends EventEmitter {
       }
       if (response.ok) {
         this._broadcast('llm-message', { target, message: response.assistantMessage, provider });
-        this._broadcast('llm-conversation', { conversation: response.conversation });
-        if (mirrorToIrc && conversation.ircChannel) this.sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
+        this._broadcast('llm-conversation', { conversation: tailConversationForClient(response.conversation) });
+        if (response.cursorIdeHint) {
+          this._broadcast('system', {
+            target,
+            text: 'Web reply is from cursor-agent. Cursor will not show it while this tab stays open — it overwrites the chat index from memory. Close agents_chat_dashboard in Cursor, click ↻ here, then reopen the tab.'
+          });
+        }
+        if (mirrorToIrc && this.connected && conversation.ircChannel) this.sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
       } else {
         if (this.llmService._isAuthFailure(response) && !response.sessions) {
           response.sessions = await this.llmService.listProviderSessions(provider);
@@ -972,7 +982,7 @@ class ChatCore extends EventEmitter {
             sessions: response.sessions?.users || []
           });
         }
-        if (mirrorToIrc && conversation.ircChannel) this.sendIrcText(conversation.ircChannel, errorText);
+        if (mirrorToIrc && this.connected && conversation.ircChannel) this.sendIrcText(conversation.ircChannel, errorText);
       }
       return response;
     } finally {
@@ -982,7 +992,7 @@ class ChatCore extends EventEmitter {
 
   async sendLlmMessage(target, text, files = []) {
     const conversation = this.llmService.findConversation(target);
-    if (conversation?.ircChannel) this.sendIrcText(conversation.ircChannel, text);
+    if (this.connected && conversation?.ircChannel) this.sendIrcText(conversation.ircChannel, text);
     if (files?.length) {
       const provider = conversation?.provider || 'codex';
       const label = providerLabel(provider);
@@ -994,8 +1004,8 @@ class ChatCore extends EventEmitter {
         }
         if (response.ok) {
           this._broadcast('llm-message', { target, message: response.assistantMessage, provider });
-          this._broadcast('llm-conversation', { conversation: response.conversation });
-          if (conversation?.ircChannel) this.sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
+          this._broadcast('llm-conversation', { conversation: tailConversationForClient(response.conversation) });
+          if (this.connected && conversation?.ircChannel) this.sendIrcText(conversation.ircChannel, `${label}: ${response.assistantMessage.text}`);
         } else {
           this._broadcast('system', { target, text: this.llmErrorText(label, response) });
           if (this.llmService._isAuthFailure(response)) {

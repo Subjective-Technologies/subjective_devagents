@@ -29,7 +29,7 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
     TEXT_EXTENSIONS = {".jsonl", ".json", ".md", ".txt", ".log"}
     MAX_FILE_BYTES = 500 * 1024 * 1024
     MANIFEST_FILENAME = ".subjective_localchats_manifest.json"
-    EXTRACTOR_VERSION = 6
+    EXTRACTOR_VERSION = 8
     PREAMBLE_TAG_PREFIXES = (
         "<environment_context",
         "<user_instructions",
@@ -1106,16 +1106,31 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                 except (json.JSONDecodeError, TypeError):
                     continue
                 text = (bubble.get("text") or "").strip()
+                ts = bubble.get("createdAt")
                 if not text:
+                    tool = self._format_cursor_tool_part(bubble)
+                    extra = bubble.get("toolFormerData") or bubble.get("tool") or bubble.get("params")
+                    if not tool and isinstance(extra, dict):
+                        tool = self._format_cursor_tool_part(extra)
+                    if tool:
+                        tool["timestamp"] = ts
+                        messages.append(tool)
                     continue
                 role = self._cursor_bubble_role(bubble.get("type"))
-                ts = bubble.get("createdAt")
                 messages.append({"role": role, "timestamp": ts, "text": text})
         finally:
             conn.close()
 
         messages = self._finalize_messages(messages)
         messages.sort(key=lambda m: self._parse_any_timestamp(m.get("timestamp")))
+        jsonl_path = self._find_cursor_agent_jsonl(
+            composer_id,
+            candidate.get("source_home") or "",
+            db_path,
+        )
+        if jsonl_path:
+            jsonl_messages = self._parse_jsonl_messages(jsonl_path, "cursor")
+            messages = self._merge_cursor_messages(messages, jsonl_messages)
         if self.max_messages_per_chat > 0:
             messages = messages[: self.max_messages_per_chat]
         if not messages:
@@ -1138,6 +1153,228 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             "chat_started_at": chat_started_at,
             "last_activity_at": last_activity_ms / 1000.0 if last_activity_ms > 0 else chat_started_at,
         }
+
+    def reload_transcript(
+        self,
+        source_file: str = "",
+        session_id: str = "",
+        provider: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Re-parse one live chat (Cursor composer + jsonl, or a session file)."""
+        source_file = str(source_file or "").strip()
+        session_id = str(session_id or "").strip()
+        provider = str(provider or "").strip().lower()
+        composer_id = ""
+        db_path = source_file
+        if "#composer:" in source_file:
+            db_path, composer_id = source_file.split("#composer:", 1)
+            composer_id = composer_id.strip()
+        if not session_id:
+            session_id = composer_id or self._cursor_agent_id(source_file)
+        source_home = ""
+        match = re.match(r"(/home/[^/]+)/", db_path.replace("\\", "/"))
+        if match:
+            source_home = match.group(1)
+        transcript = None
+        if composer_id and os.path.isfile(db_path):
+            self._rebind_cursor_web_bubbles(db_path, composer_id)
+            transcript = self._parse_cursor_composer_session(
+                {
+                    "path": db_path,
+                    "cursor_composer_id": composer_id,
+                    "product": "cursor",
+                    "kind": "composer",
+                    "source_home": source_home,
+                    "source_user": Path(source_home).name if source_home else "",
+                }
+            )
+        fs_path = self._path_for_fs_stat(source_file)
+        if not transcript and fs_path and os.path.isfile(fs_path):
+            product = provider or (
+                "cursor" if "agent-transcripts" in fs_path.replace("\\", "/") else ""
+            )
+            transcript = self._parse_candidate(
+                {"path": fs_path, "product": product, "kind": "file", "source_home": source_home}
+            )
+        if not transcript and session_id:
+            jsonl_path = self._find_cursor_agent_jsonl(session_id, source_home, db_path)
+            if jsonl_path:
+                transcript = self._parse_candidate(
+                    {
+                        "path": jsonl_path,
+                        "product": "cursor",
+                        "kind": "agent",
+                        "source_home": source_home,
+                    }
+                )
+        return transcript
+
+    def _rebind_cursor_web_bubbles(self, db_path: str, composer_id: str) -> int:
+        """Re-attach web-injected bubbles Cursor dropped from the open-tab header list."""
+        if not db_path or not composer_id or not os.path.isfile(db_path):
+            return 0
+        try:
+            conn = sqlite3.connect(db_path, timeout=8)
+            conn.execute("PRAGMA busy_timeout=8000")
+        except sqlite3.Error:
+            return 0
+        added = 0
+        try:
+            row = conn.execute(
+                "SELECT value FROM cursorDiskKV WHERE key = ?",
+                (f"composerData:{composer_id}",),
+            ).fetchone()
+            if not row or row[0] is None:
+                return 0
+            raw = row[0].decode("utf-8", errors="ignore") if isinstance(row[0], bytes) else row[0]
+            meta = json.loads(raw) if isinstance(raw, str) else {}
+            if not isinstance(meta, dict):
+                return 0
+            header_key = "fullConversationHeadersOnly"
+            headers = meta.get(header_key)
+            if not isinstance(headers, list):
+                headers = []
+                meta[header_key] = headers
+            known = {
+                str(item.get("bubbleId") or "")
+                for item in headers
+                if isinstance(item, dict)
+            }
+            cutoff_ms = (datetime.utcnow().timestamp() - 6 * 3600) * 1000
+            for key, value in conn.execute(
+                "SELECT key, value FROM cursorDiskKV WHERE key LIKE ?",
+                (f"bubbleId:{composer_id}:%",),
+            ).fetchall():
+                try:
+                    bubble = json.loads(value if isinstance(value, str) else value.decode("utf-8", errors="ignore"))
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    continue
+                if not isinstance(bubble, dict):
+                    continue
+                bid = str(bubble.get("bubbleId") or "")
+                text = str(bubble.get("text") or "").strip()
+                if not bid or bid in known or not text or bubble.get("type") not in (1, 2):
+                    continue
+                if bubble.get("toolFormerData") or bubble.get("capabilityType"):
+                    continue
+                created = bubble.get("createdAt")
+                recent = False
+                if isinstance(created, (int, float)):
+                    stamp = float(created)
+                    if stamp < 1e12:
+                        stamp *= 1000.0
+                    recent = stamp >= cutoff_ms
+                elif isinstance(created, str):
+                    try:
+                        recent = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S").timestamp() * 1000 >= cutoff_ms
+                    except ValueError:
+                        recent = False
+                if not bubble.get("subjectiveWeb") and not recent:
+                    continue
+                header = {"bubbleId": bid, "type": bubble.get("type"), "createdAt": created}
+                if bubble.get("type") == 2:
+                    header["grouping"] = {
+                        "isRenderable": True,
+                        "hasText": True,
+                        "textPreview": text[:80],
+                        "toolDisplayComputed": True,
+                    }
+                headers.append(header)
+                known.add(bid)
+                added += 1
+            if added:
+                meta[header_key] = headers
+                meta["lastUpdatedAt"] = int(datetime.utcnow().timestamp() * 1000)
+                conn.execute(
+                    "INSERT OR REPLACE INTO cursorDiskKV (key, value) VALUES (?, ?)",
+                    (f"composerData:{composer_id}", json.dumps(meta, ensure_ascii=False)),
+                )
+                conn.commit()
+                BBLogger.log(
+                    f"[SubjectiveLocalchatsDataSource] Rebound {added} web bubbles onto {composer_id}"
+                )
+        except (OSError, sqlite3.Error, json.JSONDecodeError, TypeError):
+            added = 0
+        finally:
+            conn.close()
+        return added
+
+    def _find_cursor_agent_jsonl(
+        self,
+        composer_id: str,
+        source_home: str = "",
+        hint_path: str = "",
+    ) -> str:
+        sid = str(composer_id or "").strip().lower()
+        if not sid:
+            return ""
+        roots: List[str] = []
+        if source_home:
+            roots.append(source_home)
+        hint = str(hint_path or "").replace("\\", "/")
+        home_match = re.match(r"(/home/[^/]+)/", hint)
+        if home_match:
+            roots.append(home_match.group(1))
+        try:
+            for record in self._active_home_records():
+                home = record.get("home") or ""
+                if home:
+                    roots.append(home)
+        except Exception:
+            pass
+        roots.append(os.path.expanduser("~"))
+        if os.path.isdir("/home"):
+            try:
+                roots.extend(os.path.join("/home", name) for name in os.listdir("/home"))
+            except OSError:
+                pass
+        seen: set = set()
+        matches: List[str] = []
+        for home in roots:
+            if not home or home in seen:
+                continue
+            seen.add(home)
+            matches.extend(
+                glob.glob(
+                    os.path.join(
+                        home, ".cursor", "projects", "*", "agent-transcripts", sid, f"{sid}.jsonl"
+                    )
+                )
+            )
+        if not matches:
+            return ""
+        matches.sort(key=os.path.getmtime, reverse=True)
+        return matches[0]
+
+    def _merge_cursor_messages(
+        self,
+        composer_messages: List[Dict[str, Any]],
+        jsonl_messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Composer bubbles are what Cursor shows; jsonl has Read/diff/shell cards."""
+
+        def signature(message: Dict[str, Any]) -> Tuple[str, str, str]:
+            kind = str(message.get("kind") or "")
+            text = re.sub(
+                r"\s+", " ", str(message.get("text") or message.get("command") or "")
+            ).strip().lower()[:200]
+            return (str(message.get("role") or ""), kind, text)
+
+        seen: set = set()
+        merged: List[Dict[str, Any]] = []
+        for message in list(jsonl_messages or []) + list(composer_messages or []):
+            if not isinstance(message, dict):
+                continue
+            key = signature(message)
+            if not key[2] and not message.get("command"):
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(message)
+        if merged and all(item.get("timestamp") for item in merged):
+            merged.sort(key=lambda item: self._parse_any_timestamp(item.get("timestamp")))
+        return self._finalize_messages(merged)
 
     def _candidate_globs(self, additional_paths: List[str]) -> List[Tuple[str, str, str, str, str]]:
         patterns: List[Tuple[str, str, str, str, str]] = []
@@ -1279,6 +1516,8 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
             fingerprint["mtime_ns"] = -1
         if candidate.get("cursor_created_ms"):
             fingerprint["cursor_created_ms"] = candidate.get("cursor_created_ms")
+        if candidate.get("cursor_updated_ms"):
+            fingerprint["cursor_updated_ms"] = candidate.get("cursor_updated_ms")
         tab_name = self._cursor_display_title(candidate.get("cursor_name") or "")
         if tab_name:
             fingerprint["cursor_name"] = tab_name
@@ -1476,8 +1715,99 @@ class SubjectiveLocalchatsDataSource(SubjectiveDataSource):
                     if codex_messages is not None:
                         messages.extend(codex_messages)
                         continue
+                if product == "cursor":
+                    cursor_messages = self._extract_cursor_jsonl_record(obj)
+                    if cursor_messages is not None:
+                        messages.extend(cursor_messages)
+                        continue
                 messages.extend(self._extract_messages_from_object(obj, fallback_timestamp=None))
         return self._finalize_messages(messages)
+
+    def _extract_cursor_jsonl_record(self, obj: Any) -> Optional[List[Dict[str, Any]]]:
+        """Split Cursor agent-transcript lines into text + tool/edit cards."""
+        if not isinstance(obj, dict):
+            return None
+        message = obj.get("message") if isinstance(obj.get("message"), dict) else obj
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            return None
+        role = str(obj.get("role") or message.get("role") or "assistant")
+        timestamp = obj.get("timestamp") or message.get("timestamp")
+        extracted: List[Dict[str, Any]] = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            part_type = str(part.get("type") or "")
+            if part_type == "text" or part.get("text"):
+                text = str(part.get("text") or "").strip()
+                if text:
+                    extracted.append({"role": role, "timestamp": timestamp, "text": text})
+                continue
+            if part_type in {"tool_use", "tool_call", "tool"} or part.get("name"):
+                formatted = self._format_cursor_tool_part(part)
+                if formatted:
+                    formatted["timestamp"] = timestamp
+                    extracted.append(formatted)
+        return extracted
+
+    def _format_cursor_tool_part(self, part: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        name = str(part.get("name") or part.get("toolName") or part.get("tool_name") or "").strip()
+        payload = part.get("input") or part.get("arguments") or part
+        if not isinstance(payload, dict):
+            payload = {}
+        ask = self._format_ask_tool(part)
+        if ask:
+            return {"role": "assistant", "text": ask}
+        key = name.replace("-", "").replace("_", "").lower()
+        path = str(payload.get("path") or payload.get("file_path") or payload.get("file") or "").strip()
+        short = path.split("/")[-1] if path else ""
+
+        if key in {"read", "readfile"}:
+            return {"role": "tool", "kind": "tool", "tool_name": "Read", "text": f"Read `{path or short or 'file'}`"}
+        if key in {"grep", "search"}:
+            pattern = str(payload.get("pattern") or payload.get("query") or "").strip()
+            where = path or str(payload.get("glob") or payload.get("path") or "").strip()
+            text = f"Search `{pattern}`" + (f" in `{where}`" if where else "")
+            return {"role": "tool", "kind": "tool", "tool_name": "Grep", "text": text}
+        if key in {"glob", "findfiles"}:
+            pattern = str(payload.get("glob_pattern") or payload.get("pattern") or payload.get("glob") or "").strip()
+            return {"role": "tool", "kind": "tool", "tool_name": "Glob", "text": f"Find `{pattern or 'files'}`"}
+        if key in {"shell", "bash", "run"}:
+            command = str(payload.get("command") or payload.get("cmd") or "").strip()
+            if command:
+                return {"role": "tool", "kind": "command", "tool_name": name or "Shell", "command": command, "text": command}
+        if key in {"task"}:
+            desc = str(payload.get("description") or payload.get("prompt") or "Explored").strip()
+            return {"role": "tool", "kind": "tool", "tool_name": "Task", "text": desc}
+        if key in {"strreplace", "searchreplace", "edits"}:
+            old = str(payload.get("old_string") or payload.get("oldString") or "")
+            new = str(payload.get("new_string") or payload.get("newString") or "")
+            diff_lines = [f"--- {path or 'file'}", f"+++ {path or 'file'}"]
+            if old:
+                diff_lines.extend(f"- {line}" for line in old.splitlines()[:40])
+            if new:
+                diff_lines.extend(f"+ {line}" for line in new.splitlines()[:40])
+            return {
+                "role": "assistant",
+                "kind": "code",
+                "tool_name": "StrReplace",
+                "language": "diff",
+                "text": "\n".join(diff_lines),
+            }
+        if key in {"write", "writefile"}:
+            body = str(payload.get("contents") or payload.get("content") or "")
+            preview = "\n".join(body.splitlines()[:80])
+            return {
+                "role": "assistant",
+                "kind": "code",
+                "tool_name": "Write",
+                "language": (short.rsplit(".", 1)[-1] if "." in short else "text"),
+                "text": f"# {path or short or 'file'}\n{preview}",
+            }
+        if name:
+            detail = path or str(payload.get("description") or payload.get("query") or "")[:120]
+            return {"role": "tool", "kind": "tool", "tool_name": name, "text": f"{name}" + (f" `{detail}`" if detail else "")}
+        return None
 
     def _extract_codex_jsonl_record(
         self, obj: Any
