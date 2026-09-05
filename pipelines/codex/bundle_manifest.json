@@ -1,5 +1,5 @@
 {
-  "app_id": "subjective_chat",
+  "app_id": "subjective_devagents",
   "bundle_id": "codex",
   "contents": {
     "bundled_plugins": [
@@ -17,7 +17,7 @@
     "python_binary_builder": "nuitka"
   },
   "paths": {
-    "bundle_root": "/subjective/clients/desktop/subjective_chat/pipelines/codex",
+    "bundle_root": "/subjective/clients/desktop/subjective_devagents/pipelines/codex",
     "pipeline": "pipelines/subjective_chat_codex.pipe",
     "pipeline_lock": "pipeline.lock.json",
     "plugins_manifest": "plugins/plugins_manifest.json",

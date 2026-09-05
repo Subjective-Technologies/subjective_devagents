@@ -1,7 +1,7 @@
 {
-  "name": "subjective-chat",
+  "name": "subjective-devagents",
   "version": "0.1.0",
-  "description": "Dark desktop IRC client for the #subjective channel with inline DCC image transfers.",
+  "description": "Dark desktop IRC + LLM agents IDE for #subjective (My Agents / DevAgents).",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",

@@ -1,10 +1,10 @@
-# Subjective Chat
+# Subjective DevAgents
 
-Dark Electron IRC client for the local Ergo server. It reads defaults from `.env`, connects as `Tomasso`, and joins `#subjective`.
+Dark Electron IRC + LLM agents client for the local Ergo server. It reads defaults from `.env`, connects as `Tomasso`, and joins `#subjective`.
 
 ## Local LLM channels
 
-Subjective Chat runs three unmodified exported datasource pipelines:
+Subjective DevAgents runs three unmodified exported datasource pipelines:
 
 - `pipelines/history`: bundled `SubjectiveLocalchatsDataSource`; discovers CLI histories and exports normalized chat contexts.
 - `pipelines/codex`: bundled `SubjectiveCodexDataSource`; creates and resumes Codex CLI sessions.
@@ -26,7 +26,7 @@ Application and pipeline runtime data are isolated under application ID home:
 │   ├── context/       LocalChats JSON exports and manifest
 │   ├── logs/
 │   └── workspace/
-├── logs/              Subjective Chat application logs
+├── logs/              Subjective DevAgents application logs
 ├── sent/              outbound IRC/DCC files
 ├── settings.json
 └── llm-conversations.json
@@ -38,7 +38,7 @@ Codex and Claude histories are writable when they carry a native session identif
 
 LLM messages render CommonMark Markdown with syntax-highlighted fenced code, inline code, lists, tables, quotes, and safe external links. Absolute local paths and Markdown links targeting local paths become Show in folder controls; files are revealed, directories are opened, and missing targets open their existing parent directory when possible. Code cards include Copy. Flattened CLI tool-call sequences (`bash`, `-lc`, command in either order), JSON command payloads, and standalone shell commands are normalized into syntax-highlighted command cards without stray wrapper lines. Shell/terminal cards also include Run: it shows exact command and workspace in confirmation dialog, then asks writable agent session to execute it through existing datasource sandbox. Latest agent questions expose contextual Yes/No, Allow/Deny, Run/Don't run, or Keep code/Revert buttons. Historical read-only rooms show actions disabled.
 
-Opening Codex room also joins stable IRC channel such as `#codex-feature-name-a1b2c3d4`. Phone or desktop IRC users can join that channel and talk to same Codex session while Subjective Chat desktop process remains connected. Only opened LLM rooms join IRC, avoiding thousands of history-channel joins. Codex icon comes from exported datasource plugin.
+Opening Codex room also joins stable IRC channel such as `#codex-feature-name-a1b2c3d4`. Phone or desktop IRC users can join that channel and talk to same Codex session while Subjective DevAgents desktop process remains connected. Only opened LLM rooms join IRC, avoiding thousands of history-channel joins. Codex icon comes from exported datasource plugin.
 
 Conversation sidebar uses one global newest-activity-first order across IRC and every LLM provider. Per-chat timestamps come from exported transcript identity rather than shared Cursor database modification time. Search matches chat name, provider, workspace, IRC channel, description, and loaded message text; press `Ctrl/Cmd+K` to focus search, `Enter` to open first result, or `Escape` to clear it.
 
