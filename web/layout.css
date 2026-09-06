@@ -4,14 +4,28 @@
    often <1040px, so styles.css hid Users and collapsed the grid — transcript
    sat in a squeezed middle between two sidebars. Override that here. */
 
-/* Fit the visible window. --app-height is the visual viewport (see index.html
-   and renderer.js). 100dvh / inner height: 100% on a phone includes the URL bar
-   and, in the dashboard iframe, the parent window — both clip the composer. */
+/* Fit the visible window. --app-height / --app-offset-* track the visual
+   viewport (fit-app.js) so the composer is never clipped under browser chrome
+   or a parent iframe's scroll offset. */
 html,
-body,
+body {
+  height: 100% !important;
+  max-height: 100% !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+}
+
 .app-shell {
+  position: fixed !important;
+  top: var(--app-offset-top, 0px) !important;
+  left: var(--app-offset-left, 0px) !important;
+  width: 100% !important;
   height: var(--app-height, 100%) !important;
   max-height: var(--app-height, 100%) !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  overflow: hidden !important;
 }
 
 .app-shell {
@@ -24,6 +38,7 @@ body,
    transcript ~18px tall above a screen of dead space. One row, full height. */
 .app-shell {
   grid-template-rows: minmax(0, 1fr) !important;
+  padding-top: 0 !important;
 }
 
 .chat-pane {
@@ -34,27 +49,67 @@ body,
   overflow: hidden;
 }
 
+/* Constrain the grid row and flex children so the transcript scrolls and the
+   composer stays pinned. */
 .content-grid {
   flex: 1 1 0% !important;
   min-height: 0 !important;
   overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) 400px !important;
+  grid-template-rows: minmax(0, 1fr) !important;
 }
 
-.chat-main,
-.chat-frames,
-.chat-frame {
+.chat-main {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 0% !important;
   min-height: 0 !important;
-  height: auto !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Sizing only - no display/flex-direction here. styles.css makes .chat-frames
+   a grid so the split-h/split-v/quad layouts can lay frames out in columns;
+   forcing flex-direction: column here (as this rule used to) collapsed every
+   layout, including quad, into one vertical column of frames. */
+.chat-frames {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+.chat-frame {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+.transcript {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+.composer {
+  flex: 0 0 auto !important;
+  flex-shrink: 0 !important;
+  min-height: 56px;
+  position: relative !important;
+  z-index: 6 !important;
 }
 
 /* Dashboard already has a left menu. Hide this app's brand column so the
    transcript sits immediately to the right of that menu. */
 .sidebar {
   display: none !important;
-}
-
-.content-grid {
-  grid-template-columns: minmax(0, 1fr) 400px !important;
 }
 
 .right-rail {
@@ -178,7 +233,7 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .content-grid {
-    grid-template-columns: minmax(0, 1fr) 360px !important;
+    grid-template-columns: minmax(0, 1fr) 320px !important;
   }
 
   .users-pane {
@@ -186,103 +241,329 @@ body.chats-collapsed .right-rail .user-list {
   }
 }
 
+/* Phone / narrow dashboard iframe. Keep in sync with isMobileLayout() in
+   renderer.js (720px): rail contents move into #mobileDrawer. */
 @media (max-width: 720px) {
   .frame-layout-picker,
   .frame-broadcast,
-  #sendImageButton {
+  #sendImageButton,
+  .frame-head {
     display: none !important;
   }
 
-  .chat-frames[data-layout="split-h"],
-  .chat-frames[data-layout="split-v"],
-  .chat-frames[data-layout="quad"] {
-    grid-template: minmax(0, 1fr) / minmax(0, 1fr) !important;
-  }
-}
-
-@media (max-width: 720px) {
-  .content-grid,
-  .chat-main,
-  .chat-frames,
-  .chat-frame {
-    min-height: 0 !important;
-    height: auto !important;
+  .chat-frames[data-layout] {
+    grid-template-rows: minmax(0, 1fr) !important;
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
   .content-grid {
     grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) !important;
-    flex: 1 1 0% !important;
+    gap: 0 !important;
+  }
+
+  .right-rail {
+    display: none !important;
+  }
+
+  /* Compact chrome: one toolbar row — channel title | Chats | collapse. */
+  .topbar {
+    flex: 0 0 auto !important;
+    min-height: 48px !important;
+    height: auto !important;
+    padding: 8px 12px !important;
+    gap: 0 !important;
+    grid-template-columns: 1fr !important;
+    align-items: center !important;
+  }
+
+  .topbar-main {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 10px !important;
+    min-height: 40px !important;
+  }
+
+  .topbar-main > div:first-child {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+  }
+
+  .channel-heading {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    min-width: 0 !important;
+  }
+
+  .topbar h2 {
+    font-size: 15px !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+  }
+
+  /* Identity line hides on phone — it threw Chats off vertical center. */
+  .topbar-main > div:first-child > p,
+  body.topbar-collapsed .topbar-meta {
+    display: none !important;
+  }
+
+  .topbar .mobile-menu-button {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    align-self: center !important;
+    flex: 0 0 auto !important;
+    width: auto !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    max-height: 36px !important;
+    padding: 0 12px !important;
+    margin: 0 !important;
+    line-height: 1 !important;
+    white-space: nowrap;
+    border-radius: 8px !important;
+  }
+
+  .topbar .top-actions {
+    display: none !important;
+  }
+
+  .topbar .topbar-collapse-toggle {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    align-self: center !important;
+    width: 36px !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    margin: 0 !important;
+  }
+
+  .topbar-meta {
+    padding-top: 8px !important;
+  }
+
+  /* Keep height:100% (not auto). auto grew with transcript and overflow:hidden
+     clipped the composer — half-visible textarea. */
+  .chat-main,
+  .chat-frames,
+  .chat-frame {
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    border-radius: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
   }
 
   .chat-main,
-  .chat-frames {
-    display: flex !important;
-    flex-direction: column !important;
-    flex: 1 1 0% !important;
-    overflow: hidden;
-  }
-
   .chat-frame {
     display: flex !important;
     flex-direction: column !important;
     flex: 1 1 0% !important;
-    overflow: hidden;
+  }
+
+  .chat-frame {
+    border-top: 0 !important;
   }
 
   .transcript {
     flex: 1 1 0% !important;
     min-height: 0 !important;
+    padding: 10px 12px 8px !important;
   }
 
+  /* 100vw is the dashboard viewport when iframed — bubbles overflow the pane. */
+  .bubble,
+  .image-bubble,
+  .command-bubble {
+    max-width: min(100%, 36rem) !important;
+    width: auto !important;
+  }
+
+  /*
+   * Composer: keep a real 2-row grid when images are attached.
+   * A one-row override used to smash pending thumbs + textarea + buttons
+   * into a single line (half-visible input, controls piled together).
+   */
   .composer {
     flex: 0 0 auto !important;
-    min-height: 56px;
+    flex-shrink: 0 !important;
     display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 64px !important;
+    grid-template-areas: "input send" !important;
+    gap: 10px !important;
+    padding: 12px 12px max(16px, env(safe-area-inset-bottom, 0px)) !important;
+    min-height: 72px !important;
+    align-items: stretch !important;
+    overflow: visible !important;
+    background: var(--surface, #0a0a0a) !important;
   }
 
-  /* Phone width: the rail's contents are not dropped, they move into
-     #mobileDrawer (see the "☰ Chats" button in the topbar). Hiding the rail
-     without that drawer is what made Chats and Users unreachable. */
-  .right-rail {
-    display: none;
+  .composer.has-image-picker {
+    grid-template-columns: 48px minmax(0, 1fr) 64px !important;
+    grid-template-areas: "attach input send" !important;
   }
 
-  /* The drawer is outside .right-rail, so the rail's overrides stop applying —
-     restate what the borrowed panels need on their own. */
+  .composer:has(.pending-images:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr) 64px !important;
+    grid-template-areas: "pending pending" "input send" !important;
+  }
+
+  .composer.has-image-picker:has(.pending-images:not([hidden])) {
+    grid-template-columns: 48px minmax(0, 1fr) 64px !important;
+    grid-template-areas: "pending pending pending" "attach input send" !important;
+  }
+
+  .pending-images {
+    grid-area: pending !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+    overflow-x: auto !important;
+    padding: 0 0 4px !important;
+    max-height: 88px !important;
+  }
+
+  .pending-image {
+    width: 64px !important;
+    height: 64px !important;
+    min-height: 64px !important;
+    flex: 0 0 auto !important;
+    border-radius: 8px !important;
+    object-fit: cover !important;
+  }
+
+  .pending-image.has-status {
+    width: 160px !important;
+    height: auto !important;
+    min-height: 48px !important;
+  }
+
+  /* border-box + explicit outer height so one text line + padding stay fully
+     visible (content-box fought other rules and still looked half-height). */
+  .composer textarea {
+    grid-area: input !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 52px !important;
+    height: 52px !important;
+    max-height: 120px !important;
+    font-size: 16px !important;
+    line-height: 24px !important;
+    padding: 14px 12px !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 10px !important;
+    resize: none !important;
+    overflow-y: auto !important;
+    background: var(--card, #111) !important;
+    color: var(--text, #fff) !important;
+  }
+
+  .composer > button[type="submit"] {
+    grid-area: send !important;
+    align-self: stretch !important;
+    height: auto !important;
+    min-height: 52px !important;
+    width: 64px !important;
+    border-radius: 10px !important;
+    margin: 0 !important;
+  }
+
+  .composer > .composer-attach {
+    grid-area: attach !important;
+    align-self: stretch !important;
+    width: 48px !important;
+    height: auto !important;
+    min-height: 52px !important;
+    border-radius: 10px !important;
+    margin: 0 !important;
+  }
+
+  .command-palette {
+    left: 12px !important;
+    right: 80px !important;
+  }
+
+  /* Drawer: full-bleed sheet on a phone, scrollable lists. */
+  .mobile-drawer {
+    width: calc(100vw - 16px) !important;
+    max-width: none !important;
+    max-height: calc(var(--app-height, 100dvh) - 24px) !important;
+    margin: auto !important;
+    border-radius: 12px !important;
+  }
+
+  .mobile-drawer-shell {
+    max-height: calc(var(--app-height, 100dvh) - 24px);
+    overflow: hidden;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    padding: 12px !important;
+  }
+
+  .mobile-drawer-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .mobile-drawer-panel.active {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
   .mobile-drawer-panel .users-pane {
     display: grid !important;
-    max-height: 34dvh;
+    max-height: none !important;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .mobile-drawer-panel .user-list {
-    max-height: none;
+    max-height: none !important;
     overflow-y: auto;
   }
 
   .mobile-drawer-panel .conversation-browser {
-    display: grid;
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto;
+    min-height: 0;
     gap: 8px;
   }
 
   .mobile-drawer-panel .conversation-list {
-    display: block;
-    max-height: 46dvh;
+    display: block !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none !important;
     overflow-y: auto;
   }
 
   .mobile-drawer-panel .conversation-table {
-    display: table;
-    width: 100%;
-    table-layout: fixed;
+    display: table !important;
+    width: 100% !important;
+    table-layout: fixed !important;
   }
 
   .mobile-drawer-panel .conversation-row {
-    display: table-row;
+    display: table-row !important;
   }
 
   .mobile-drawer-panel .conversation-row > td {
-    display: table-cell;
-    vertical-align: middle;
+    display: table-cell !important;
+    vertical-align: middle !important;
   }
 }

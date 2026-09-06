@@ -19,6 +19,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { isValidUsername } = require('./systemUsers');
 const { tailConversationForClient } = require('./llmService');
@@ -28,6 +29,41 @@ const SRC_DIR = path.join(ROOT, 'src');
 const ASSETS_DIR = path.join(ROOT, 'assets');
 const WEB_DIR = path.join(ROOT, 'web');
 const MAX_BODY_BYTES = 32 * 1024 * 1024; // room for a small handful of base64 image/file attachments
+
+// Bumped by hand when shipping web UI layout/composer fixes. Also injected at
+// serve time with the live git SHA (see resolveDeployVersion) so View Source
+// proves which build the browser actually loaded.
+const WEB_UI_RELEASE = '20260906k';
+
+function resolveDeployVersion() {
+  let sha = 'nogit';
+  try {
+    sha = execSync('git rev-parse --short HEAD', {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim() || 'nogit';
+  } catch (_err) {
+    /* bare checkout / no git — keep fallback */
+  }
+  let dirty = '';
+  try {
+    const status = execSync('git status --porcelain', {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+    if (status) dirty = '-dirty';
+  } catch (_err) {
+    /* ignore */
+  }
+  return `${WEB_UI_RELEASE}+${sha}${dirty}`;
+}
+
+const DEPLOY_VERSION = resolveDeployVersion();
+const DEPLOY_STAMP_COMMENT = `<!-- devagents-deploy ${DEPLOY_VERSION} served=${new Date().toISOString()} -->`;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -101,21 +137,44 @@ function createApp(core, options = {}) {
     return filePath.startsWith(assetsDir + path.sep);
   }
 
+  function stampHtml(html) {
+    // Replace the static placeholder so View Source / curl shows the live
+    // release+git SHA. Also stamp <html> for quick DevTools inspection.
+    let out = String(html);
+    if (out.includes('DEVAGENTS_DEPLOY_VERSION')) {
+      out = out.split('DEVAGENTS_DEPLOY_VERSION').join(DEPLOY_VERSION);
+    } else if (out.includes('<!doctype html>') || out.includes('<!DOCTYPE html>')) {
+      out = out.replace(/<!doctype html>/i, `$&\n${DEPLOY_STAMP_COMMENT}`);
+    }
+    out = out.replace(/<html\b([^>]*)>/i, (_m, attrs) => {
+      if (/\bdata-devagents-version=/.test(attrs)) {
+        return `<html${attrs.replace(/\sdata-devagents-version="[^"]*"/, ` data-devagents-version="${DEPLOY_VERSION}"`)}>`;
+      }
+      return `<html${attrs} data-devagents-version="${DEPLOY_VERSION}">`;
+    });
+    return out;
+  }
+
   function sendFile(res, filePath) {
     fs.readFile(filePath, (error, data) => {
       if (error) return notFound(res);
       const ext = path.extname(filePath).toLowerCase();
+      let body = data;
+      if (ext === '.html') {
+        body = Buffer.from(stampHtml(data.toString('utf8')), 'utf8');
+      }
       const headers = {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-        'Content-Length': data.length,
+        'Content-Length': body.length,
         // no-store everywhere: index.html, renderer.js and layout.css ship as a
         // matched set; a cached renderer.js against a newer index.html crashes
         // on missing DOM nodes and renders nothing. Files are tiny and local.
-        'Cache-Control': pathIsAsset(filePath) ? 'public, max-age=300' : 'no-store'
+        'Cache-Control': pathIsAsset(filePath) ? 'public, max-age=300' : 'no-store',
+        'X-DevAgents-Version': DEPLOY_VERSION
       };
       if (ext === '.html') headers['Content-Security-Policy'] = FRAME_ANCESTORS;
       res.writeHead(200, headers);
-      res.end(data);
+      res.end(body);
     });
   }
 
@@ -168,7 +227,14 @@ function createApp(core, options = {}) {
 
   function sendJson(res, status, payload) {
     const body = Buffer.from(JSON.stringify(payload));
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length });
+    // no-store: without this, a plain page reload can serve a stale cached
+    // GET /api/llm/conversations response (e.g. a chat name from before a
+    // rename) since the response otherwise carries no cache directives at all.
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': body.length,
+      'Cache-Control': 'no-store'
+    });
     res.end(body);
   }
 
@@ -214,6 +280,12 @@ function createApp(core, options = {}) {
   // deliberately the same request/response shape as an ipcMain.handle() callback so each
   // one reads as a direct translation of main.js's handlers.
   const routes = {
+    'GET /api/version': async () => ({
+      ok: true,
+      release: WEB_UI_RELEASE,
+      version: DEPLOY_VERSION,
+      servedAt: new Date().toISOString()
+    }),
     'GET /api/config': async () => core.publicConfig(),
     'POST /api/save-config': async (_query, body) => {
       core.applyConnectionAndReconnect(body?.active || body || {}, body?.saveBookmark !== false);
@@ -448,7 +520,7 @@ function createApp(core, options = {}) {
   return { server, wss, routes, refreshHistory };
 }
 
-module.exports = { createApp };
+module.exports = { createApp, WEB_UI_RELEASE, resolveDeployVersion };
 
 if (require.main === module) {
   const dotenv = require('dotenv');
@@ -463,7 +535,13 @@ if (require.main === module) {
   const { server, refreshHistory } = createApp(core);
 
   server.listen(PORT, BIND_HOST, () => {
-    defaultLog('info', 'Subjective Chat web server listening', { host: BIND_HOST, port: PORT, appHome: core.applicationHome });
+    defaultLog('info', 'Subjective Chat web server listening', {
+      host: BIND_HOST,
+      port: PORT,
+      appHome: core.applicationHome,
+      deployVersion: DEPLOY_VERSION,
+      webUiRelease: WEB_UI_RELEASE
+    });
     // My Agents is the LLM UI. IRC is optional and the default host is often
     // down; reconnect storms painted the status bar as errors on every send.
     // Opt in with SUBJECTIVE_CHAT_IRC=1.

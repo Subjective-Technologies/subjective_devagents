@@ -1,18 +1,26 @@
 <!doctype html>
-<html lang="en">
+<!--
+  DEVAGENTS_DEPLOY_VERSION
+  Static placeholder replaced at serve time by webServer.js with
+  release+gitSHA (and -dirty if the working tree has local edits).
+  Check: View Source, document.documentElement.dataset.devagentsVersion,
+  response header X-DevAgents-Version, or GET /api/version
+-->
+<html lang="en" data-devagents-version="DEVAGENTS_DEPLOY_VERSION">
   <head>
     <meta charset="UTF-8">
+    <meta name="devagents-version" content="DEVAGENTS_DEPLOY_VERSION">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
-    <script src="/fit-app.js?v=20260906b"></script>
+    <script src="/fit-app.js?v=20260906k"></script>
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
-         the whole set. Bump on any change to these files. -->
-    <link rel="stylesheet" href="/styles.css?v=20260906b">
+         the whole set. Keep in sync with WEB_UI_RELEASE in src/webServer.js. -->
+    <link rel="stylesheet" href="/styles.css?v=20260906k">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
     <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
-    <link rel="stylesheet" href="/layout.css?v=20260906b">
+    <link rel="stylesheet" href="/layout.css?v=20260906k">
   </head>
   <body data-accent="gold">
     <main class="app-shell">
@@ -38,11 +46,17 @@
             </div>
             <button id="mobileMenuButton" class="secondary-button mobile-menu-button" type="button" aria-label="Show chats and users">☰ Chats</button>
             <div class="top-actions" id="topActions">
-              <div class="frame-layout-picker" id="frameLayoutPicker" role="group" aria-label="Chat layout">
-                <button type="button" data-layout="single" title="One chat" aria-pressed="true">1</button>
-                <button type="button" data-layout="split-h" title="Two chats side by side" aria-pressed="false">2</button>
-                <button type="button" data-layout="split-v" title="Two chats stacked" aria-pressed="false">═</button>
-                <button type="button" data-layout="quad" title="Four chats" aria-pressed="false">4</button>
+              <div class="frame-layout-picker" id="frameLayoutPicker">
+                <button type="button" class="frame-layout-toggle" id="frameLayoutToggle"
+                  title="Chat layout" aria-label="Chat layout" aria-haspopup="true" aria-expanded="false"
+                  aria-controls="frameLayoutPopover">
+                  <span class="frame-layout-mini" id="frameLayoutMini" aria-hidden="true"></span>
+                  <span class="frame-layout-label" id="frameLayoutLabel">1×1</span>
+                </button>
+                <div class="frame-layout-popover" id="frameLayoutPopover" hidden role="dialog" aria-label="Choose chat grid">
+                  <div class="frame-layout-matrix" id="frameLayoutMatrix" role="grid" aria-label="Rows and columns"></div>
+                  <div class="frame-layout-caption" id="frameLayoutCaption">1 × 1</div>
+                </div>
               </div>
               <label class="frame-broadcast" title="Send the same message to every open pane">
                 <input type="checkbox" id="frameBroadcast">
@@ -65,7 +79,7 @@
 
         <section class="content-grid">
           <div class="chat-main">
-            <div id="chatFrames" class="chat-frames" data-layout="single"></div>
+            <div id="chatFrames" class="chat-frames" data-layout="1x1" style="--frame-rows: 1; --frame-cols: 1;"></div>
           </div>
 
           <aside class="right-rail">
@@ -242,6 +256,6 @@
     <script src="/assets/vendor/highlight.min.js"></script>
     <script src="/webBridge.js?v=20260905b"></script>
     <script src="/messageRenderer.js?v=20260901e"></script>
-    <script src="/renderer.js?v=20260906b"></script>
+    <script src="/renderer.js?v=20260906k"></script>
   </body>
 </html>

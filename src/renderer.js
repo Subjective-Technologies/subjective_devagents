@@ -196,9 +196,19 @@ function isMobileLayout() {
 }
 
 function fitAppToWindow() {
-  const viewport = window.visualViewport;
-  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight || document.documentElement.clientHeight));
-  document.documentElement.style.setProperty('--app-height', `${height}px`);
+  const vv = window.visualViewport;
+  const candidates = [
+    vv?.height,
+    window.innerHeight,
+    document.documentElement.clientHeight
+  ].filter((n) => typeof n === 'number' && n > 0);
+  const height = Math.max(1, Math.round(Math.min(...(candidates.length ? candidates : [600]))));
+  const offsetTop = Math.max(0, Math.round(vv?.offsetTop || 0));
+  const offsetLeft = Math.max(0, Math.round(vv?.offsetLeft || 0));
+  const root = document.documentElement;
+  root.style.setProperty('--app-height', `${height}px`);
+  root.style.setProperty('--app-offset-top', `${offsetTop}px`);
+  root.style.setProperty('--app-offset-left', `${offsetLeft}px`);
 }
 
 fitAppToWindow();
@@ -206,24 +216,63 @@ window.addEventListener('resize', fitAppToWindow);
 window.visualViewport?.addEventListener('resize', fitAppToWindow);
 window.visualViewport?.addEventListener('scroll', fitAppToWindow);
 
-const CHAT_FRAME_LAYOUTS = Object.freeze({
-  single: { count: 1 },
-  'split-h': { count: 2 },
-  'split-v': { count: 2 },
-  quad: { count: 4 }
+/** Max rows/cols in the Excel-style layout matrix (hover a×b, click to apply). */
+const FRAME_LAYOUT_MAX = 4;
+const LEGACY_CHAT_FRAME_LAYOUTS = Object.freeze({
+  single: { rows: 1, cols: 1 },
+  'split-h': { rows: 1, cols: 2 },
+  'split-v': { rows: 2, cols: 1 },
+  quad: { rows: 2, cols: 2 }
 });
 const CHAT_FRAME_STORAGE = 'subjective-chat-frames';
-let chatLayout = 'single';
+let chatFrameRows = 1;
+let chatFrameCols = 1;
 let frameTargets = [''];
 let focusedFrame = 0;
+let frameLayoutMenuOpen = false;
 
 function framesEnabled() {
   return Boolean(chatFrames);
 }
 
+function frameLayoutCount() {
+  return Math.max(1, chatFrameRows * chatFrameCols);
+}
+
+function frameLayoutKey() {
+  return `${chatFrameRows}x${chatFrameCols}`;
+}
+
+function clampFrameDim(n) {
+  const value = Math.floor(Number(n));
+  if (!Number.isFinite(value) || value < 1) return 1;
+  return Math.min(FRAME_LAYOUT_MAX, value);
+}
+
+function parseFrameLayout(saved) {
+  if (!saved || typeof saved !== 'object') return { rows: 1, cols: 1 };
+  if (saved.rows != null || saved.cols != null) {
+    return { rows: clampFrameDim(saved.rows), cols: clampFrameDim(saved.cols) };
+  }
+  const key = String(saved.layout || '');
+  if (LEGACY_CHAT_FRAME_LAYOUTS[key]) return { ...LEGACY_CHAT_FRAME_LAYOUTS[key] };
+  const match = /^(\d+)\s*[x×]\s*(\d+)$/i.exec(key);
+  if (match) return { rows: clampFrameDim(match[1]), cols: clampFrameDim(match[2]) };
+  return { rows: 1, cols: 1 };
+}
+
+function setChatFrameLayout(rows, cols, options = {}) {
+  chatFrameRows = clampFrameDim(rows);
+  chatFrameCols = clampFrameDim(cols);
+  if (options.apply === false) return;
+  ensureChatFrameDom();
+  if (options.render !== false) renderVisibleFrameTranscripts();
+  persistChatFrames();
+  syncFrameLayoutPicker();
+}
+
 function visibleFrameTargets() {
-  const count = CHAT_FRAME_LAYOUTS[chatLayout]?.count || 1;
-  return frameTargets.slice(0, count).filter(Boolean);
+  return frameTargets.slice(0, frameLayoutCount()).filter(Boolean);
 }
 
 function isTargetOnScreen(target) {
@@ -235,7 +284,9 @@ function persistChatFrames() {
   if (!framesEnabled()) return;
   try {
     localStorage.setItem(CHAT_FRAME_STORAGE, JSON.stringify({
-      layout: chatLayout,
+      layout: frameLayoutKey(),
+      rows: chatFrameRows,
+      cols: chatFrameCols,
       targets: frameTargets,
       focused: focusedFrame,
       broadcast: Boolean(frameBroadcast?.checked)
@@ -249,14 +300,22 @@ function restoreChatFrames() {
   if (!framesEnabled()) return;
   try {
     const saved = JSON.parse(localStorage.getItem(CHAT_FRAME_STORAGE) || 'null');
-    if (!saved || !CHAT_FRAME_LAYOUTS[saved.layout]) return;
-    chatLayout = isMobileLayout() ? 'single' : saved.layout;
-    const count = CHAT_FRAME_LAYOUTS[chatLayout].count;
+    if (!saved) return;
+    const parsed = parseFrameLayout(saved);
+    if (isMobileLayout()) {
+      chatFrameRows = 1;
+      chatFrameCols = 1;
+    } else {
+      chatFrameRows = parsed.rows;
+      chatFrameCols = parsed.cols;
+    }
+    const count = frameLayoutCount();
     frameTargets = Array.from({ length: count }, (_, index) => String(saved.targets?.[index] || ''));
     focusedFrame = Math.min(Math.max(0, Number(saved.focused) || 0), count - 1);
     if (frameBroadcast) frameBroadcast.checked = Boolean(saved.broadcast);
   } catch (_error) {
-    chatLayout = 'single';
+    chatFrameRows = 1;
+    chatFrameCols = 1;
     frameTargets = [''];
     focusedFrame = 0;
   }
@@ -303,7 +362,7 @@ function createChatFrame(index) {
     <div class="transcript" aria-live="polite"></div>
     <form class="composer">
       <div class="pending-images" hidden></div>
-      <textarea rows="2" autocomplete="off" placeholder="Drop a chat from the list"></textarea>
+      <textarea rows="1" autocomplete="off" placeholder="Drop a chat from the list"></textarea>
       <div class="command-palette" hidden></div>
       <button type="submit">Send</button>
     </form>
@@ -366,9 +425,14 @@ function syncChatFrame(frameEl, index) {
 
 function ensureChatFrameDom() {
   if (!framesEnabled()) return;
-  if (isMobileLayout()) chatLayout = 'single';
-  const count = CHAT_FRAME_LAYOUTS[chatLayout]?.count || 1;
-  chatFrames.dataset.layout = chatLayout;
+  if (isMobileLayout()) {
+    chatFrameRows = 1;
+    chatFrameCols = 1;
+  }
+  const count = frameLayoutCount();
+  chatFrames.dataset.layout = frameLayoutKey();
+  chatFrames.style.setProperty('--frame-rows', String(chatFrameRows));
+  chatFrames.style.setProperty('--frame-cols', String(chatFrameCols));
   frameTargets = Array.from({ length: count }, (_, index) => frameTargets[index] || '');
   if (focusedFrame >= count) focusedFrame = 0;
   while (chatFrames.children.length > count) chatFrames.lastElementChild.remove();
@@ -379,11 +443,7 @@ function ensureChatFrameDom() {
     frameEl.dataset.frame = String(index);
     syncChatFrame(frameEl, index);
   });
-  if (frameLayoutPicker) {
-    for (const button of frameLayoutPicker.querySelectorAll('[data-layout]')) {
-      button.setAttribute('aria-pressed', String(button.dataset.layout === chatLayout));
-    }
-  }
+  syncFrameLayoutPicker();
   bindFocusedFrameDom(chatFrames.children[focusedFrame]);
 }
 
@@ -413,7 +473,7 @@ function renderFrameTranscript(frameEl, target) {
 
 function focusChatFrame(index, options = {}) {
   if (!framesEnabled()) return;
-  const count = CHAT_FRAME_LAYOUTS[chatLayout]?.count || 1;
+  const count = frameLayoutCount();
   if (index < 0 || index >= count) return;
   focusedFrame = index;
   bindFocusedFrameDom(chatFrames.children[index]);
@@ -449,20 +509,114 @@ function renderVisibleFrameTranscripts() {
   });
 }
 
+function paintFrameLayoutMatrix(hoverRows, hoverCols) {
+  const matrix = document.getElementById('frameLayoutMatrix');
+  const caption = document.getElementById('frameLayoutCaption');
+  if (!matrix) return;
+  const rows = clampFrameDim(hoverRows || chatFrameRows);
+  const cols = clampFrameDim(hoverCols || chatFrameCols);
+  for (const cell of matrix.querySelectorAll('.frame-layout-cell')) {
+    const r = Number(cell.dataset.row);
+    const c = Number(cell.dataset.col);
+    const inHover = r <= rows && c <= cols;
+    const inActive = r <= chatFrameRows && c <= chatFrameCols;
+    cell.classList.toggle('is-hover', inHover);
+    cell.classList.toggle('is-active', inActive);
+    cell.setAttribute('aria-pressed', String(r === chatFrameRows && c === chatFrameCols));
+  }
+  if (caption) caption.textContent = `${rows} × ${cols}`;
+}
+
+function syncFrameLayoutPicker() {
+  const label = document.getElementById('frameLayoutLabel');
+  const mini = document.getElementById('frameLayoutMini');
+  const toggle = document.getElementById('frameLayoutToggle');
+  if (label) label.textContent = frameLayoutKey().replace('x', '×');
+  if (toggle) {
+    toggle.title = `Chat layout ${chatFrameRows}×${chatFrameCols}`;
+    toggle.setAttribute('aria-label', `Chat layout ${chatFrameRows} by ${chatFrameCols}`);
+  }
+  if (mini) {
+    mini.style.setProperty('--mini-rows', String(chatFrameRows));
+    mini.style.setProperty('--mini-cols', String(chatFrameCols));
+    mini.replaceChildren();
+    for (let i = 0; i < chatFrameRows * chatFrameCols; i += 1) {
+      mini.appendChild(document.createElement('span'));
+    }
+  }
+  paintFrameLayoutMatrix(chatFrameRows, chatFrameCols);
+}
+
+function closeFrameLayoutMenu() {
+  const popover = document.getElementById('frameLayoutPopover');
+  const toggle = document.getElementById('frameLayoutToggle');
+  if (popover) popover.hidden = true;
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+  frameLayoutMenuOpen = false;
+  paintFrameLayoutMatrix(chatFrameRows, chatFrameCols);
+}
+
+function openFrameLayoutMenu() {
+  const popover = document.getElementById('frameLayoutPopover');
+  const toggle = document.getElementById('frameLayoutToggle');
+  if (popover) popover.hidden = false;
+  if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  frameLayoutMenuOpen = true;
+  paintFrameLayoutMatrix(chatFrameRows, chatFrameCols);
+}
+
+function buildFrameLayoutMatrix() {
+  const matrix = document.getElementById('frameLayoutMatrix');
+  if (!matrix || matrix.dataset.ready === '1') return;
+  matrix.dataset.ready = '1';
+  matrix.style.setProperty('--matrix-max', String(FRAME_LAYOUT_MAX));
+  matrix.replaceChildren();
+  for (let row = 1; row <= FRAME_LAYOUT_MAX; row += 1) {
+    for (let col = 1; col <= FRAME_LAYOUT_MAX; col += 1) {
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'frame-layout-cell';
+      cell.dataset.row = String(row);
+      cell.dataset.col = String(col);
+      cell.setAttribute('role', 'gridcell');
+      cell.title = `${row} × ${col}`;
+      cell.setAttribute('aria-label', `${row} by ${col} chats`);
+      cell.addEventListener('pointerenter', () => paintFrameLayoutMatrix(row, col));
+      cell.addEventListener('focus', () => paintFrameLayoutMatrix(row, col));
+      cell.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (isMobileLayout()) return;
+        setChatFrameLayout(row, col);
+        closeFrameLayoutMenu();
+      });
+      matrix.appendChild(cell);
+    }
+  }
+  matrix.addEventListener('pointerleave', () => paintFrameLayoutMatrix(chatFrameRows, chatFrameCols));
+}
+
 function initChatFrames() {
   if (!framesEnabled()) return;
   restoreChatFrames();
+  buildFrameLayoutMatrix();
   ensureChatFrameDom();
-  if (frameLayoutPicker) {
-    frameLayoutPicker.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-layout]');
-      if (!button || isMobileLayout()) return;
-      chatLayout = button.dataset.layout;
-      ensureChatFrameDom();
-      renderVisibleFrameTranscripts();
-      persistChatFrames();
+  const toggle = document.getElementById('frameLayoutToggle');
+  if (toggle) {
+    toggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (isMobileLayout()) return;
+      if (frameLayoutMenuOpen) closeFrameLayoutMenu();
+      else openFrameLayoutMenu();
     });
   }
+  document.addEventListener('pointerdown', (event) => {
+    if (!frameLayoutMenuOpen || !frameLayoutPicker) return;
+    if (frameLayoutPicker.contains(event.target)) return;
+    closeFrameLayoutMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && frameLayoutMenuOpen) closeFrameLayoutMenu();
+  });
   if (frameBroadcast) {
     frameBroadcast.addEventListener('change', persistChatFrames);
   }
@@ -600,10 +754,12 @@ function syncMobileLayout() {
   fitAppToWindow();
   if (isMobileLayout()) {
     mountMobileLayout();
-    if (framesEnabled() && chatLayout !== 'single') {
-      chatLayout = 'single';
+    if (framesEnabled() && (chatFrameRows !== 1 || chatFrameCols !== 1)) {
+      chatFrameRows = 1;
+      chatFrameCols = 1;
       ensureChatFrameDom();
       renderVisibleFrameTranscripts();
+      persistChatFrames();
     }
     return;
   }
