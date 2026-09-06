@@ -18,6 +18,7 @@
 html,
 body {
   height: 100%;
+  max-height: 100%;
 }
 
 body[data-accent="gold"] {
@@ -72,6 +73,7 @@ button {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   height: 100%;
+  max-height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -856,6 +858,7 @@ img.provider-avatar[src$="cursor.svg"] {
 .chat-main {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
 }
@@ -863,6 +866,7 @@ img.provider-avatar[src$="cursor.svg"] {
 .chat-frames {
   min-height: 0;
   min-width: 0;
+  height: 100%;
   display: grid;
   gap: 8px;
   padding: 0 0 8px;
@@ -876,6 +880,7 @@ img.provider-avatar[src$="cursor.svg"] {
 .chat-frame {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1749,14 +1754,22 @@ img.provider-avatar[src$="cursor.svg"] {
   padding: 12px 18px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 86px;
+  grid-template-areas: "input send";
   align-items: end;
   gap: 10px;
   background: var(--surface);
   position: relative;
+  min-height: 56px;
+}
+
+.composer:has(.pending-images:not([hidden])) {
+  grid-template-areas:
+    "pending pending"
+    "input send";
 }
 
 .pending-images {
-  grid-column: 1 / -1;
+  grid-area: pending;
   display: flex;
   gap: 8px;
   overflow-x: auto;
@@ -1764,10 +1777,18 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .composer.has-image-picker {
-  grid-template-columns: 44px minmax(0, 1fr) 64px;
+  grid-template-columns: 44px minmax(0, 1fr) 86px;
+  grid-template-areas: "attach input send";
+}
+
+.composer.has-image-picker:has(.pending-images:not([hidden])) {
+  grid-template-areas:
+    "pending pending pending"
+    "attach input send";
 }
 
 .composer > .composer-attach {
+  grid-area: attach;
   width: 44px;
   height: 44px;
   padding: 0;
@@ -1787,7 +1808,7 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .pending-images[hidden],
-.composer input[type="file"][hidden] {
+.composer input[type="file"] {
   display: none;
 }
 
@@ -1877,6 +1898,9 @@ img.provider-avatar[src$="cursor.svg"] {
 .pending-image-status { display: block; padding: 10px 30px 10px 10px; font-size: 12px; }
 
 .composer textarea {
+  grid-area: input;
+  min-width: 0;
+  width: 100%;
   min-height: 44px;
   max-height: 140px;
   resize: vertical;
@@ -1895,7 +1919,8 @@ img.provider-avatar[src$="cursor.svg"] {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.composer > button {
+.composer > button[type="submit"] {
+  grid-area: send;
   height: 44px;
   background: var(--accent);
   color: #07090d;
@@ -2153,7 +2178,8 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 @media (max-width: 720px) {
   html,
   body {
-    height: 100dvh;
+    height: 100%;
+    max-height: 100dvh;
   }
 
   body {
@@ -2363,12 +2389,32 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 
   .content-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto;
-    gap: 10px;
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
+    min-height: 0;
+  }
+
+  .chat-main,
+  .chat-frames,
+  .chat-frame {
+    min-height: 0;
+    height: 100%;
   }
 
   .chat-main {
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .chat-frames {
+    padding: 0;
+    gap: 0;
+  }
+
+  .chat-frame {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
   }
 
   .transcript {
@@ -2406,6 +2452,11 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   .composer {
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     grid-template-columns: minmax(0, 1fr) 64px;
+    min-height: 56px;
+  }
+
+  .composer.has-image-picker {
+    grid-template-columns: 44px minmax(0, 1fr) 64px;
   }
 
   .command-palette {
@@ -2418,9 +2469,10 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
     max-height: 104px;
     resize: none;
     padding: 10px 12px;
+    font-size: 16px;
   }
 
-  .composer > button {
+  .composer > button[type="submit"] {
     height: 44px;
   }
 

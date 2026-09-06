@@ -4,6 +4,15 @@
    often <1040px, so styles.css hid Users and collapsed the grid — transcript
    sat in a squeezed middle between two sidebars. Override that here. */
 
+/* Fit the window, not 100dvh. On a phone (and inside the dashboard iframe)
+   100dvh is the parent window, so the composer sits below the visible box. */
+html,
+body,
+.app-shell {
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
 .app-shell {
   grid-template-columns: minmax(0, 1fr) !important;
 }
@@ -14,6 +23,11 @@
    transcript ~18px tall above a screen of dead space. One row, full height. */
 .app-shell {
   grid-template-rows: minmax(0, 1fr) !important;
+}
+
+.chat-pane {
+  min-height: 0;
+  height: 100%;
 }
 
 /* Dashboard already has a left menu. Hide this app's brand column so the
@@ -169,9 +183,30 @@ body.chats-collapsed .right-rail .user-list {
 }
 
 @media (max-width: 720px) {
+  .content-grid,
+  .chat-main,
+  .chat-frames,
+  .chat-frame {
+    min-height: 0;
+  }
+
   .content-grid {
     grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) !important;
+  }
+
+  .chat-main {
+    grid-template-rows: minmax(0, 1fr) !important;
+    height: 100%;
+  }
+
+  .chat-frames,
+  .chat-frame {
+    height: 100%;
+  }
+
+  .composer {
+    min-height: 56px;
   }
 
   /* Phone width: the rail's contents are not dropped, they move into
