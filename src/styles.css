@@ -17,8 +17,8 @@
 
 html,
 body {
-  height: 100%;
-  max-height: 100%;
+  height: var(--app-height, 100%);
+  max-height: var(--app-height, 100%);
 }
 
 body[data-accent="gold"] {
@@ -72,8 +72,8 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
-  height: 100%;
-  max-height: 100%;
+  height: var(--app-height, 100%);
+  max-height: var(--app-height, 100%);
   min-height: 0;
   overflow: hidden;
 }
@@ -520,12 +520,15 @@ img.provider-avatar[src$="cursor.svg"] {
 .chat-pane {
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--canvas);
 }
 
 .topbar {
+  flex: 0 0 auto;
   min-height: 72px;
   border-bottom: 1px solid var(--border);
   display: grid;
@@ -850,7 +853,9 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .content-grid {
+  flex: 1 1 0%;
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 230px;
 }
@@ -858,18 +863,19 @@ img.provider-avatar[src$="cursor.svg"] {
 .chat-main {
   min-width: 0;
   min-height: 0;
-  height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .chat-frames {
+  flex: 1 1 0%;
   min-height: 0;
   min-width: 0;
-  height: 100%;
+  overflow: hidden;
   display: grid;
   gap: 8px;
-  padding: 0 0 8px;
+  padding: 0;
 }
 
 .chat-frames[data-layout="single"] { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
@@ -878,15 +884,15 @@ img.provider-avatar[src$="cursor.svg"] {
 .chat-frames[data-layout="quad"] { grid-template: minmax(0, 1fr) minmax(0, 1fr) / minmax(0, 1fr) minmax(0, 1fr); }
 
 .chat-frame {
+  flex: 1 1 0%;
   min-width: 0;
   min-height: 0;
-  height: 100%;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   background: #070707;
-  overflow: hidden;
 }
 
 .chat-frame.is-focused {
@@ -899,6 +905,7 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .frame-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -977,6 +984,7 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .transcript {
+  flex: 1 1 0%;
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
@@ -1750,6 +1758,7 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .composer {
+  flex: 0 0 auto;
   border-top: 1px solid var(--border);
   padding: 12px 18px;
   display: grid;
@@ -1760,6 +1769,7 @@ img.provider-avatar[src$="cursor.svg"] {
   background: var(--surface);
   position: relative;
   min-height: 56px;
+  z-index: 5;
 }
 
 .composer:has(.pending-images:not([hidden])) {
@@ -2177,9 +2187,10 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 
 @media (max-width: 720px) {
   html,
-  body {
-    height: 100%;
-    max-height: 100dvh;
+  body,
+  .app-shell {
+    height: var(--app-height, 100%);
+    max-height: var(--app-height, 100%);
   }
 
   body {
@@ -2257,7 +2268,8 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   }
 
   .chat-pane {
-    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    height: 100%;
   }
 
   .mobile-tabs {
@@ -2392,22 +2404,19 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
     grid-template-rows: minmax(0, 1fr);
     gap: 0;
     min-height: 0;
+    flex: 1 1 0%;
   }
 
   .chat-main,
   .chat-frames,
   .chat-frame {
     min-height: 0;
-    height: 100%;
-  }
-
-  .chat-main {
-    grid-template-rows: minmax(0, 1fr);
   }
 
   .chat-frames {
     padding: 0;
     gap: 0;
+    flex: 1 1 0%;
   }
 
   .chat-frame {
@@ -2450,6 +2459,7 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   }
 
   .composer {
+    flex: 0 0 auto;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     grid-template-columns: minmax(0, 1fr) 64px;
     min-height: 56px;

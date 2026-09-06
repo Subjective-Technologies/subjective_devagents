@@ -195,6 +195,17 @@ function isMobileLayout() {
   return Boolean(mobileDrawer) && window.matchMedia('(max-width: 720px)').matches;
 }
 
+function fitAppToWindow() {
+  const viewport = window.visualViewport;
+  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight || document.documentElement.clientHeight));
+  document.documentElement.style.setProperty('--app-height', `${height}px`);
+}
+
+fitAppToWindow();
+window.addEventListener('resize', fitAppToWindow);
+window.visualViewport?.addEventListener('resize', fitAppToWindow);
+window.visualViewport?.addEventListener('scroll', fitAppToWindow);
+
 const CHAT_FRAME_LAYOUTS = Object.freeze({
   single: { count: 1 },
   'split-h': { count: 2 },
@@ -586,6 +597,7 @@ function unmountMobileLayout() {
 }
 
 function syncMobileLayout() {
+  fitAppToWindow();
   if (isMobileLayout()) {
     mountMobileLayout();
     if (framesEnabled() && chatLayout !== 'single') {
@@ -2778,7 +2790,8 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
       topbarCollapseToggle.setAttribute('aria-expanded', String(!collapsed));
       topbarCollapseToggle.title = collapsed ? 'Show toolbar' : 'Collapse toolbar';
     };
-    applyCollapsed(localStorage.getItem(key) === '1');
+    const stored = localStorage.getItem(key);
+    applyCollapsed(stored === '1' || (stored === null && isMobileLayout()));
     topbarCollapseToggle.addEventListener('click', () => {
       const collapsed = !document.body.classList.contains('topbar-collapsed');
       localStorage.setItem(key, collapsed ? '1' : '0');

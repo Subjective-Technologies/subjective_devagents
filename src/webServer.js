@@ -68,6 +68,7 @@ function createApp(core, options = {}) {
     '/': path.join(webDir, 'index.html'),
     '/index.html': path.join(webDir, 'index.html'),
     '/webBridge.js': path.join(webDir, 'webBridge.js'),
+    '/fit-app.js': path.join(webDir, 'fit-app.js'),
     '/contextMenu.css': path.join(webDir, 'contextMenu.css'),
     '/layout.css': path.join(webDir, 'layout.css'),
     '/terminal.html': path.join(webDir, 'terminal.html'),

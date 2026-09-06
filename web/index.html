@@ -5,13 +5,14 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
+    <script src="/fit-app.js?v=20260906b"></script>
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
          the whole set. Bump on any change to these files. -->
-    <link rel="stylesheet" href="/styles.css?v=20260906a">
+    <link rel="stylesheet" href="/styles.css?v=20260906b">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
     <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
-    <link rel="stylesheet" href="/layout.css?v=20260906a">
+    <link rel="stylesheet" href="/layout.css?v=20260906b">
   </head>
   <body data-accent="gold">
     <main class="app-shell">
@@ -241,6 +242,6 @@
     <script src="/assets/vendor/highlight.min.js"></script>
     <script src="/webBridge.js?v=20260905b"></script>
     <script src="/messageRenderer.js?v=20260901e"></script>
-    <script src="/renderer.js?v=20260905-preview3"></script>
+    <script src="/renderer.js?v=20260906b"></script>
   </body>
 </html>

@@ -4,13 +4,14 @@
    often <1040px, so styles.css hid Users and collapsed the grid — transcript
    sat in a squeezed middle between two sidebars. Override that here. */
 
-/* Fit the window, not 100dvh. On a phone (and inside the dashboard iframe)
-   100dvh is the parent window, so the composer sits below the visible box. */
+/* Fit the visible window. --app-height is the visual viewport (see index.html
+   and renderer.js). 100dvh / inner height: 100% on a phone includes the URL bar
+   and, in the dashboard iframe, the parent window — both clip the composer. */
 html,
 body,
 .app-shell {
-  height: 100% !important;
-  max-height: 100% !important;
+  height: var(--app-height, 100%) !important;
+  max-height: var(--app-height, 100%) !important;
 }
 
 .app-shell {
@@ -28,6 +29,22 @@ body,
 .chat-pane {
   min-height: 0;
   height: 100%;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden;
+}
+
+.content-grid {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+
+.chat-main,
+.chat-frames,
+.chat-frame {
+  min-height: 0 !important;
+  height: auto !important;
 }
 
 /* Dashboard already has a left menu. Hide this app's brand column so the
@@ -171,7 +188,8 @@ body.chats-collapsed .right-rail .user-list {
 
 @media (max-width: 720px) {
   .frame-layout-picker,
-  .frame-broadcast {
+  .frame-broadcast,
+  #sendImageButton {
     display: none !important;
   }
 
@@ -187,26 +205,40 @@ body.chats-collapsed .right-rail .user-list {
   .chat-main,
   .chat-frames,
   .chat-frame {
-    min-height: 0;
+    min-height: 0 !important;
+    height: auto !important;
   }
 
   .content-grid {
     grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: minmax(0, 1fr) !important;
+    flex: 1 1 0% !important;
   }
 
-  .chat-main {
-    grid-template-rows: minmax(0, 1fr) !important;
-    height: 100%;
+  .chat-main,
+  .chat-frames {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 0% !important;
+    overflow: hidden;
   }
 
-  .chat-frames,
   .chat-frame {
-    height: 100%;
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 0% !important;
+    overflow: hidden;
+  }
+
+  .transcript {
+    flex: 1 1 0% !important;
+    min-height: 0 !important;
   }
 
   .composer {
+    flex: 0 0 auto !important;
     min-height: 56px;
+    display: grid !important;
   }
 
   /* Phone width: the rail's contents are not dropped, they move into
