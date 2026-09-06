@@ -8,7 +8,7 @@
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
          the whole set. Bump on any change to these files. -->
-    <link rel="stylesheet" href="/styles.css?v=20260905-preview2">
+    <link rel="stylesheet" href="/styles.css?v=20260905-preview3">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
     <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
     <link rel="stylesheet" href="/layout.css?v=20260901e">
@@ -219,10 +219,28 @@
         <div id="sessionPickerList" class="session-picker-list"></div>
       </form>
     </dialog>
+    <dialog id="suLoginDialog" class="settings-dialog su-login-dialog">
+      <form id="suLoginForm" class="settings-form su-login-form">
+        <div class="settings-head">
+          <div>
+            <h3 id="suLoginTitle">Sign in</h3>
+            <p id="suLoginSubtitle"></p>
+          </div>
+          <button type="button" id="suLoginCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <div id="suLoginStatus" class="su-login-status"></div>
+        <div id="suLoginLog" class="su-login-log" aria-live="polite"></div>
+        <div class="su-login-input-row">
+          <input id="suLoginInput" autocomplete="off" placeholder="Password" aria-label="Response">
+          <button type="submit" class="primary-button">Send</button>
+        </div>
+        <a href="#" id="suLoginTerminalLink" class="su-login-terminal-link" target="_blank" rel="noopener">Open full terminal instead</a>
+      </form>
+    </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js?v=20260905a"></script>
+    <script src="/webBridge.js?v=20260905b"></script>
     <script src="/messageRenderer.js?v=20260901e"></script>
-    <script src="/renderer.js?v=20260905-preview2"></script>
+    <script src="/renderer.js?v=20260905-preview3"></script>
   </body>
 </html>

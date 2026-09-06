@@ -651,6 +651,81 @@ img.provider-avatar[src$="cursor.svg"] {
   font-size: 11px;
 }
 
+.su-login-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.su-login-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9da8ba;
+}
+
+.su-login-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6b7280;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.su-login-status[data-state="connecting"] .dot,
+.su-login-status[data-state="checking-login"] .dot { background: #f5c451; }
+.su-login-status[data-state="awaiting-password"] .dot { background: #7cc8ff; }
+.su-login-status[data-state="awaiting-oauth"] .dot { background: #c792ff; }
+.su-login-status[data-state="error"] .dot,
+.su-login-status[data-state="auth-failed"] .dot { background: #ff6b6b; }
+.su-login-status[data-state="ready"] .dot { background: #7dffb0; }
+
+.su-login-log {
+  min-height: 64px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  background: #0b0f17;
+  color: #b7c3d6;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.su-login-log:empty::before {
+  content: "Connecting…";
+  color: var(--subtle);
+}
+
+.su-login-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.su-login-input-row input {
+  flex: 1 1 auto;
+}
+
+.su-login-input-row .primary-button {
+  flex: 0 0 auto;
+  padding: 0 18px;
+}
+
+.su-login-terminal-link {
+  justify-self: center;
+  color: var(--subtle);
+  font-size: 11px;
+  text-decoration: underline;
+}
+
+.su-login-terminal-link:hover {
+  color: var(--accent);
+}
+
 .settings-dialog {
   width: min(560px, calc(100vw - 32px));
   border: 1px solid rgba(255,255,255,0.12);

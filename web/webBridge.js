@@ -68,16 +68,12 @@
     for (const listener of listeners) listener(event);
   }
 
-  // --- "Continue as..." terminal popup -------------------------------------------------
-  // The desktop app opens a native window for this (terminalWindow.js); a browser tab pops
-  // a same-origin window instead. window.open() with a stable name reuses/focuses an
-  // already-open popup for that username instead of stacking duplicates.
-  listeners.add((event) => {
-    if (event.type === 'switchuser-terminal-needed' && event.username) {
-      const provider = event.provider ? `&provider=${encodeURIComponent(event.provider)}` : '';
-      window.open(`/terminal.html?username=${encodeURIComponent(event.username)}${provider}`, `terminal-${event.username}`, 'width=760,height=500');
-    }
-  });
+  // --- "Continue as..." sign-in -----------------------------------------------------------
+  // switchuser-terminal-needed used to pop a same-origin terminal.html window (xterm.js) for
+  // this. renderer.js now handles it with an in-page password modal (suLoginDialog) styled
+  // like the rest of the app instead - see its onSwitchUserEvent('terminal-needed') handler.
+  // The raw terminal is still reachable from that modal's "Open full terminal instead" link
+  // for logins that need more than a password (an OAuth device code, say).
 
   // --- DOM context menu -----------------------------------------------------------------
   // Electron's native Menu.buildFromTemplate()/.popup() has no browser equivalent - this
@@ -240,6 +236,7 @@
     showConversationContextMenu,
     continueAsUser: (target, username) => post('/api/switchuser/continue-as', { target, username }),
     disconnectSwitchUser: (username) => post('/api/switchuser/disconnect', { username }),
+    sendSwitchUserPtyInput: (username, data) => post('/api/switchuser/pty-input', { username, data }),
     onSwitchUserEvent: (callback) => {
       const wrapped = (event) => { if (event.type && event.type.startsWith('switchuser-')) callback({ type: event.type.replace(/^switchuser-/, ''), ...event }); };
       listeners.add(wrapped);

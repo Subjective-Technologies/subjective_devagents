@@ -64,6 +64,15 @@ const sessionPickerTitle = document.getElementById('sessionPickerTitle');
 const sessionPickerSubtitle = document.getElementById('sessionPickerSubtitle');
 const sessionPickerList = document.getElementById('sessionPickerList');
 const sessionPickerCloseButton = document.getElementById('sessionPickerCloseButton');
+const suLoginDialog = document.getElementById('suLoginDialog');
+const suLoginForm = document.getElementById('suLoginForm');
+const suLoginTitle = document.getElementById('suLoginTitle');
+const suLoginSubtitle = document.getElementById('suLoginSubtitle');
+const suLoginStatus = document.getElementById('suLoginStatus');
+const suLoginLog = document.getElementById('suLoginLog');
+const suLoginInput = document.getElementById('suLoginInput');
+const suLoginCloseButton = document.getElementById('suLoginCloseButton');
+const suLoginTerminalLink = document.getElementById('suLoginTerminalLink');
 const topProviderIcon = document.getElementById('topProviderIcon');
 const richMessages = window.SubjectiveMessageRenderer || {
   detectPromptActions: () => [],
@@ -1071,8 +1080,14 @@ function renderTranscriptNow() {
 async function copyText(value) {
   const text = String(value || '');
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (_error) {
+      // Falls through to execCommand below - the async Clipboard API throws when this
+      // page is embedded in an iframe without a clipboard-write permissions policy (the
+      // dashboard's My Agents iframe, notably), even though the older API still works there.
+    }
   }
   const fallback = document.createElement('textarea');
   fallback.value = text;
@@ -1081,8 +1096,9 @@ async function copyText(value) {
   fallback.style.opacity = '0';
   document.body.appendChild(fallback);
   fallback.select();
-  document.execCommand('copy');
+  const copied = document.execCommand('copy');
   fallback.remove();
+  if (!copied) throw new Error('Clipboard copy was blocked by the browser.');
 }
 
 let commandConfirmationDialog;
@@ -1233,12 +1249,20 @@ function wireRichMessage(content, data, context) {
         return;
       }
       if (!context.conversation.writable || context.conversation.busy) return;
-      if (!await confirmAgentCommand(code, context.conversation)) return;
-      await sendAgentAction(
-        context.conversation,
-        `Run this command in the current workspace and report its output:\n\n<command>\n${code}\n</command>`,
-        card.querySelector('.code-actions')
-      );
+      try {
+        if (!await confirmAgentCommand(code, context.conversation)) return;
+        await sendAgentAction(
+          context.conversation,
+          `Run this command in the current workspace and report its output:\n\n<command>\n${code}\n</command>`,
+          card.querySelector('.code-actions')
+        );
+      } catch (error) {
+        // Without this, a thrown confirm/send (e.g. the confirmation <dialog> failing to
+        // open) died as an unhandled rejection - the button just looked like it did
+        // nothing, with no clue in the UI that anything had gone wrong.
+        rendererLog('error', 'Code run failed', { message: error.message });
+        addEvent('system', { target: context.conversation.target, text: `Run failed: ${error.message}` });
+      }
       return;
     }
 
@@ -2336,6 +2360,125 @@ if (sessionPickerDialog) {
   });
 }
 
+// --- "Continue as…" sign-in modal -----------------------------------------------------
+// Replaces the old window.open('/terminal.html', ...) popup: su and the provider CLI login
+// both drive a real pty (see suSessionManager.js), which is why this still needs a text log
+// and a generic input, not just a password field - a provider that needs OAuth prints a
+// URL/code here instead of a password prompt. The input still defaults to a password field
+// since that's what every "Continue as…" login starts with.
+let suLoginUsername = null;
+
+const SU_LOGIN_STATE_TEXT = {
+  connecting: 'Connecting…',
+  'awaiting-password': 'Waiting for password',
+  'auth-failed': 'Wrong password — try again',
+  'checking-login': 'Checking login…',
+  'awaiting-oauth': 'Waiting for browser sign-in',
+  ready: 'Signed in',
+  error: 'Something went wrong',
+  disconnected: 'Disconnected'
+};
+
+// Strips the ANSI/control noise a real pty emits (cursor moves, color codes, \r) down to
+// readable text - not a full terminal emulator, just enough that a password prompt or an
+// OAuth URL reads cleanly in a plain log instead of showing escape codes.
+function suLoginCleanChunk(text) {
+  return String(text || '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-Z\\-_]/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+}
+
+function applySuLoginState(state) {
+  if (!suLoginStatus) return;
+  suLoginStatus.dataset.state = state;
+  suLoginStatus.replaceChildren();
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  const label = document.createElement('span');
+  label.textContent = SU_LOGIN_STATE_TEXT[state] || state;
+  suLoginStatus.append(dot, label);
+  if (suLoginInput) {
+    const isOauth = state === 'awaiting-oauth';
+    suLoginInput.type = isOauth ? 'text' : 'password';
+    suLoginInput.placeholder = isOauth ? 'Response (if needed)' : 'Password';
+  }
+}
+
+function openSuLoginDialog(username, provider) {
+  if (!suLoginDialog) return;
+  suLoginUsername = username;
+  const label = provider ? providerName(provider) : '';
+  if (suLoginTitle) suLoginTitle.textContent = `Sign in as ${username}`;
+  if (suLoginSubtitle) {
+    suLoginSubtitle.textContent = label
+      ? `${label} needs ${username}’s login on this computer to continue.`
+      : `Continuing as ${username} needs this computer’s login.`;
+  }
+  if (suLoginLog) suLoginLog.textContent = '';
+  if (suLoginInput) suLoginInput.value = '';
+  applySuLoginState('connecting');
+  if (suLoginTerminalLink) {
+    const providerQuery = provider ? `&provider=${encodeURIComponent(provider)}` : '';
+    suLoginTerminalLink.href = `/terminal.html?username=${encodeURIComponent(username)}${providerQuery}`;
+  }
+  if (suLoginDialog.showModal) suLoginDialog.showModal();
+  else suLoginDialog.setAttribute('open', '');
+  suLoginInput?.focus();
+}
+
+function closeSuLoginDialog() {
+  if (!suLoginUsername) return;
+  if (suLoginDialog?.close) suLoginDialog.close();
+  else suLoginDialog?.removeAttribute('open');
+  suLoginUsername = null;
+}
+
+function handleSwitchUserEvent(event) {
+  if (event.type === 'terminal-needed' && event.username) {
+    openSuLoginDialog(event.username, event.provider);
+    return;
+  }
+  if (!suLoginUsername || event.username !== suLoginUsername) return;
+  if (event.type === 'pty-data') {
+    if (!suLoginLog) return;
+    suLoginLog.textContent += suLoginCleanChunk(event.chunk);
+    suLoginLog.scrollTop = suLoginLog.scrollHeight;
+    return;
+  }
+  if (event.type === 'status' || event.type === 'provider-status') {
+    applySuLoginState(event.status);
+    if (event.error && suLoginLog) {
+      suLoginLog.textContent += `${suLoginLog.textContent.endsWith('\n') ? '' : '\n'}${event.error}\n`;
+      suLoginLog.scrollTop = suLoginLog.scrollHeight;
+    }
+  }
+}
+
+if (window.subjectiveChat.onSwitchUserEvent) window.subjectiveChat.onSwitchUserEvent(handleSwitchUserEvent);
+
+if (suLoginForm) {
+  suLoginForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!suLoginUsername || !suLoginInput || !window.subjectiveChat.sendSwitchUserPtyInput) return;
+    const value = suLoginInput.value;
+    suLoginInput.value = '';
+    window.subjectiveChat.sendSwitchUserPtyInput(suLoginUsername, `${value}\n`);
+  });
+}
+if (suLoginCloseButton) suLoginCloseButton.addEventListener('click', closeSuLoginDialog);
+if (suLoginDialog) {
+  suLoginDialog.addEventListener('click', (event) => {
+    if (event.target === suLoginDialog) closeSuLoginDialog();
+  });
+  // Escape (or any other native close) bypasses closeSuLoginDialog() - clear the username
+  // directly here too, or a stale suLoginUsername would swallow the next login's events.
+  suLoginDialog.addEventListener('close', () => { suLoginUsername = null; });
+}
+
 async function refreshLlmStatus() {
   const provider = selectedLlmProvider();
   const label = llmProviderLabel(provider);
@@ -2503,6 +2646,11 @@ window.subjectiveChat.onEvent((event) => {
       // The new sibling conversation was already added via the llm-conversation event
       // just before this one; switch the view over to it now that it exists.
       if (conversations.has(event.target)) setActiveTarget(event.target);
+      // Definitive "su login + provider login both succeeded" signal - closes whatever
+      // the awaiting-password modal was still showing rather than guessing it from a
+      // status/provider-status event, since providers that skip a separate login step
+      // never emit a provider-status at all.
+      if (suLoginUsername && suLoginUsername === event.osUser) closeSuLoginDialog();
       if (pendingSessionChoice?.retryUsername === event.osUser && pendingSessionChoice.text) {
         const text = pendingSessionChoice.text;
         pendingSessionChoice = null;
