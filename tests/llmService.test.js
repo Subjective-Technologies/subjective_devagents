@@ -227,6 +227,21 @@ test('a failed turn leaves no unsent message behind in the transcript', async (t
   assert.deepEqual(restored.messages.map((message) => message.text), []);
 });
 
+test('failed image send remains persisted with attachment metadata', async (t) => {
+  const paths = fixture();
+  t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));
+  const service = new LlmService(paths);
+  service._runPipeline = async () => ({ success: true, result: { pipeline_result: { success: false, status: 'execution_error', error: 'thread-store conflict' } } });
+  const created = service.createConversation({ provider: 'codex', name: 'Screenshot chat', workspace: '/subjective' });
+  const files = [{ filename: 'shot.png', mime_type: 'image/png', content: 'aGVsbG8=' }];
+  const result = await service.sendMessage(created.target, 'Review attached image.', files);
+  assert.equal(result.ok, false);
+  const restored = new LlmService(paths).findConversation(created.target, { includeMessages: true });
+  assert.equal(restored.messages[0].text, 'Review attached image.');
+  assert.deepEqual(restored.messages[0].attachments, files);
+  assert.equal(restored.messages[0].sendFailed, true);
+});
+
 test('a turn that throws also rolls the user message back', async (t) => {
   const paths = fixture();
   t.after(() => fs.rmSync(paths.root, { recursive: true, force: true }));

@@ -18,8 +18,9 @@ const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { pathToFileURL } = require('url');
-const { LlmService, providerLabel, tailConversationForClient } = require('./llmService');
+const { LlmService, providerLabel, formatTranscriptForHandoff, tailConversationForClient } = require('./llmService');
 const { listSystemUsers, isValidUsername } = require('./systemUsers');
+const { listProviderSessions } = require('./providerSessions');
 const { SuSessionManager } = require('./suSessionManager');
 
 const LOGIN_PROVIDERS = new Set(['codex', 'claude', 'cursor']);
@@ -1033,43 +1034,64 @@ class ChatCore extends EventEmitter {
 
   // --- "Continue as..." su sessions -------------------------------------------------
 
-  switchConversationOwner(target, username) {
+  switchConversationOwner(target, username, provider) {
     try {
-      const sibling = this.llmService.createSiblingForUser(target, username);
+      const lightweight = this.llmService.findConversation(target, { includeMessages: false });
+      const crossProvider = Boolean(lightweight) && Boolean(provider)
+        && String(provider).toLowerCase() !== String(lightweight.provider).toLowerCase();
+      const sibling = this.llmService.createSiblingForUser(target, username, crossProvider ? { provider } : {});
       this.activateLlmIrcChannel(sibling);
       this._broadcast('llm-conversation', { conversation: sibling });
-      this._broadcast('llm-switch-user', { sourceTarget: target, target: sibling.target, osUser: username });
+      this._broadcast('llm-switch-user', { sourceTarget: target, target: sibling.target, osUser: username, provider: sibling.provider });
+      if (crossProvider) {
+        // Fire and forget: an agent turn can run for minutes and the caller (the context
+        // menu click) already got its response. The UI switched to the sibling above and
+        // picks up the handoff reply the same way it picks up any other llm-message.
+        const source = this.llmService.findConversation(target, { includeMessages: true });
+        const handoff = source ? formatTranscriptForHandoff(source) : '';
+        if (handoff) {
+          this.sendLlmMessage(sibling.target, handoff).catch((error) => {
+            this.log('error', 'Continue-as handoff message failed', { target: sibling.target, message: error.message });
+          });
+        }
+      }
       return { conversation: sibling };
     } catch (error) {
-      this.log('error', 'Failed to create sibling conversation for OS user', { username, message: error.message });
+      this.log('error', 'Failed to create sibling conversation for OS user', { username, provider, message: error.message });
       this._broadcast('system', { target, text: `Could not continue as ${username}: ${error.message}` });
       return { error: error.message };
     }
   }
 
-  continueConversationAsUser(target, username) {
+  // `provider` is optional and defaults to the conversation's own provider - the auth-retry
+  // session picker (renderer.js openSessionPicker) calls this without it and must keep
+  // switching only the OS user, never the agent. The "Continue as…" context menu passes it
+  // explicitly to also switch which CLI answers the conversation.
+  continueConversationAsUser(target, username, provider) {
     const conversation = this.llmService.findConversation(target);
     if (!conversation) return { ok: false, error: 'Conversation was not found.' };
     if (!isValidUsername(username)) return { ok: false, error: 'Invalid username.' };
-    const provider = conversation.provider;
+    const targetProvider = provider && LOGIN_PROVIDERS.has(String(provider).toLowerCase())
+      ? String(provider).toLowerCase()
+      : conversation.provider;
 
-    const finish = () => this.switchConversationOwner(target, username);
+    const finish = () => this.switchConversationOwner(target, username, targetProvider);
     const connect = () => this.suSessionManager.ensureSession(username)
-      .then(() => (LOGIN_PROVIDERS.has(provider)
-        ? this.suSessionManager.ensureProviderLogin(username, provider)
+      .then(() => (LOGIN_PROVIDERS.has(targetProvider)
+        ? this.suSessionManager.ensureProviderLogin(username, targetProvider)
         : null))
       .then(finish)
       .catch((error) => {
-        this.log('error', 'Failed to connect as OS user', { username, provider, message: error.message });
+        this.log('error', 'Failed to connect as OS user', { username, provider: targetProvider, message: error.message });
         this._broadcast('switchuser-status', { username, status: 'error', error: error.message });
         this._broadcast('system', { target, text: `Could not continue as ${username}: ${error.message}` });
       });
 
-    if (this.suSessionManager.isProviderReady(username, provider)) {
+    if (this.suSessionManager.isProviderReady(username, targetProvider)) {
       return { ok: true, ...finish() };
     }
 
-    this._broadcast('switchuser-terminal-needed', { username, provider });
+    this._broadcast('switchuser-terminal-needed', { username, provider: targetProvider });
     connect();
     const existing = this.suSessionManager.getStatus(username);
     return { ok: true, status: existing.status || 'connecting' };
@@ -1112,20 +1134,31 @@ class ChatCore extends EventEmitter {
     const users = usersResult.ok ? usersResult.users : [];
     const statuses = new Map(this.suSessionManager.listStatuses().map((entry) => [entry.username, entry]));
 
-    const listed = await require('./providerSessions').listProviderSessions();
-    const provider = conversation.provider;
-    const byUser = new Map((listed.users || []).map((user) => [user.username, user.providers?.[provider] || {}]));
-    const candidates = users.map((user) => ({
-      username: user.username,
-      status: statuses.get(user.username)?.status || 'idle',
-      ready: Boolean(byUser.get(user.username)?.ready),
-      unknown: Boolean(byUser.get(user.username)?.unknown)
+    const listed = await listProviderSessions();
+    const byUser = new Map((listed.users || []).map((user) => [user.username, user.providers || {}]));
+    // "Continue as…" already picks an OS user; grouping by every writable agent CLI as
+    // well turns it into a full (LLM × user) picker, so switching the model answering a
+    // conversation doesn't require starting a brand new chat from scratch.
+    const currentOwner = conversation.osUser || os.userInfo().username;
+    const providers = [...LOGIN_PROVIDERS].map((key) => ({
+      key,
+      label: providerLabel(key),
+      users: users.map((user) => {
+        const info = byUser.get(user.username)?.[key] || {};
+        return {
+          username: user.username,
+          status: statuses.get(user.username)?.status || 'idle',
+          ready: Boolean(info.ready),
+          unknown: Boolean(info.unknown),
+          current: key === conversation.provider && user.username === currentOwner
+        };
+      })
     }));
     const activeSessions = [...statuses.values()]
       .filter((entry) => entry.status !== 'idle' && entry.status !== 'disconnected')
       .map((entry) => ({ username: entry.username, status: entry.status }));
 
-    return { renamable: true, continueAs: { candidates, activeSessions } };
+    return { renamable: true, continueAs: { providers, activeSessions } };
   }
 }
 

@@ -8,9 +8,9 @@
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
          the whole set. Bump on any change to these files. -->
-    <link rel="stylesheet" href="/styles.css?v=20260901e">
+    <link rel="stylesheet" href="/styles.css?v=20260905-preview2">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
-    <link rel="stylesheet" href="/contextMenu.css?v=20260826a">
+    <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
     <link rel="stylesheet" href="/layout.css?v=20260901e">
   </head>
   <body data-accent="gold">
@@ -51,6 +51,7 @@
               <button id="bookmarksButton" class="icon-button subtle" title="Bookmarks" aria-label="Bookmarks">☆</button>
               <button id="sendImageButton" class="icon-button" title="Send image with DCC" aria-label="Send image with DCC">+</button>
             </div>
+            <button id="topbarCollapseToggle" class="icon-button subtle topbar-collapse-toggle" type="button" title="Collapse toolbar" aria-label="Collapse toolbar" aria-expanded="true" aria-controls="topbarMeta"></button>
           </div>
           <div class="topbar-meta" id="topbarMeta">
             <div class="status-pill" id="statusPill">
@@ -110,6 +111,10 @@
         </div>
         <div class="mobile-drawer-body">
           <section class="mobile-drawer-panel active" data-mobile-drawer-panel="conversations">
+            <div class="mobile-drawer-panel-head">
+              <span class="mobile-drawer-panel-title">Chats</span>
+              <span id="mobileNewChatSlot"></span>
+            </div>
             <div id="mobileTabsSlot"></div>
           </section>
           <section class="mobile-drawer-panel" data-mobile-drawer-panel="users">
@@ -216,8 +221,8 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js?v=20260901e"></script>
+    <script src="/webBridge.js?v=20260905a"></script>
     <script src="/messageRenderer.js?v=20260901e"></script>
-    <script src="/renderer.js?v=20260901e"></script>
+    <script src="/renderer.js?v=20260905-preview2"></script>
   </body>
 </html>

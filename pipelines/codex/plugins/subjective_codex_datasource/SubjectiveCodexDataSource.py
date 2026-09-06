@@ -366,7 +366,12 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
 
         parsed = self._parse_json_output(completed.stdout or "")
         if completed.returncode != 0:
-            error_text = (completed.stderr or parsed.get("raw_text") or "").strip()
+            error_text = (
+                completed.stderr
+                or parsed.get("error_message")
+                or parsed.get("raw_text")
+                or ""
+            ).strip()
             status = self._classify_error(error_text)
             BBLogger.log(
                 "[SubjectiveCodexDataSource] Codex turn failed "
@@ -463,6 +468,7 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
         raw_lines: list[str] = []
         session_id = ""
         usage: dict[str, Any] = {}
+        error_message = ""
 
         for line in output.splitlines():
             line = line.strip()
@@ -502,12 +508,27 @@ class SubjectiveCodexDataSource(SubjectiveDataSource):
             if event_type == "turn.completed" and isinstance(event.get("usage"), dict):
                 usage = event["usage"]
 
+            # Codex reports fatal turn failures (auth, quota, sandbox denials, ...)
+            # as JSON events on stdout rather than on stderr - a nonzero exit with
+            # no stderr output otherwise looks like a bare, unexplained failure.
+            if event_type == "error":
+                message = event.get("message")
+                if isinstance(message, str) and message:
+                    error_message = message
+            if event_type == "turn.failed":
+                failure = event.get("error")
+                if isinstance(failure, dict):
+                    message = failure.get("message")
+                    if isinstance(message, str) and message:
+                        error_message = message
+
         return {
             "events": events,
             "assistant_message": "\n".join(assistant_parts),
             "session_id": session_id,
             "usage": usage,
             "raw_text": "\n".join(raw_lines),
+            "error_message": error_message,
         }
 
     @staticmethod

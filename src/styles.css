@@ -576,6 +576,8 @@ img.provider-avatar[src$="cursor.svg"] {
 .top-actions {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 7px;
 }
 
@@ -931,6 +933,16 @@ img.provider-avatar[src$="cursor.svg"] {
   gap: 10px;
   max-width: min(820px, 100%);
 }
+.entry.system .system-line { user-select: text; cursor: text; }
+
+.message-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.message-image-open { border: 0; padding: 0; background: transparent; cursor: zoom-in; border-radius: 8px; overflow: hidden; max-width: min(360px, 100%); }
+.message-image-open img { display: block; max-width: 100%; max-height: 280px; object-fit: contain; }
+.image-modal { border: 0; padding: 0; background: rgba(8, 10, 16, .96); max-width: 95vw; max-height: 95vh; }
+.image-modal::backdrop { background: rgba(0, 0, 0, .78); }
+.image-modal form { position: relative; margin: 0; }
+.image-modal img { display: block; max-width: 95vw; max-height: 90vh; object-fit: contain; }
+.image-modal-close { position: absolute; z-index: 1; right: 8px; top: 8px; border: 0; border-radius: 50%; width: 32px; height: 32px; background: rgba(0, 0, 0, .65); color: white; font-size: 24px; cursor: pointer; }
 
 .entry.mine {
   align-self: flex-end;
@@ -1676,6 +1688,34 @@ img.provider-avatar[src$="cursor.svg"] {
   padding-bottom: 2px;
 }
 
+.composer.has-image-picker {
+  grid-template-columns: 44px minmax(0, 1fr) 64px;
+}
+
+.composer > .composer-attach {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.composer > .composer-attach:hover,
+.composer > .composer-attach:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pending-images[hidden],
+.composer input[type="file"][hidden] {
+  display: none;
+}
+
 .command-palette {
   position: absolute;
   left: 24px;
@@ -1748,6 +1788,18 @@ img.provider-avatar[src$="cursor.svg"] {
   font-size: 17px;
   line-height: 1;
 }
+
+.pending-image .pending-image-remove { z-index: 1; }
+.pending-image .pending-image-preview {
+  position: static;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border-radius: 0;
+  cursor: zoom-in;
+}
+.pending-image.has-status { width: 190px; height: auto; min-height: 58px; }
+.pending-image-status { display: block; padding: 10px 30px 10px 10px; font-size: 12px; }
 
 .composer textarea {
   min-height: 44px;
@@ -1924,6 +1976,20 @@ img.provider-avatar[src$="cursor.svg"] {
   gap: 12px;
 }
 
+.mobile-drawer-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mobile-drawer-panel-title {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: #98a5b8;
+}
+
 .mobile-drawer-panel .panel,
 .mobile-drawer-panel .users-pane {
   border: 0;
@@ -1955,6 +2021,18 @@ img.provider-avatar[src$="cursor.svg"] {
 
 .mobile-tabs {
   display: none;
+}
+
+.topbar-collapse-toggle {
+  display: none;
+}
+
+.topbar-collapse-toggle::before {
+  content: "▴";
+}
+
+body.topbar-collapsed .topbar-collapse-toggle::before {
+  content: "▾";
 }
 
 @media (max-width: 1320px) {
@@ -2163,6 +2241,26 @@ img.provider-avatar[src$="cursor.svg"] {
   .topbar .top-actions {
     margin-left: auto;
     flex: 0 0 auto;
+  }
+
+  .topbar .topbar-collapse-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+
+  /* Collapsed: keep only the channel title, the chats/users menu button and
+     this toggle — the identity line and the status/reconnect row are the
+     parts worth reclaiming, since they're not needed while reading. */
+  body.topbar-collapsed .topbar {
+    min-height: 0;
+  }
+
+  body.topbar-collapsed .topbar-main > div:first-child p {
+    display: none;
+  }
+
+  body.topbar-collapsed .topbar-meta {
+    display: none;
   }
 
   .icon-button {

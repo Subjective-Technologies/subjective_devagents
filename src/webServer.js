@@ -371,7 +371,7 @@ function createApp(core, options = {}) {
     },
     'POST /api/switchuser/continue-as': async (_query, body) => {
       const username = String(body?.username || '');
-      const result = core.continueConversationAsUser(String(body?.target || ''), username);
+      const result = core.continueConversationAsUser(String(body?.target || ''), username, body?.provider ? String(body.provider) : undefined);
       // Attach the broadcast viewer eagerly too: continueConversationAsUser only does this
       // via the switchuser-terminal-needed event when a login is actually needed, but
       // attaching is a cheap deduped no-op, and this way a browser tab that opens the
@@ -444,7 +444,7 @@ function createApp(core, options = {}) {
     }
   });
 
-  return { server, wss, routes };
+  return { server, wss, routes, refreshHistory };
 }
 
 module.exports = { createApp };
@@ -459,7 +459,7 @@ if (require.main === module) {
 
   const core = new ChatCore({ root: ROOT, log: defaultLog });
   core.loadSettings();
-  const { server } = createApp(core);
+  const { server, refreshHistory } = createApp(core);
 
   server.listen(PORT, BIND_HOST, () => {
     defaultLog('info', 'Subjective Chat web server listening', { host: BIND_HOST, port: PORT, appHome: core.applicationHome });

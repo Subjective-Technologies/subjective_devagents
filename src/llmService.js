@@ -235,6 +235,39 @@ function clipText(value, max = 120) {
   return `${text.slice(0, max)}…`;
 }
 
+// "Continue as <provider>" across providers has no shared session to resume (each CLI's
+// own session store is provider-specific), so the only way to carry context over is to
+// hand the new agent the old transcript as plain prompt text - it works identically on
+// every writable provider, unlike file attachments (Cursor's datasource ignores `files`
+// entirely; see SubjectiveCursorDataSource.handle_message).
+const HANDOFF_TRANSCRIPT_MAX_CHARS = 20000;
+
+function formatTranscriptForHandoff(conversation) {
+  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  const lines = messages
+    .filter((message) => message?.text && (message.role === 'user' || message.role === 'assistant'))
+    .map((message) => `${message.role === 'assistant' ? 'Assistant' : 'User'}: ${String(message.text).trim()}`);
+  if (!lines.length) return '';
+
+  let body = lines.join('\n\n');
+  let truncated = false;
+  if (body.length > HANDOFF_TRANSCRIPT_MAX_CHARS) {
+    body = body.slice(body.length - HANDOFF_TRANSCRIPT_MAX_CHARS);
+    truncated = true;
+  }
+
+  const fromLabel = providerLabel(conversation.provider);
+  const asUser = conversation.sourceUser ? ` as ${conversation.sourceUser}` : '';
+  return [
+    `Continuing a prior conversation from ${fromLabel}${asUser}. Here is the transcript so far`
+      + `${truncated ? ' (truncated to the most recent messages)' : ''}:`,
+    '---',
+    body,
+    '---',
+    'Please continue from here.'
+  ].join('\n\n');
+}
+
 function conversationKey(item) {
   return `${item.provider}:${sessionIdentity(item)}`;
 }
@@ -401,6 +434,10 @@ class LlmService {
       const command = String(message.command || '');
       const cleaned = cleanVisibleMessage(String(message.text || message.content || ''), role);
       if (!cleaned && !command) return null;
+      const attachments = Array.isArray(message.attachments)
+        ? message.attachments.filter((file) => /^image\//i.test(String(file?.mime_type || '')) && file?.content)
+          .map((file) => ({ filename: String(file.filename || 'pasted-image'), mime_type: String(file.mime_type), content: String(file.content) }))
+        : [];
       return {
         role: cleaned ? cleaned.role : role,
         kind: String(message.kind || 'message'),
@@ -409,7 +446,9 @@ class LlmService {
         shell: String(message.shell || ''),
         toolName: String(message.toolName || message.tool_name || ''),
         workdir: String(message.workdir || ''),
-        time: epochMs(message.time || message.timestamp) || Date.now()
+        time: epochMs(message.time || message.timestamp) || Date.now(),
+        ...(attachments.length ? { attachments } : {}),
+        ...(message.sendFailed ? { sendFailed: true, error: String(message.error || '') } : {})
       };
     }).filter((message) => message && (message.text || message.command));
     const messageUpdatedAt = latestMessageTime(messages);
@@ -686,16 +725,26 @@ class LlmService {
   // (~/.codex, ~/.claude) lives under whichever OS user's $HOME the CLI actually runs as,
   // so a sessionId created as one OS user cannot be resumed as another - there is no
   // shared session to continue across that boundary, only a fresh one to start.
-  createSiblingForUser(sourceTarget, username) {
+  //
+  // options.provider lets the same sibling also switch which agent CLI answers it
+  // ("Continue as Claude · worktwins" from a Codex chat) - the caller (chatCore) is
+  // responsible for feeding the old transcript to the new provider since there is no
+  // session to carry across a provider change either.
+  createSiblingForUser(sourceTarget, username, options = {}) {
     const source = this.findConversation(sourceTarget, { includeMessages: false });
     if (!source) throw new Error('Conversation was not found.');
-    if (!writableProvider(source.provider)) throw new Error(`${source.provider} has no writable datasource.`);
+    const provider = options.provider ? providerKey(options.provider) : providerKey(source.provider);
+    if (!writableProvider(provider)) throw new Error(`${provider} has no writable datasource.`);
+    const crossProvider = provider !== providerKey(source.provider);
+    const label = providerLabel(provider);
     const now = Date.now();
     const conversation = this._normalizeConversation({
-      target: `llm:${source.provider}:local:${crypto.randomUUID()}`,
-      provider: source.provider,
-      label: `${source.label} (as ${username})`,
-      description: `${source.description} — continued as ${username}`,
+      target: `llm:${provider}:local:${crypto.randomUUID()}`,
+      provider,
+      label: crossProvider ? `${source.label} (${label} as ${username})` : `${source.label} (as ${username})`,
+      description: crossProvider
+        ? `${label} CLI conversation — continued from ${providerLabel(source.provider)} as ${username}`
+        : `${source.description} — continued as ${username}`,
       workspace: source.workspace,
       osUser: username,
       sourceUser: username,
@@ -781,7 +830,11 @@ class LlmService {
     }, 'history', metadata.exportPath);
     const local = this.local.find((item) => item.target === target);
     if (local && normalized) {
-      local.messages = normalized.messages;
+      // Keep locally recorded sends that the provider transcript does not know
+      // about yet (for example an attachment blocked by an active-writer error).
+      // Otherwise live reload erases them immediately after the failed send.
+      const merged = this._hydrateLocalConversation({ ...local, messages: normalized.messages });
+      local.messages = merged.messages;
       local.messageCount = normalized.messages.length;
       local.updatedAt = normalized.updatedAt;
       local.sortAt = normalized.sortAt;
@@ -1037,6 +1090,11 @@ class LlmService {
     const previousUpdatedAt = conversation.updatedAt;
     const previousSortAt = conversation.sortAt;
     const userMessage = { role: 'user', text: clean, time: Date.now() };
+    if (Array.isArray(files) && files.length) {
+      userMessage.attachments = files
+        .filter((file) => /^image\//i.test(String(file?.mime_type || '')) && file?.content)
+        .map((file) => ({ filename: String(file.filename || 'pasted-image'), mime_type: String(file.mime_type), content: String(file.content) }));
+    }
     conversation.messages.push(userMessage);
     conversation.updatedAt = userMessage.time;
     conversation.sortAt = userMessage.time;
@@ -1160,7 +1218,15 @@ class LlmService {
         : await this._runPipeline(runtimePath, request, AGENT_TURN_WRAPPER_TIMEOUT_SECONDS);
       const result = this._pipelineResult(pipelineResponse);
       if (!result.success) {
-        rollbackUserMessage();
+        // Preserve attachment messages so the screenshot and its failure remain
+        // visible after reload; ordinary failed text keeps legacy rollback behavior.
+        if (files?.length) {
+          userMessage.sendFailed = true;
+          userMessage.error = String(result.error || result.status || 'Send failed');
+          this._saveState();
+        } else {
+          rollbackUserMessage();
+        }
         this.log('error', 'LLM send failed', {
           target,
           provider: source.provider,
@@ -1217,7 +1283,13 @@ class LlmService {
         cursorIdeHint: Boolean(provider.bundle === 'cursor' && composerIdFromSource(conversation.sourceFile || source.sourceFile || ''))
       };
     } catch (error) {
-      rollbackUserMessage();
+      if (files?.length) {
+        userMessage.sendFailed = true;
+        userMessage.error = error.message;
+        this._saveState();
+      } else {
+        rollbackUserMessage();
+      }
       this.log('error', 'LLM send crashed', {
         target,
         provider: source.provider,
@@ -1391,6 +1463,7 @@ module.exports = {
   cleanVisibleMessage,
   epochMs,
   exportFilenameTime,
+  formatTranscriptForHandoff,
   composerIdFromSource,
   ircChannelName,
   isGenericProviderLabel,

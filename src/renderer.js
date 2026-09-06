@@ -40,6 +40,7 @@ const mobileDrawerClose = document.getElementById('mobileDrawerClose');
 const mobileDrawerLabel = document.getElementById('mobileDrawerLabel');
 const mobileTabsSlot = document.getElementById('mobileTabsSlot');
 const mobileUsersSlot = document.getElementById('mobileUsersSlot');
+const mobileNewChatSlot = document.getElementById('mobileNewChatSlot');
 const mobileAppearanceSlot = document.getElementById('mobileAppearanceSlot');
 const mobileTopbarMetaSlot = document.getElementById('mobileTopbarMetaSlot');
 const mobileTopActionsSlot = document.getElementById('mobileTopActionsSlot');
@@ -255,6 +256,7 @@ function attachFrameComposer(frameEl) {
   const textarea = frameEl.querySelector('textarea');
   if (!form || form.dataset.bound === '1') return;
   form.dataset.bound = '1';
+  attachImagePicker(form);
   form.addEventListener('submit', onComposerSubmit);
   textarea.addEventListener('keydown', onComposerKeydown);
   textarea.addEventListener('input', () => updateCommandPalette());
@@ -552,7 +554,7 @@ function unmountNode(node) {
 }
 
 function mobileMovableNodes() {
-  return [conversationBrowser || conversationList, usersPane, accentPanel, topbarMeta, topActions];
+  return [conversationBrowser || conversationList, usersPane, accentPanel, topbarMeta, topActions, createLlmButton];
 }
 
 function mountMobileLayout() {
@@ -562,6 +564,7 @@ function mountMobileLayout() {
   mountNode(accentPanel, mobileAppearanceSlot);
   mountNode(topbarMeta, mobileTopbarMetaSlot);
   mountNode(topActions, mobileTopActionsSlot);
+  mountNode(createLlmButton, mobileNewChatSlot);
   mobileMounted = true;
 }
 
@@ -892,6 +895,10 @@ function appendTranscriptEntry(conversation) {
     if (!stale) return false;
     stale.replaceWith(renderEntry(previous.kind, previous.data, { conversation, actionable: false }));
   }
+  // Only follow new messages down if the reader was already at the bottom - otherwise
+  // someone scrolled up to read history (or is mid-selection) and an incoming message
+  // would yank the view out from under them.
+  const nearBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 80;
   const event = events[index];
   const node = renderEntry(event.kind, event.data, {
     conversation,
@@ -902,7 +909,7 @@ function appendTranscriptEntry(conversation) {
   else transcript.appendChild(node);
   transcriptRenderedCount = events.length;
   if (frameEl) frameEl.dataset.renderedCount = String(events.length);
-  transcript.scrollTop = transcript.scrollHeight;
+  if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
   return true;
 }
 
@@ -1005,9 +1012,18 @@ function renderConversations() {
 
 function renderOneTranscript(conversation) {
   if (!transcript || !conversation) return;
+  // A full rebuild (triggered by anything from a busy-state flip to a live reload) must
+  // not yank someone back to the bottom just for scrolling up to read history or
+  // selecting text - only follow the bottom if that's where they already were, and
+  // otherwise restore the exact scroll offset replaceChildren() would reset to 0.
+  const sameConversation = transcript.dataset.renderedTarget === conversation.target;
+  const nearBottom = !sameConversation
+    || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 80;
+  const previousScrollTop = transcript.scrollTop;
   transcript.replaceChildren();
   if (conversation.kind === 'llm' && conversation.loading) {
     transcript.appendChild(renderEntry('system', { text: 'Loading conversation history…' }));
+    transcript.dataset.renderedTarget = conversation.target;
     return;
   }
   const TRANSCRIPT_WINDOW = 80;
@@ -1029,7 +1045,8 @@ function renderOneTranscript(conversation) {
   if (conversation.kind === 'llm' && conversation.busy) {
     transcript.appendChild(renderThinkingRow(conversation));
   }
-  transcript.scrollTop = transcript.scrollHeight;
+  transcript.dataset.renderedTarget = conversation.target;
+  transcript.scrollTop = nearBottom ? transcript.scrollHeight : previousScrollTop;
 }
 
 function renderTranscriptNow() {
@@ -1248,14 +1265,17 @@ function renderEntry(kind, data, context = {}) {
     const avatar = data.icon
       ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
       : `<div class="avatar">${initials(data.from)}</div>`;
+    const attachments = imageAttachmentMarkup(data.attachments);
     item.innerHTML = `
       ${avatar}
       <div class="bubble">
         <div class="meta"><span>${escapeHtml(data.from)}</span><time>${timeLabel(data.time)}</time></div>
         <div class="text rich-text">${richMessages.renderMessage(data.text)}</div>
+        ${attachments}
       </div>
     `;
     wireRichMessage(item.querySelector('.rich-text'), data, context);
+    wireImageAttachments(item);
   } else if (kind === 'command') {
     item.classList.add('command-entry');
     const avatar = data.icon
@@ -1309,6 +1329,37 @@ function renderEntry(kind, data, context = {}) {
     item.innerHTML = `<div class="system-line">${escapeHtml(data.text || '')}</div>`;
   }
   return item;
+}
+
+function imageAttachmentMarkup(attachments) {
+  const images = Array.isArray(attachments) ? attachments.filter((item) => /^image\//i.test(String(item?.mime_type || item?.mimeType || '')) && item?.content) : [];
+  if (!images.length) return '';
+  return `<div class="message-images">${images.map((image, index) => {
+    const mime = escapeHtml(String(image.mime_type || image.mimeType));
+    const src = `data:${mime};base64,${String(image.content).replace(/[^A-Za-z0-9+/=_-]/g, '')}`;
+    return `<button type="button" class="message-image-open" data-image-src="${src}" aria-label="Open image ${index + 1}"><img src="${src}" alt="${escapeHtml(image.filename || 'Attached image')}" loading="lazy"></button>`;
+  }).join('')}</div>`;
+}
+
+function wireImageAttachments(item) {
+  for (const button of item.querySelectorAll('.message-image-open')) {
+    button.addEventListener('click', () => openImageModal(button.dataset.imageSrc, button.querySelector('img')?.alt || 'Attached image'));
+  }
+}
+
+let imageModal;
+function openImageModal(src, alt) {
+  if (!imageModal) {
+    imageModal = document.createElement('dialog');
+    imageModal.className = 'image-modal';
+    imageModal.innerHTML = '<form method="dialog"><button type="submit" class="image-modal-close" aria-label="Close">×</button><img></form>';
+    document.body.appendChild(imageModal);
+  }
+  const image = imageModal.querySelector('img');
+  image.src = src;
+  image.alt = alt;
+  if (imageModal.showModal) imageModal.showModal();
+  else imageModal.setAttribute('open', '');
 }
 
 function conversationTimestamp(conversation) {
@@ -1618,7 +1669,7 @@ async function llmAttachment(file) {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return {
     filename: file.name || `attachment-${Date.now()}.${extensionFor(file.type)}`,
-    mime_type: file.type || 'application/octet-stream',
+    mime_type: imageMimeType(file) || 'application/octet-stream',
     content: btoa(binary)
   };
 }
@@ -1630,7 +1681,7 @@ async function llmAttachment(file) {
 // composed message looking like it vanished into nothing. Reconciled against the
 // authoritative 'llm-message' echo once it arrives (see the onEvent switch below) so the
 // bubble isn't shown twice.
-function addOptimisticLlmEcho(conversation, text) {
+function addOptimisticLlmEcho(conversation, text, attachments = []) {
   conversation.pendingEchoes = conversation.pendingEchoes || [];
   conversation.pendingEchoes.push(text);
   conversation.busy = true;
@@ -1643,6 +1694,7 @@ function addOptimisticLlmEcho(conversation, text) {
     target: conversation.target,
     from: config.nick || 'You',
     text,
+    attachments,
     time: Date.now(),
     mine: true,
     assistant: false,
@@ -1674,17 +1726,22 @@ function dropOptimisticLlmEcho(conversation, text) {
   renderConversations();
 }
 
-async function sendTextMessages(lines, targetOverride) {
+async function sendTextMessages(text, targetOverride) {
   const sendTarget = targetOverride || activeTarget;
+  // An LLM prompt is one message, including indentation and blank lines. IRC
+  // still needs one message per line. A pending LLM response ends this send.
+  const isLlm = conversations.get(sendTarget)?.kind === 'llm';
+  const normalized = String(text || '').replace(/\r\n?/g, '\n');
+  const lines = isLlm ? [normalized] : normalized.split('\n');
   const previousTarget = activeTarget;
   if (targetOverride) activeTarget = targetOverride;
   try {
   for (const text of lines) {
-    const outgoing = normalizeLiteralSlash(text).trim();
-    if (!outgoing) continue;
+    const outgoing = normalizeLiteralSlash(isLlm ? text : text.trim());
+    if (!outgoing.trim()) continue;
     rendererLog('info', 'Composer submit', { target: sendTarget, length: outgoing.length });
     try {
-      if (isSlashCommand(outgoing)) {
+      if (isSlashCommand(text) && !(isLlm && outgoing.includes('\n'))) {
         const result = await window.subjectiveChat.executeCommand(outgoing, activeTarget);
         if (result?.focusTarget) setActiveTarget(result.focusTarget);
         if (!result?.ok) addEvent('system', { target: activeTarget, text: 'Command was not accepted.' });
@@ -1762,10 +1819,32 @@ function imageFileSignature(file) {
   ].join(':');
 }
 
+function imageMimeType(file) {
+  if (/^image\//i.test(file?.type || '')) return file.type.toLowerCase();
+  const extension = String(file?.name || '').split('.').pop().toLowerCase();
+  return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', avif: 'image/avif' })[extension] || '';
+}
+
+function readImagePreview(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result || '');
+      const comma = data.indexOf(',');
+      if (comma < 0) return reject(new Error('Could not read this image.'));
+      resolve(`data:${imageMimeType(file)};base64,${data.slice(comma + 1)}`);
+    };
+    reader.onerror = () => reject(new Error('Could not read this image. Select it again.'));
+    reader.onabort = () => reject(new Error('Image loading was interrupted. Select it again.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function uniqueImageFiles(files) {
   const seen = new Set();
   return files.filter((file) => {
-    if (!file || !file.type.startsWith('image/')) return false;
+    if (!file || !imageMimeType(file)) return false;
     const key = imageFileSignature(file);
     if (seen.has(key)) return false;
     seen.add(key);
@@ -1773,15 +1852,69 @@ function uniqueImageFiles(files) {
   });
 }
 
-function addPendingImages(files) {
+async function addPendingImages(files) {
+  const loading = [];
   for (const file of files) {
-    pendingImages.push({
+    const image = {
       id: pendingImageId++,
       file,
-      url: URL.createObjectURL(file)
-    });
+      url: '',
+      error: '',
+      loading: true
+    };
+    pendingImages.push(image);
+    const ready = readImagePreview(file).then((url) => {
+      image.url = url;
+      const binary = atob(url.slice(url.indexOf(',') + 1));
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      image.file = new File([bytes], file.name || 'image.png', { type: imageMimeType(file) });
+    })
+      .catch((error) => { image.error = error.message; })
+      .finally(() => {
+        image.loading = false;
+        if (pendingImages.includes(image)) renderPendingImages();
+      });
+    image.ready = ready;
+    loading.push(ready);
   }
   renderPendingImages();
+  await Promise.all(loading);
+}
+
+// A native file picker works on mobile photo libraries as well as desktop files.
+// Install per form because the web UI creates and removes split chat panes.
+function attachImagePicker(form) {
+  if (!form || form.querySelector('.composer-attach')) return;
+  const picker = document.createElement('input');
+  picker.type = 'file';
+  picker.accept = 'image/png,image/jpeg,image/gif,image/webp,image/bmp,image/avif';
+  picker.multiple = true;
+  picker.hidden = true;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'composer-attach';
+  button.textContent = '+';
+  button.title = 'Attach images';
+  button.setAttribute('aria-label', 'Attach images');
+  button.addEventListener('click', () => {
+    const frame = form.closest('.chat-frame');
+    if (frame) focusChatFrame(Number(frame.dataset.frame));
+    if (form.querySelector('textarea')?.disabled) return;
+    picker.click();
+  });
+  picker.addEventListener('change', async () => {
+    const files = uniqueImageFiles([...picker.files]);
+    if (!files.length || !form.isConnected) return;
+    const frame = form.closest('.chat-frame');
+    if (frame) focusChatFrame(Number(frame.dataset.frame));
+    await addPendingImages(files);
+    // Mobile providers may revoke access when the picker is cleared. Keep our own
+    // byte snapshot for subsequent Send, even after the native input is reset.
+    picker.value = '';
+  });
+  form.classList.add('has-image-picker');
+  form.insertBefore(button, form.querySelector('textarea'));
+  form.appendChild(picker);
 }
 
 function removePendingImage(id) {
@@ -1804,11 +1937,31 @@ function renderPendingImages() {
   for (const image of pendingImages) {
     const item = document.createElement('div');
     item.className = 'pending-image';
-    item.innerHTML = `
-      <img src="${image.url}" alt="${escapeHtml(image.file.name || 'Pasted image')}">
-      <button type="button" aria-label="Remove image" title="Remove image">&times;</button>
-    `;
+    item.innerHTML = '<button type="button" class="pending-image-remove" aria-label="Remove image" title="Remove image">&times;</button>';
     item.querySelector('button').addEventListener('click', () => removePendingImage(image.id));
+    if (image.loading || image.error) {
+      const status = document.createElement('span');
+      status.className = 'pending-image-status';
+      status.textContent = image.error || 'Loading image…';
+      status.setAttribute('role', image.error ? 'alert' : 'status');
+      item.appendChild(status);
+      item.classList.add('has-status');
+    } else {
+      const preview = document.createElement('img');
+      preview.alt = image.file.name || 'Attached image';
+      preview.addEventListener('error', () => {
+        image.error = 'Preview unavailable. Choose a PNG or JPEG image.';
+        renderPendingImages();
+      }, { once: true });
+      preview.src = image.url;
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'pending-image-preview';
+      open.setAttribute('aria-label', `Preview ${preview.alt}`);
+      open.addEventListener('click', () => openImageModal(image.url, preview.alt));
+      open.appendChild(preview);
+      item.appendChild(open);
+    }
     pendingImagesEl.appendChild(item);
   }
 }
@@ -1820,12 +1973,13 @@ async function onComposerSubmit(event) {
   if (frameEl) focusChatFrame(Number(frameEl.dataset.frame), { skipActive: false });
   const box = (frameEl ? frameEl.querySelector('textarea') : input);
   if (box) input = box;
-  const lines = String(input?.value || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const text = String(input?.value || '').replace(/\r\n?/g, '\n');
+  if (pendingImages.some((image) => image.loading || image.error)) {
+    addEvent('system', { target: activeTarget, text: 'Wait for image previews to load, or remove images that could not be opened.' });
+    return;
+  }
   const images = pendingImages.map((image) => image.file);
-  if (!lines.length && !images.length) return;
+  if (!text.trim() && !images.length) return;
   if (input) input.value = '';
   hideCommandPalette();
   clearPendingImages();
@@ -1838,14 +1992,15 @@ async function onComposerSubmit(event) {
     if (conversation?.kind === 'llm' && images.length) {
       try {
         const files = await Promise.all(images.map(llmAttachment));
-        addOptimisticLlmEcho(conversation, lines.join('\n') || 'Review attached image.');
-        await window.subjectiveChat.sendLlmMessage(target, lines.join('\n') || 'Review attached image.', files);
+        const prompt = text.trim() ? text : 'Review attached image.';
+        addOptimisticLlmEcho(conversation, prompt, files);
+        await window.subjectiveChat.sendLlmMessage(target, prompt, files);
       } catch (error) {
         addEvent('system', { target, text: `Attachment send failed: ${error.message}` });
       }
       continue;
     }
-    await sendTextMessages(lines, target);
+    await sendTextMessages(text, target);
     if (!broadcast) {
       for (const file of images) await sendPastedImage(file);
     }
@@ -1899,7 +2054,10 @@ async function onComposerPaste(event) {
   addPendingImages(files);
 }
 
-if (composer) composer.addEventListener('submit', onComposerSubmit);
+if (composer) {
+  attachImagePicker(composer);
+  composer.addEventListener('submit', onComposerSubmit);
+}
 if (input) {
   input.addEventListener('keydown', onComposerKeydown);
   input.addEventListener('input', () => updateCommandPalette());
@@ -1943,6 +2101,7 @@ function llmMessageEvent(message, conversation) {
         ? providerName(conversation.provider)
         : (message.from || config.nick || 'You'),
       text: message.text,
+      attachments: message.attachments || [],
       time: message.time,
       mine: !assistant,
       icon: assistant ? conversation.icon : '',
@@ -2459,6 +2618,21 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
     applyCollapsed(localStorage.getItem(key) === '1');
     collapseChatsButton.addEventListener('click', () => {
       const collapsed = !document.body.classList.contains('chats-collapsed');
+      localStorage.setItem(key, collapsed ? '1' : '0');
+      applyCollapsed(collapsed);
+    });
+  }
+  const topbarCollapseToggle = document.getElementById('topbarCollapseToggle');
+  if (topbarCollapseToggle) {
+    const key = 'subjective-chat-topbar-collapsed';
+    const applyCollapsed = (collapsed) => {
+      document.body.classList.toggle('topbar-collapsed', collapsed);
+      topbarCollapseToggle.setAttribute('aria-expanded', String(!collapsed));
+      topbarCollapseToggle.title = collapsed ? 'Show toolbar' : 'Collapse toolbar';
+    };
+    applyCollapsed(localStorage.getItem(key) === '1');
+    topbarCollapseToggle.addEventListener('click', () => {
+      const collapsed = !document.body.classList.contains('topbar-collapsed');
       localStorage.setItem(key, collapsed ? '1' : '0');
       applyCollapsed(collapsed);
     });

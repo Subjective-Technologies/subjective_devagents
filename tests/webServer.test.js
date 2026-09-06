@@ -16,13 +16,14 @@ function startServer() {
   const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'subjective-chat-web-'));
   const core = new ChatCore({ appHome, log: () => {} });
   core.loadSettings();
-  const { server } = createApp(core);
+  const { server, refreshHistory } = createApp(core);
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
       resolve({
         core,
         server,
+        refreshHistory,
         baseUrl: `http://127.0.0.1:${port}`,
         wsUrl: `ws://127.0.0.1:${port}/ws`,
         close: () => new Promise((done) => {
@@ -127,4 +128,32 @@ test('GET /api/context-menu proxies buildContextMenuModel for a nonexistent targ
 
   const result = await (await fetch(`${ctx.baseUrl}/api/context-menu?target=${encodeURIComponent('llm:codex:missing')}`)).json();
   assert.deepEqual(result, { ok: true, renamable: false, continueAs: null });
+});
+
+test('startup can call the shared history refresh function', async (t) => {
+  const ctx = await startServer();
+  t.after(ctx.close);
+  let calls = 0;
+  ctx.core.llmService.refreshHistory = async () => { calls++; return { success: true }; };
+  const result = await ctx.refreshHistory('startup');
+  assert.equal(result.ok, true);
+  assert.equal(calls, 1);
+});
+
+test('LLM HTTP route passes a multiline prompt to ChatCore without truncation', async (t) => {
+  const ctx = await startServer();
+  t.after(ctx.close);
+  const prompt = 'first line\n\n    indented line\nlast line';
+  const calls = [];
+  ctx.core.llmService.findConversation = () => ({ target: 'llm:codex:test', provider: 'codex' });
+  ctx.core.sendLlmMessage = async (...args) => { calls.push(args); return { ok: true, pending: true }; };
+  const response = await fetch(`${ctx.baseUrl}/api/llm/send-message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target: 'llm:codex:test', text: prompt })
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).pending, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1], prompt);
 });

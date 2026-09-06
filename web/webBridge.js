@@ -136,21 +136,33 @@
     if (!model.continueAs) {
       menu.appendChild(menuRow({ label: 'Continue as…', disabled: true }));
     } else {
-      const { candidates, activeSessions } = model.continueAs;
+      const { providers, activeSessions } = model.continueAs;
       const submenuLabel = document.createElement('div');
       submenuLabel.className = 'web-context-menu-label';
       submenuLabel.textContent = 'Continue as…';
       menu.appendChild(submenuLabel);
 
-      if (!candidates.length) {
+      const nonEmptyProviders = providers.filter((provider) => provider.users.length);
+      if (!nonEmptyProviders.length) {
         menu.appendChild(menuRow({ label: 'No other Linux users found on this computer', disabled: true }));
       } else {
-        for (const candidate of candidates) {
-          menu.appendChild(menuRow({
-            label: `${statusDot(candidate.status)} ${candidate.username}${candidate.ready ? ' · login found' : candidate.unknown ? ' · login hidden' : ''}`,
-            onClick: () => post('/api/switchuser/continue-as', { target, username: candidate.username })
-          }));
-        }
+        nonEmptyProviders.forEach((provider, index) => {
+          if (index) menu.appendChild(separator());
+          const providerLabelRow = document.createElement('div');
+          providerLabelRow.className = 'web-context-menu-label';
+          providerLabelRow.textContent = provider.label;
+          menu.appendChild(providerLabelRow);
+          for (const candidate of provider.users) {
+            const suffix = candidate.current
+              ? ' · current'
+              : candidate.ready ? ' · login found' : candidate.unknown ? ' · login hidden' : '';
+            menu.appendChild(menuRow({
+              label: `${statusDot(candidate.status)} ${candidate.username}${suffix}`,
+              disabled: candidate.current,
+              onClick: () => post('/api/switchuser/continue-as', { target, provider: provider.key, username: candidate.username })
+            }));
+          }
+        });
       }
 
       if (activeSessions.length) {
