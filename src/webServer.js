@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+// SUPERSEDED by services/subjective_devagents_fastapi (run_subjective_devagents_fastapi.sh).
+// The web edition's backend now lives there in Python, serving the same routes and the same
+// /ws event stream against the same SUBJECTIVE_CHAT_HOME, so this file and that service are
+// interchangeable from the browser's point of view. Kept for now because the Electron app
+// still ships the Node modules it shares (llmService/suSessionManager/chatCore); prefer the
+// FastAPI service for anything web.
+//
 // Standalone web adapter for ChatCore - "share the same backend" as the desktop Electron
 // app means: same LlmService/SuSessionManager modules (spawns the same local codex/claude
 // CLI subprocesses and su/pty sessions on this machine), and - by pointing at the same
