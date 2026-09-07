@@ -7,10 +7,31 @@
   const dataListeners = new Set();
   const statusListeners = new Set();
 
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+  // Same backend the main page uses - resolved the same way as webBridge.js (see the note
+  // there), because this terminal drives a pty that only exists on that machine. Reading
+  // the same ?api=/localStorage/meta chain means opening the raw terminal from a session
+  // pointed at a non-default backend keeps talking to that backend.
+  const API_BASE = (function resolveApiBase() {
+    const clean = (value) => String(value || '').trim().replace(/\/+$/, '');
+    let base = '';
+    try {
+      base = clean(new URLSearchParams(location.search).get('api'))
+        || clean(localStorage.getItem('devagents.apiBase'));
+    } catch (_error) {
+      // Sandboxed iframe: fall through to the meta tag.
+    }
+    if (!base) base = clean(document.querySelector('meta[name="devagents-api"]')?.content);
+    return base || '';
+  }());
+
+  const apiUrl = (path) => (API_BASE ? `${API_BASE}${path}` : path);
+
+  const url = API_BASE
+    ? `${API_BASE.replace(/^http/, 'ws')}/ws`
+    : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   const socket = new WebSocket(url);
   socket.addEventListener('open', () => {
-    fetch(`/api/switchuser/status?username=${encodeURIComponent(username)}`)
+    fetch(apiUrl(`/api/switchuser/status?username=${encodeURIComponent(username)}`))
       .then((response) => response.json())
       .then((result) => {
         if (result?.status) for (const listener of statusListeners) listener(result.status);
@@ -32,7 +53,7 @@
   });
 
   function post(path, body) {
-    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    return fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then((response) => response.json())
       .catch(() => ({ ok: false }));
   }

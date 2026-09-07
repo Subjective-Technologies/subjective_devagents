@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
+    <!-- Must match index.html: this page drives a pty through the same backend, and a
+         cross-origin call is blocked by CSP unless that origin is named here. -->
+    <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://devagents-api.subjectivetechnologies.com:8080; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Continue as…</title>
     <link rel="stylesheet" href="/assets/vendor/xterm.css">

@@ -12,8 +12,38 @@
   // its patience - see the longRunning option below.
   const PROXY_TIMEOUT_STATUSES = new Set([502, 504, 524]);
 
+  // --- where the backend lives ------------------------------------------------------------
+  // Every request and the event socket resolve against this one value, so the UI never
+  // talks to whichever origin happened to serve the page. Order: ?api= (for probing a
+  // different backend without a redeploy), then a localStorage pin, then the <meta> tag
+  // index.html ships, then same-origin for a plain local checkout.
+  //
+  // Whatever origin this resolves to must also appear in index.html's CSP connect-src, or
+  // the browser blocks the call before it is sent.
+  const API_BASE = (function resolveApiBase() {
+    const clean = (value) => String(value || '').trim().replace(/\/+$/, '');
+    let base = '';
+    try {
+      base = clean(new URLSearchParams(location.search).get('api'));
+      if (base) localStorage.setItem('devagents.apiBase', base);
+      if (!base) base = clean(localStorage.getItem('devagents.apiBase'));
+    } catch (_error) {
+      // A sandboxed iframe throws on storage/search; fall through to the meta tag.
+    }
+    if (!base) base = clean(document.querySelector('meta[name="devagents-api"]')?.content);
+    return base || '';
+  }());
+
+  // Absolute when an API base is configured, relative when it is not - so the same bundle
+  // serves a local same-origin checkout and the hosted split-origin deployment.
+  function apiUrl(path) {
+    return API_BASE ? `${API_BASE}${path}` : path;
+  }
+
+  window.subjectiveChatApiBase = API_BASE;
+
   async function api(method, path, body, options = {}) {
-    const response = await fetch(path, {
+    const response = await fetch(apiUrl(path), {
       method,
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined
@@ -43,9 +73,18 @@
   let socket = null;
   let reconnectTimer = null;
 
+  // Derived from API_BASE, not from location: the event stream has to come from the same
+  // backend serving the REST calls, or the UI shows a chat list from one server and live
+  // messages from another.
+  function socketUrl() {
+    if (!API_BASE) {
+      return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    }
+    return `${API_BASE.replace(/^http/, 'ws')}/ws`;
+  }
+
   function connectSocket() {
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-    socket = new WebSocket(url);
+    socket = new WebSocket(socketUrl());
     socket.addEventListener('message', (message) => {
       let event;
       try {
@@ -255,6 +294,17 @@
     log: (level, message, details) => post('/api/log', { level, message, details }),
     getConfig: () => get('/api/config'),
     saveConfig: (payload) => post('/api/save-config', payload),
+
+    // Backend-side facts. These matter more now that the API is its own origin: the
+    // version stamped into this page describes whoever served the HTML, which is no
+    // longer necessarily the machine answering the calls, so asking the API is the only
+    // way to report the build that actually ran a turn.
+    apiBase: API_BASE,
+    getVersion: () => get('/api/version'),
+    getDatasources: () => get('/api/datasources'),
+    getD1SyncStatus: () => get('/api/d1/sync'),
+    syncD1Now: () => post('/api/d1/sync', {}, { longRunning: true }),
+
     onEvent: (callback) => {
       listeners.add(callback);
       return () => listeners.delete(callback);
