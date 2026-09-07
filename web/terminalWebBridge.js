@@ -26,12 +26,29 @@
 
   const apiUrl = (path) => (API_BASE ? `${API_BASE}${path}` : path);
 
-  const url = API_BASE
+  // Same shared secret the main page uses (see webBridge.js). This page drives a pty on
+  // that machine, so it is gated identically; the token is only ever read from storage,
+  // never stamped into the public HTML.
+  const API_TOKEN = (function resolveApiToken() {
+    try {
+      return String(new URLSearchParams(location.search).get('token')
+        || localStorage.getItem('devagents.apiToken') || '').trim();
+    } catch (_error) {
+      return '';
+    }
+  }());
+
+  const authHeaders = (extra) => (API_TOKEN
+    ? Object.assign({ 'X-DevAgents-Token': API_TOKEN }, extra || {})
+    : (extra || undefined));
+
+  const wsBase = API_BASE
     ? `${API_BASE.replace(/^http/, 'ws')}/ws`
     : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+  const url = API_TOKEN ? `${wsBase}?token=${encodeURIComponent(API_TOKEN)}` : wsBase;
   const socket = new WebSocket(url);
   socket.addEventListener('open', () => {
-    fetch(apiUrl(`/api/switchuser/status?username=${encodeURIComponent(username)}`))
+    fetch(apiUrl(`/api/switchuser/status?username=${encodeURIComponent(username)}`), { headers: authHeaders() })
       .then((response) => response.json())
       .then((result) => {
         if (result?.status) for (const listener of statusListeners) listener(result.status);
@@ -53,7 +70,7 @@
   });
 
   function post(path, body) {
-    return fetch(apiUrl(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    return fetch(apiUrl(path), { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) })
       .then((response) => response.json())
       .catch(() => ({ ok: false }));
   }

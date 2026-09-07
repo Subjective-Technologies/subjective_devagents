@@ -16,11 +16,15 @@ const TERMINAL_SOURCE = fs.readFileSync(path.join(WEB_DIR, 'terminalWebBridge.js
 
 // Minimal browser stand-in: enough DOM/URL/storage surface for the bridges to initialise,
 // recording every URL they reach for so the assertions can inspect them.
-function loadBridge(source, { metaApi = '', search = '', stored = null, href = 'https://devagents.subjectivetechnologies.com/' } = {}) {
+function loadBridge(source, {
+  metaApi = '', search = '', stored = null, storedToken = null, status = 200,
+  href = 'https://devagents.subjectivetechnologies.com/'
+} = {}) {
   const calls = [];
   const sockets = [];
   const storage = new Map();
   if (stored) storage.set('devagents.apiBase', stored);
+  if (storedToken) storage.set('devagents.apiToken', storedToken);
 
   class FakeWebSocket {
     constructor(url) {
@@ -38,8 +42,12 @@ function loadBridge(source, { metaApi = '', search = '', stored = null, href = '
     setTimeout,
     clearTimeout,
     fetch: (url, options) => {
-      calls.push({ url: String(url), method: (options && options.method) || 'GET' });
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      calls.push({
+        url: String(url),
+        method: (options && options.method) || 'GET',
+        headers: (options && options.headers) || {}
+      });
+      return Promise.resolve({ ok: status < 400, status, json: async () => ({ ok: status < 400 }) });
     },
     WebSocket: FakeWebSocket,
     localStorage: {
@@ -50,8 +58,13 @@ function loadBridge(source, { metaApi = '', search = '', stored = null, href = '
       href,
       protocol: new URL(href).protocol,
       host: new URL(href).host,
+      pathname: new URL(href).pathname,
+      hash: '',
       search
     },
+    // The bridge strips a seeded ?token= from the address bar so it does not leak through
+    // history or a Referer header; capture what it replaced the URL with.
+    history: { replaceState: (_state, _title, nextUrl) => { context.replacedUrl = nextUrl; } },
     document: {
       querySelector: (selector) =>
         (selector.includes('devagents-api') && metaApi !== null ? { content: metaApi } : null),
@@ -154,4 +167,68 @@ test('no relative /api path is left in either bridge', () => {
     const bareFetch = source.match(/fetch\(\s*['"`]\/api\//g) || [];
     assert.strictEqual(bareFetch.length, 0, `${name} still fetches a relative /api path`);
   }
+});
+
+// --- API token -------------------------------------------------------------------------
+// The backend requires a shared secret. It must never be stamped into the public page, so
+// the browser seeds it once from ?token= and remembers it.
+
+test('the token rides as a header on every request', async () => {
+  const { context, calls } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://api.example.test:8080',
+    stored: null,
+    search: '?token=secret-abc',
+  });
+  await context.window.subjectiveChat.getConfig();
+  assert.strictEqual(calls[0].headers['X-DevAgents-Token'], 'secret-abc');
+});
+
+test('a seeded token is remembered and kept out of the URL', () => {
+  const { storage, context } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://api.example.test:8080',
+    search: '?token=secret-abc',
+  });
+  assert.strictEqual(storage.get('devagents.apiToken'), 'secret-abc');
+  // Left in the address bar it would leak through history and Referer headers.
+  assert.ok(context.replacedUrl !== undefined, 'the token was not stripped from the URL');
+  assert.ok(!String(context.replacedUrl).includes('secret-abc'));
+});
+
+test('the socket carries the token in the query string', () => {
+  // A browser cannot set headers on a WebSocket handshake.
+  const { sockets } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://api.example.test:8080',
+    stored: null,
+    search: '?token=secret-abc',
+  });
+  assert.strictEqual(sockets[0], 'wss://api.example.test:8080/ws?token=secret-abc');
+});
+
+test('a stored token is reused on later loads without a query parameter', async () => {
+  const { context, calls, sockets } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://api.example.test:8080',
+    storedToken: 'remembered-xyz',
+  });
+  await context.window.subjectiveChat.getConfig();
+  assert.strictEqual(calls[0].headers['X-DevAgents-Token'], 'remembered-xyz');
+  assert.ok(sockets[0].endsWith('?token=remembered-xyz'));
+});
+
+test('a 401 is reported as locked rather than as an empty result', async () => {
+  // Without this the sidebar renders empty and the app looks broken instead of locked.
+  const { context } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://api.example.test:8080',
+    status: 401,
+  });
+  const result = await context.window.subjectiveChat.getConfig();
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.unauthorized, true);
+  assert.match(result.error, /token/i);
+});
+
+test('no token configured still sends a clean request', async () => {
+  const { context, calls, sockets } = loadBridge(BRIDGE_SOURCE, { metaApi: 'https://api.example.test:8080' });
+  await context.window.subjectiveChat.getConfig();
+  assert.strictEqual(calls[0].headers['X-DevAgents-Token'], undefined);
+  assert.ok(!sockets[0].includes('token='));
 });

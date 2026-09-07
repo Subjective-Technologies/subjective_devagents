@@ -40,14 +40,50 @@
     return API_BASE ? `${API_BASE}${path}` : path;
   }
 
+  // --- API token -------------------------------------------------------------------------
+  // The backend can read every conversation on that machine and start an agent turn, so it
+  // requires a shared secret. Deliberately NOT baked into this page: the page is public, so
+  // anything stamped into it is public too. Seed it once per browser with ?token=... and it
+  // is remembered; thereafter it rides as a header, which is why the API can keep a wildcard
+  // CORS origin - a header carries no ambient authority the way a cookie would.
+  const API_TOKEN = (function resolveApiToken() {
+    let token = '';
+    try {
+      token = String(new URLSearchParams(location.search).get('token') || '').trim();
+      if (token) {
+        localStorage.setItem('devagents.apiToken', token);
+        // Keep the secret out of the address bar, history and any Referer header.
+        history.replaceState(null, '', location.pathname + location.hash);
+      }
+      if (!token) token = String(localStorage.getItem('devagents.apiToken') || '').trim();
+    } catch (_error) {
+      // Sandboxed iframe with storage blocked - fall through to an unauthenticated attempt,
+      // which surfaces as a clear 401 rather than a silent failure.
+    }
+    return token;
+  }());
+
+  function authHeaders(extra) {
+    const headers = Object.assign({}, extra || {});
+    if (API_TOKEN) headers['X-DevAgents-Token'] = API_TOKEN;
+    return Object.keys(headers).length ? headers : undefined;
+  }
+
   window.subjectiveChatApiBase = API_BASE;
 
   async function api(method, path, body, options = {}) {
     const response = await fetch(apiUrl(path), {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: authHeaders(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
       body: body !== undefined ? JSON.stringify(body) : undefined
     });
+    // The backend rejected the shared secret. Say so plainly: without this the UI just
+    // renders an empty chat list and looks broken rather than locked.
+    if (response.status === 401) {
+      return { ok: false, unauthorized: true, error: API_TOKEN
+        ? 'The API rejected this token. Re-open with ?token=... to set a new one.'
+        : 'This backend needs an API token. Open the page once with ?token=...' };
+    }
     // 524/504/502: Cloudflare (or another proxy) gave up waiting. An agent turn can
     // still be running; llm-message arrives on the WebSocket. Do not treat as a failed
     // send. Scoped to longRunning calls on purpose: a read like /api/llm/conversations
@@ -78,9 +114,11 @@
   // messages from another.
   function socketUrl() {
     if (!API_BASE) {
-      return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+      const sameOrigin = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+      return API_TOKEN ? `${sameOrigin}?token=${encodeURIComponent(API_TOKEN)}` : sameOrigin;
     }
-    return `${API_BASE.replace(/^http/, 'ws')}/ws`;
+    const base = `${API_BASE.replace(/^http/, 'ws')}/ws`;
+    return API_TOKEN ? `${base}?token=${encodeURIComponent(API_TOKEN)}` : base;
   }
 
   function connectSocket() {
