@@ -1361,12 +1361,32 @@ function confirmAgentCommand(command, conversation) {
 }
 
 async function sendAgentAction(conversation, reply, controls) {
-  if (!conversation?.writable || !window.subjectiveChat.sendLlmMessage) return false;
+  // A quick-reply button that does nothing, silently, is worse than an error: the reader
+  // cannot tell whether it sent. Every path that stops now says why — in the transcript for
+  // the reader, and in the server journal (rendererLog) so a failure is diagnosable after
+  // the fact instead of only in the browser console.
+  if (!conversation?.writable) {
+    rendererLog('warn', 'Agent action blocked: conversation not writable', { target: conversation?.target, provider: conversation?.provider });
+    addEvent('system', { target: conversation?.target, text: 'This conversation is read-only, so that answer cannot be sent.' });
+    return false;
+  }
+  if (!window.subjectiveChat.sendLlmMessage) {
+    rendererLog('error', 'Agent action blocked: sendLlmMessage missing from the bridge', { target: conversation.target });
+    addEvent('system', { target: conversation.target, text: 'The backend bridge is not ready. Reload the page.' });
+    return false;
+  }
+  rendererLog('info', 'Agent action send', { target: conversation.target, provider: conversation.provider, replyChars: String(reply || '').length });
   for (const button of controls.querySelectorAll('button')) button.disabled = true;
   controls.classList.add('pending');
   try {
     const result = await window.subjectiveChat.sendLlmMessage(conversation.target, reply);
+    if (result?.unauthorized) {
+      rendererLog('error', 'Agent action rejected: unauthorized', { target: conversation.target });
+      addEvent('system', { target: conversation.target, text: result.error || 'The API rejected the request (missing or wrong token).' });
+      return false;
+    }
     if (!result?.ok) {
+      rendererLog('error', 'Agent action not accepted', { target: conversation.target, error: result?.error || '', status: result?.status || '' });
       addEvent('system', {
         target: conversation.target,
         text: result?.error || `${conversation.provider} did not accept the response.`
@@ -1375,6 +1395,7 @@ async function sendAgentAction(conversation, reply, controls) {
     }
     return true;
   } catch (error) {
+    rendererLog('error', 'Agent action threw', { target: conversation.target, message: error.message });
     addEvent('system', { target: conversation.target, text: `Action failed: ${error.message}` });
     return false;
   } finally {
@@ -1400,6 +1421,12 @@ function appendPromptActions(content, data, context) {
     button.disabled = !context.conversation.writable || Boolean(context.conversation.busy);
     if (!context.conversation.writable) button.title = 'Historical conversation is read-only';
     button.addEventListener('click', () => {
+      // A disabled button never dispatches click, so this line firing at all proves the
+      // click reached the handler — the difference between "the button is disabled" and
+      // "the send bailed" when a quick reply appears to do nothing.
+      rendererLog('info', 'Prompt action clicked', {
+        target: context.conversation.target, action: action.id || action.label, custom: Boolean(action.custom),
+      });
       // "Something else..." doesn't have a canned reply to send - it just hands focus to
       // the composer so the user can type their own answer instead of picking one of the
       // detected options.
