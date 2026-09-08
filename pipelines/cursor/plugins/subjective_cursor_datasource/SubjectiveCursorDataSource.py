@@ -169,6 +169,8 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
                     self.working_directory = workspace
             if normalized["timeout"]:
                 self.timeout = min(normalized["timeout"], 3600)
+            if normalized.get("force_commands") is not None:
+                self.force_commands = normalized["force_commands"]
 
             resume_id = self.session_id if self.resume_session else None
             original_session = resume_id
@@ -1026,9 +1028,18 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
             ).strip()
             timeout = self._coerce_optional_int(message.get("timeout"), minimum=10)
             source_file = str(message.get("source_file") or message.get("sourceFile") or "")
+            # A per-turn override so the caller can auto-approve commands the same way it
+            # does for codex (--full-auto) and claude (acceptEdits). None means "leave the
+            # connection default alone"; True/False set --force for this turn. Without it
+            # cursor-agent's own sandbox blocks every shell command and the reply reads
+            # "Command blocked; no output".
+            force_commands = message.get("force_commands")
+            if force_commands is None:
+                force_commands = message.get("full_auto")
         else:
             prompt = str(message or "")
             source_file = ""
+            force_commands = None
         return {
             "prompt": prompt,
             "session_id": session_id,
@@ -1036,6 +1047,7 @@ class SubjectiveCursorDataSource(SubjectiveDataSource):
             "working_directory": working_directory,
             "timeout": timeout,
             "source_file": source_file,
+            "force_commands": None if force_commands is None else self._coerce_bool(force_commands),
         }
 
     def _status_result(self, status: str, *, error: str = "", version: str = "") -> dict:
