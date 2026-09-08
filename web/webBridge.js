@@ -333,6 +333,17 @@
     getConfig: () => get('/api/config'),
     saveConfig: (payload) => post('/api/save-config', payload),
 
+    // Run a shell command on the machine hosting the API — the small things that do not
+    // deserve a whole agent turn, from a phone. Off unless the backend enables it (and it
+    // refuses to enable on an unauthenticated service), so check execStatus() before
+    // offering the input. longRunning: a build can outlast the proxy's patience.
+    execStatus: () => get('/api/exec/status'),
+    exec: (command, options = {}) => post('/api/exec', {
+      command,
+      cwd: options.cwd || '',
+      timeout: options.timeout,
+    }, { longRunning: true }),
+
     // Backend-side facts. These matter more now that the API is its own origin: the
     // version stamped into this page describes whoever served the HTML, which is no
     // longer necessarily the machine answering the calls, so asking the API is the only
