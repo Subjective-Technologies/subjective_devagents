@@ -1747,17 +1747,61 @@ img.provider-avatar[src$="cursor.svg"] {
 
 /* agent "thinking" row: spinner, rotating verb, elapsed time */
 .thinking-bubble {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.thinking-headline {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  align-self: center;
   padding: 6px 12px 6px 10px;
   border: 1px solid color-mix(in srgb, var(--accent), transparent 78%);
   border-radius: 999px;
   background: #000000;
   box-shadow: 0 0 22px -14px var(--accent);
+}
+
+.thinking-steps {
+  width: 100%;
+  max-width: 520px;
+  font-size: 11.5px;
+}
+
+.thinking-steps > summary {
+  cursor: pointer;
+  list-style: none;
+  text-align: center;
+  color: color-mix(in srgb, var(--accent), var(--muted) 40%);
+  padding: 2px 0;
+  user-select: none;
+}
+
+.thinking-steps > summary::-webkit-details-marker { display: none; }
+.thinking-steps > summary::before { content: '▸ '; }
+.thinking-steps[open] > summary::before { content: '▾ '; }
+
+.thinking-step-list {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  border-left: 2px solid color-mix(in srgb, var(--accent), transparent 70%);
+  list-style: none;
   color: var(--muted);
-  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.thinking-step {
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .thinking-spinner {

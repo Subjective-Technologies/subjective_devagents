@@ -1139,16 +1139,53 @@ function renderThinkingRow(conversation) {
   const avatar = conversation.icon
     ? `<img class="avatar provider-avatar" src="${escapeHtml(conversation.icon)}" alt="${escapeHtml(providerName(conversation.provider))}">`
     : `<div class="avatar">${initials(providerName(conversation.provider))}</div>`;
+  const steps = Array.isArray(conversation.thoughts) ? conversation.thoughts : [];
   item.innerHTML = `
     ${avatar}
     <div class="thinking-bubble" role="status" aria-live="polite">
-      <span class="thinking-spinner" aria-hidden="true">${THINKING_FRAMES[0]}</span>
-      <span class="thinking-verb">${escapeHtml(conversation.progress || 'Working')}</span>
-      <span class="thinking-ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span class="thinking-elapsed">0s</span>
+      <div class="thinking-headline">
+        <span class="thinking-spinner" aria-hidden="true">${THINKING_FRAMES[0]}</span>
+        <span class="thinking-verb">${escapeHtml(conversation.progress || 'Working')}</span>
+        <span class="thinking-ellipsis" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="thinking-elapsed">0s</span>
+      </div>
+      ${renderThinkingSteps(steps)}
     </div>
   `;
   return item;
+}
+
+// The agent's status stream, kept as an accumulating list rather than a single line that
+// overwrites itself — so a turn's reasoning reads as steps you can scroll back through. The
+// latest step stays visible in the headline; the rest fold into a disclosure that remembers
+// whether the reader opened it (updateThinkingSteps preserves the `open` state on refresh).
+function renderThinkingSteps(steps) {
+  if (!steps || steps.length <= 1) return '<div class="thinking-steps" hidden></div>';
+  const rows = steps
+    .map((step) => `<li class="thinking-step">${escapeHtml(step)}</li>`)
+    .join('');
+  return `
+    <details class="thinking-steps">
+      <summary>${steps.length} steps</summary>
+      <ol class="thinking-step-list">${rows}</ol>
+    </details>
+  `;
+}
+
+function updateThinkingSteps(target, conversation) {
+  const bubble = document.querySelector(`.thinking-entry[data-target="${CSS.escape(target)}"] .thinking-bubble`);
+  if (!bubble) return;
+  const verb = bubble.querySelector('.thinking-verb');
+  if (verb) verb.textContent = conversation.progress || 'Working';
+  const existing = bubble.querySelector('.thinking-steps');
+  const wasOpen = existing && existing.tagName === 'DETAILS' && existing.open;
+  const replacement = document.createElement('div');
+  replacement.innerHTML = renderThinkingSteps(conversation.thoughts || []);
+  const next = replacement.firstElementChild;
+  if (existing && next) {
+    if (next.tagName === 'DETAILS' && wasOpen) next.open = true;
+    existing.replaceWith(next);
+  }
 }
 
 // A burst of events (an agent reply arriving as several messages, a batch of IRC joins)
@@ -2848,8 +2885,14 @@ window.subjectiveChat.onEvent((event) => {
       const conversation = conversations.get(event.target);
       if (conversation && event.text) {
         conversation.progress = event.text;
-        const row = document.querySelector(`.thinking-entry[data-target="${CSS.escape(event.target)}"] .thinking-verb`);
-        if (row) row.textContent = event.text;
+        if (!Array.isArray(conversation.thoughts)) conversation.thoughts = [];
+        // Skip a repeat of the step we already show — a stream re-sends the same status
+        // several times, and duplicated rows read as churn rather than progress.
+        if (conversation.thoughts[conversation.thoughts.length - 1] !== event.text) {
+          conversation.thoughts.push(event.text);
+          if (conversation.thoughts.length > 100) conversation.thoughts.shift();
+        }
+        updateThinkingSteps(event.target, conversation);
       }
       break;
     }
@@ -2858,7 +2901,9 @@ window.subjectiveChat.onEvent((event) => {
       if (conversation) {
         conversation.busy = event.busy;
         conversation.busySince = event.busy ? Date.now() : 0;
-        if (!event.busy) conversation.progress = '';
+        // A new turn starts its own step list; a finished turn drops the live status.
+        if (event.busy) conversation.thoughts = [];
+        else conversation.progress = '';
         rendererLog('info', event.busy ? 'LLM busy' : 'LLM idle', {
           target: event.target,
           provider: conversation.provider,
