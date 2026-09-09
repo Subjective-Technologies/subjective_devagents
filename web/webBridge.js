@@ -262,6 +262,9 @@
       }
     }
 
+    menu.appendChild(separator());
+    menu.appendChild(menuRow({ label: 'Delete chat…', onClick: () => emitLocal({ type: 'conversation-delete-request', target }) }));
+
     document.body.appendChild(menu);
     openMenu = menu;
     // Keep the menu on-screen if it was opened near the right/bottom edge.
@@ -315,6 +318,7 @@
     activateLlmConversation: (target) => post('/api/llm/activate-conversation', { target }),
     createLlmConversation: (payload) => post('/api/llm/create-conversation', payload),
     renameLlmConversation: (target, name) => post('/api/llm/rename-conversation', { target, name }),
+    deleteLlmConversation: (target) => post('/api/llm/delete-conversation', { target }),
     // LocalChats scan can take minutes on a cold archive; treat like an agent turn.
     refreshLlmHistory: () => post('/api/llm/refresh-history', {}, { longRunning: true }),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),

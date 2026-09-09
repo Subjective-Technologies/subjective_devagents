@@ -1846,6 +1846,23 @@ function beginRenameConversation(target) {
   field.addEventListener('dblclick', (event) => event.stopPropagation());
 }
 
+async function confirmDeleteConversation(target) {
+  if (!window.subjectiveChat.deleteLlmConversation) return;
+  const conversation = conversations.get(target);
+  if (!conversation || conversation.kind !== 'llm') return;
+  const label = conversation.label.replace(/^#/, '');
+  if (!window.confirm(`Delete "${label}"? This can't be undone from here.`)) return;
+  const result = await window.subjectiveChat.deleteLlmConversation(target);
+  // On success the row disappears via the broadcasted 'llm-conversation-deleted' event
+  // (same target this client is also subscribed to), same as rename applies its new label
+  // through 'llm-conversation-renamed' - one code path for every connected tab, not just
+  // whichever one clicked delete.
+  if (!result?.ok) {
+    rendererLog('error', 'Failed to delete conversation', { target, error: result?.error });
+    window.alert(result?.error || 'Could not delete this conversation.');
+  }
+}
+
 if (conversationSearch) {
   let searchReloadTimer = 0;
   conversationSearch.addEventListener('input', () => {
@@ -2924,6 +2941,17 @@ window.subjectiveChat.onEvent((event) => {
       }
       break;
     }
+    case 'conversation-delete-request':
+      confirmDeleteConversation(event.target);
+      break;
+    case 'llm-conversation-deleted':
+      if (!conversations.has(event.target)) break;
+      conversations.delete(event.target);
+      // setActiveTarget() re-renders the list itself; the non-active branch has to do it
+      // explicitly since nothing else about the view is changing.
+      if (event.target === activeTarget) setActiveTarget(config.channel);
+      else renderConversations();
+      break;
     case 'llm-choose-session':
       openSessionPicker(event);
       break;

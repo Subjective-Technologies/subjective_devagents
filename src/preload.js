@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('subjectiveChat', {
   activateLlmConversation: (target) => ipcRenderer.invoke('llm:activate-conversation', { target }),
   createLlmConversation: (payload) => ipcRenderer.invoke('llm:create-conversation', payload),
   renameLlmConversation: (target, name) => ipcRenderer.invoke('llm:rename-conversation', { target, name }),
+  deleteLlmConversation: (target) => ipcRenderer.invoke('llm:delete-conversation', { target }),
   refreshLlmHistory: () => ipcRenderer.invoke('llm:refresh-history'),
   getLlmStatus: (provider) => ipcRenderer.invoke('llm:status', { provider }),
   listProviderSessions: (provider) => ipcRenderer.invoke('llm:sessions', { provider }),

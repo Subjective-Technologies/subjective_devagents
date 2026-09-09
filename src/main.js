@@ -612,6 +612,8 @@ async function buildConversationContextMenu(target) {
 
   if (!conversation.writable) {
     items.push({ label: 'Continue as…', enabled: false });
+    items.push({ type: 'separator' });
+    items.push({ label: 'Delete chat…', click: () => emit('conversation-delete-request', { target }) });
     return Menu.buildFromTemplate(items);
   }
 
@@ -641,6 +643,8 @@ async function buildConversationContextMenu(target) {
   }
 
   items.push({ label: 'Continue as…', submenu });
+  items.push({ type: 'separator' });
+  items.push({ label: 'Delete chat…', click: () => emit('conversation-delete-request', { target }) });
   return Menu.buildFromTemplate(items);
 }
 
@@ -1380,6 +1384,21 @@ app.whenReady().then(() => {
       return result;
     } catch (error) {
       log('error', 'Failed to rename LLM conversation', { message: error.message, stack: error.stack });
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('llm:delete-conversation', (_event, payload) => {
+    try {
+      const target = String(payload?.target || '');
+      const result = llmService.deleteConversation(target);
+      if (result.ok) {
+        log('info', 'Deleted LLM conversation', { target });
+        emit('llm-conversation-deleted', { target });
+      }
+      return result;
+    } catch (error) {
+      log('error', 'Failed to delete LLM conversation', { message: error.message, stack: error.stack });
       return { ok: false, error: error.message };
     }
   });

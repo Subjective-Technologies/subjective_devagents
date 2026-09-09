@@ -373,6 +373,19 @@ function createApp(core, options = {}) {
         return { ok: false, error: error.message };
       }
     },
+    'POST /api/llm/delete-conversation': async (_query, body) => {
+      try {
+        const target = String(body?.target || '');
+        const result = core.llmService.deleteConversation(target);
+        if (result.ok) {
+          log('info', 'LLM conversation deleted', { target });
+          core._broadcast('llm-conversation-deleted', { target });
+        }
+        return result;
+      } catch (error) {
+        return { ok: false, error: error.message };
+      }
+    },
     'POST /api/llm/activate-conversation': async (_query, body) => {
       const conversation = core.llmService.findConversation(String(body?.target || ''));
       if (!conversation) return { ok: false, error: 'Conversation was not found.' };

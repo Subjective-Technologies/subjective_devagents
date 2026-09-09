@@ -373,6 +373,12 @@ class LlmService {
     // conversation records so a rename survives across history re-imports (which rebuild
     // read-only conversations from disk on every listing).
     this.labelOverrides = saved.labelOverrides || {};
+    // "Delete chat" on a read-only history import can't remove the CLI's own export file
+    // (and shouldn't - that's the actual codex/claude/cursor history, not ours to destroy),
+    // so deletion is a standing hide-list instead. Local conversations are also added here
+    // as a defensive no-op: they're already spliced out of this.local, this just guarantees
+    // a target string can never resurface even if some future path re-derives the same one.
+    this.hiddenTargets = new Set(saved.hiddenTargets || []);
     if (saved.migrated) {
       const backupPath = `${this.statePath}.v1-backup`;
       if (fs.existsSync(this.statePath) && !fs.existsSync(backupPath)) {
@@ -385,7 +391,7 @@ class LlmService {
   _loadState() {
     const payload = safeJson(this.statePath);
     if (!payload || !Array.isArray(payload.conversations)) {
-      return { conversations: [], activeTargets: [], migrated: false, labelOverrides: {} };
+      return { conversations: [], activeTargets: [], migrated: false, labelOverrides: {}, hiddenTargets: [] };
     }
     const oldVersion = Number(payload.version || 1);
     let migrated = false;
@@ -405,7 +411,8 @@ class LlmService {
       conversations: conversations.map((item) => this._normalizeConversation(item, 'local')).filter(Boolean),
       activeTargets: Array.isArray(payload.activeTargets) ? payload.activeTargets.map(String) : [],
       migrated,
-      labelOverrides: (payload.labelOverrides && typeof payload.labelOverrides === 'object') ? { ...payload.labelOverrides } : {}
+      labelOverrides: (payload.labelOverrides && typeof payload.labelOverrides === 'object') ? { ...payload.labelOverrides } : {},
+      hiddenTargets: Array.isArray(payload.hiddenTargets) ? payload.hiddenTargets.map(String) : []
     };
   }
 
@@ -417,7 +424,8 @@ class LlmService {
       version: STATE_VERSION,
       conversations: this.local,
       activeTargets: [...this.activeTargets].slice(-20),
-      labelOverrides: this.labelOverrides
+      labelOverrides: this.labelOverrides,
+      hiddenTargets: [...this.hiddenTargets]
     }, null, 2)}\n`);
     fs.renameSync(temporary, this.statePath);
   }
@@ -619,6 +627,7 @@ class LlmService {
       conversation.sortAt || conversation.updatedAt || conversation.createdAt || 0
     );
     return [...deduplicated.values()]
+      .filter((conversation) => !this.hiddenTargets.has(conversation.target))
       .sort((left, right) => lastActivity(right) - lastActivity(left));
   }
 
@@ -689,6 +698,22 @@ class LlmService {
       previous: local ? undefined : 'override-only'
     });
     return { ok: true, conversation: this.findConversation(key) };
+  }
+
+  // "Delete chat": local conversations are removed outright (it's just our own state
+  // file); a read-only history import instead goes on the standing hide-list, since it is
+  // rebuilt from the CLI's own export on every listing and that export is never touched.
+  deleteConversation(target) {
+    const key = String(target || '');
+    if (!key) return { ok: false, error: 'Missing conversation target.' };
+    const index = this.local.findIndex((conversation) => conversation.target === key);
+    if (index !== -1) this.local.splice(index, 1);
+    this.hiddenTargets.add(key);
+    delete this.labelOverrides[key];
+    this.activeTargets.delete(key);
+    this._saveState();
+    this.log('info', 'LLM conversation deleted', { target: key, wasLocal: index !== -1 });
+    return { ok: true };
   }
 
   _runtimeFor(provider) {
