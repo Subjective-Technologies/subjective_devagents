@@ -232,3 +232,25 @@ test('no token configured still sends a clean request', async () => {
   assert.strictEqual(calls[0].headers['X-DevAgents-Token'], undefined);
   assert.ok(!sockets[0].includes('token='));
 });
+
+test('meta wins over stored — request goes to the meta origin', async () => {
+  const { context, calls } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://devagents-api.subjectivetechnologies.com:8080',
+    stored: 'https://stale-old-origin.example',
+  });
+  await context.window.subjectiveChat.getConfig();
+  assert.ok(
+    calls[0].url.startsWith('https://devagents-api.subjectivetechnologies.com:8080/api/'),
+    `stale stored base shadowed the meta tag: ${calls[0].url}`,
+  );
+});
+
+test('?api= still overrides even when a meta tag is present', async () => {
+  const { context, calls, storage } = loadBridge(BRIDGE_SOURCE, {
+    metaApi: 'https://devagents-api.subjectivetechnologies.com:8080',
+    search: '?api=http://100.92.112.62:8787',
+  });
+  await context.window.subjectiveChat.getConfig();
+  assert.strictEqual(calls[0].url, 'http://100.92.112.62:8787/api/config');
+  assert.strictEqual(storage.get('devagents.apiBase'), 'http://100.92.112.62:8787');
+});

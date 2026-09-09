@@ -14,24 +14,37 @@
 
   // --- where the backend lives ------------------------------------------------------------
   // Every request and the event socket resolve against this one value, so the UI never
-  // talks to whichever origin happened to serve the page. Order: ?api= (for probing a
-  // different backend without a redeploy), then a localStorage pin, then the <meta> tag
-  // index.html ships, then same-origin for a plain local checkout.
+  // talks to whichever origin happened to serve the page. Order:
+  //   1. ?api=  — an explicit override for probing a different backend; persisted so a
+  //      reload keeps it, and cleared with ?api= (empty) to drop back to the default.
+  //   2. the <meta> tag index.html ships — the deployment's authoritative backend.
+  //   3. a persisted ?api= override, only when no meta tag is present (a local checkout).
+  //   4. same-origin.
+  //
+  // The meta tag deliberately beats the persisted value: an old localStorage pin left over
+  // from earlier testing must not silently shadow the deployment's real API origin, which
+  // sent every call to the wrong host and looked like "clicking does nothing".
   //
   // Whatever origin this resolves to must also appear in index.html's CSP connect-src, or
   // the browser blocks the call before it is sent.
   const API_BASE = (function resolveApiBase() {
     const clean = (value) => String(value || '').trim().replace(/\/+$/, '');
-    let base = '';
+    let override = '';
+    let stored = '';
     try {
-      base = clean(new URLSearchParams(location.search).get('api'));
-      if (base) localStorage.setItem('devagents.apiBase', base);
-      if (!base) base = clean(localStorage.getItem('devagents.apiBase'));
+      const param = new URLSearchParams(location.search).get('api');
+      if (param !== null) {
+        // ?api= present (even empty) is an explicit instruction: set or clear the pin.
+        override = clean(param);
+        if (override) localStorage.setItem('devagents.apiBase', override);
+        else localStorage.removeItem('devagents.apiBase');
+      }
+      stored = clean(localStorage.getItem('devagents.apiBase'));
     } catch (_error) {
       // A sandboxed iframe throws on storage/search; fall through to the meta tag.
     }
-    if (!base) base = clean(document.querySelector('meta[name="devagents-api"]')?.content);
-    return base || '';
+    const meta = clean(document.querySelector('meta[name="devagents-api"]')?.content);
+    return override || meta || stored || '';
   }());
 
   // Absolute when an API base is configured, relative when it is not - so the same bundle
