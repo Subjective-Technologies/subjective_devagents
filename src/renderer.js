@@ -1404,34 +1404,67 @@ async function sendAgentAction(conversation, reply, controls) {
   }
 }
 
+// Normalize the backend's promptOptions (the authoritative source) into the button model
+// this renderer draws. Falls back to the client-side prose heuristic only when the backend
+// sent nothing — an older server, or a message that predates this field.
+function resolvePromptActions(data) {
+  const backend = data.promptOptions;
+  if (backend && Array.isArray(backend.options) && backend.options.length) {
+    const actions = backend.options.map((option, index) => ({
+      id: option.id || `opt-${index}`,
+      label: option.label || option.reply || `Option ${index + 1}`,
+      description: option.description || '',
+      reply: option.reply,
+      primary: index === 0,
+    }));
+    if (backend.allows_other) {
+      actions.push({ id: 'other', label: 'Other…', description: backend.other_hint || 'Answer in your own words', custom: true });
+    }
+    return actions;
+  }
+  return richMessages.detectPromptActions(data.text);
+}
+
 function appendPromptActions(content, data, context) {
   if (!data.assistant || !context.actionable) return;
-  const actions = richMessages.detectPromptActions(data.text);
+  const actions = resolvePromptActions(data);
   if (!actions.length) return;
   const controls = document.createElement('div');
   controls.className = 'prompt-actions';
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Answer agent question');
+  const readOnly = !context.conversation.writable;
+  const busy = Boolean(context.conversation.busy);
   for (const action of actions) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = action.primary ? 'prompt-action primary' : 'prompt-action';
     if (action.custom) button.classList.add('prompt-action-custom');
-    button.textContent = action.label;
-    button.disabled = !context.conversation.writable || Boolean(context.conversation.busy);
-    if (!context.conversation.writable) button.title = 'Historical conversation is read-only';
+    // Label on top, the backend's description underneath — so the user sees what each
+    // choice means, not just a bare word.
+    const label = document.createElement('span');
+    label.className = 'prompt-action-label';
+    label.textContent = action.label;
+    button.appendChild(label);
+    if (action.description) {
+      const description = document.createElement('span');
+      description.className = 'prompt-action-description';
+      description.textContent = action.description;
+      button.appendChild(description);
+    }
+    button.disabled = readOnly || busy;
+    if (readOnly) button.title = 'Historical conversation is read-only';
     button.addEventListener('click', () => {
-      // A disabled button never dispatches click, so this line firing at all proves the
-      // click reached the handler — the difference between "the button is disabled" and
-      // "the send bailed" when a quick reply appears to do nothing.
       rendererLog('info', 'Prompt action clicked', {
         target: context.conversation.target, action: action.id || action.label, custom: Boolean(action.custom),
       });
-      // "Something else..." doesn't have a canned reply to send - it just hands focus to
-      // the composer so the user can type their own answer instead of picking one of the
-      // detected options.
+      // "Other…" has no canned reply: hand focus to the composer so the user writes their
+      // own answer, which sends as the next turn like any typed message.
       if (action.custom) {
-        if (context.conversation.target === activeTarget) input.focus();
+        if (context.conversation.target === activeTarget && input) {
+          input.focus();
+          input.placeholder = 'Type your answer…';
+        }
         return;
       }
       sendAgentAction(context.conversation, action.reply, controls);
@@ -2361,7 +2394,10 @@ function llmMessageEvent(message, conversation) {
       time: message.time,
       mine: !assistant,
       icon: assistant ? conversation.icon : '',
-      assistant
+      assistant,
+      // The backend's structured choices for this message, when it is an assistant question.
+      // appendPromptActions prefers this over parsing the prose itself.
+      promptOptions: message.promptOptions || null
     }
   };
 }

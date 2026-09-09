@@ -48,14 +48,18 @@ function bootRenderer() {
 
 const tick = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function renderAssistantQuestion(harness, { provider = 'claude', writable = true, text = 'I can do that. Shall I proceed?' } = {}) {
+async function renderAssistantQuestion(harness, {
+  provider = 'claude', writable = true, text = 'I can do that. Shall I proceed?', promptOptions = null,
+} = {}) {
   const { window, state } = harness;
   assert.ok(state.eventHandler, 'renderer never subscribed to the event stream');
   const target = `llm:${provider}:local:probe`;
   state.eventHandler({ type: 'llm-conversation', conversation: { target, label: 'probe', kind: 'llm', provider, writable, messages: [], icon: '', events: [] } });
   vm.runInContext(`setActiveTarget(${JSON.stringify(target)})`, harness.dom.getInternalVMContext());
   state.eventHandler({ type: 'llm-busy', target, busy: false });
-  state.eventHandler({ type: 'llm-message', target, provider, message: { role: 'assistant', text, time: Date.now() } });
+  const message = { role: 'assistant', text, time: Date.now() };
+  if (promptOptions) message.promptOptions = promptOptions;
+  state.eventHandler({ type: 'llm-message', target, provider, message });
   await tick(90);
   return { target, buttons: [...window.document.querySelectorAll('.prompt-action')] };
 }
@@ -111,4 +115,78 @@ test('a read-only conversation disables the buttons so no send fires', async () 
   yes.dispatchEvent(new harness.window.MouseEvent('click', { bubbles: true, cancelable: true }));
   await tick(40);
   assert.strictEqual(harness.calls.length, 0, 'a disabled button must not send');
+});
+
+
+test('backend options render with descriptions and click sends the exact reply', async () => {
+  // The authoritative path: the backend supplies structured options, the UI shows label +
+  // description for each, and clicking sends that option's reply verbatim.
+  const harness = bootRenderer();
+  await tick(80);
+  const { target, buttons } = await renderAssistantQuestion(harness, {
+    text: 'Here are the options. Which — A, B, or C?',
+    promptOptions: {
+      asks_question: true,
+      kind: 'enumerated',
+      allows_other: true,
+      other_hint: 'Answer in your own words',
+      options: [
+        { id: 'choice-a', label: 'Option A', description: 'Fast but risky', reply: 'A' },
+        { id: 'choice-b', label: 'Option B', description: 'Safe but slow', reply: 'B' },
+        { id: 'choice-c', label: 'Option C', description: 'A balance', reply: 'C' },
+      ],
+    },
+  });
+
+  const labels = buttons.map((b) => b.querySelector('.prompt-action-label')?.textContent.trim() || b.textContent.trim());
+  assert.deepStrictEqual(labels, ['Option A', 'Option B', 'Option C', 'Other…']);
+  // Descriptions are shown, from the backend.
+  const descriptions = buttons.slice(0, 3).map((b) => b.querySelector('.prompt-action-description')?.textContent.trim());
+  assert.deepStrictEqual(descriptions, ['Fast but risky', 'Safe but slow', 'A balance']);
+
+  const optionB = buttons.find((b) => /Option B/.test(b.textContent));
+  optionB.dispatchEvent(new harness.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await tick(60);
+  assert.deepStrictEqual(harness.calls[0], { target, text: 'B' }, 'clicking Option B must send its reply "B"');
+});
+
+
+test('the Other option sends nothing and focuses the composer', async () => {
+  const harness = bootRenderer();
+  await tick(80);
+  const { buttons } = await renderAssistantQuestion(harness, {
+    text: 'Shall I proceed?',
+    promptOptions: {
+      asks_question: true, kind: 'yes_no', allows_other: true, other_hint: 'Answer in your own words',
+      options: [
+        { id: 'yes', label: 'Yes', description: 'Proceed.', reply: 'Yes, proceed.' },
+        { id: 'no', label: 'No', description: 'Do not proceed.', reply: 'No, do not proceed.' },
+      ],
+    },
+  });
+  const other = buttons.find((b) => /Other/.test(b.textContent));
+  assert.ok(other, 'an Other option should be present when allows_other is set');
+  other.dispatchEvent(new harness.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await tick(40);
+  assert.strictEqual(harness.calls.length, 0, 'Other must not send a canned reply');
+});
+
+
+test('backend options win over the prose heuristic', async () => {
+  // The prose says "keep or revert" (heuristic would produce keep/revert), but the backend
+  // says yes/no — the backend must win.
+  const harness = bootRenderer();
+  await tick(80);
+  const { buttons } = await renderAssistantQuestion(harness, {
+    text: 'Should I keep the code or revert the changes?',
+    promptOptions: {
+      asks_question: true, kind: 'yes_no', allows_other: false,
+      options: [
+        { id: 'yes', label: 'Yes', description: 'Proceed.', reply: 'Yes, proceed.' },
+        { id: 'no', label: 'No', description: 'Stop.', reply: 'No, do not proceed.' },
+      ],
+    },
+  });
+  const labels = buttons.map((b) => b.querySelector('.prompt-action-label')?.textContent.trim());
+  assert.deepStrictEqual(labels, ['Yes', 'No'], 'backend options should override the prose heuristic');
 });

@@ -1418,6 +1418,38 @@ img.provider-avatar[src$="cursor.svg"] {
   transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 160ms ease;
 }
 
+/* An option carrying a description reads as a small card — label over gloss, left-aligned,
+   so the choices the agent offered are legible rather than cryptic one-word pills. */
+.prompt-action:has(.prompt-action-description) {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border-radius: 12px;
+  padding: 7px 12px;
+  text-align: left;
+  max-width: 340px;
+}
+
+.prompt-action-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.prompt-action-description {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.prompt-action:hover:not(:disabled) .prompt-action-description {
+  color: #cdd8ea;
+}
+
 .code-actions button:hover:not(:disabled),
 .prompt-action:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--code-neon, var(--accent)), transparent 25%);
