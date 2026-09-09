@@ -1472,6 +1472,13 @@ img.provider-avatar[src$="cursor.svg"] {
   box-shadow: 0 0 16px -6px var(--accent);
 }
 
+/* The primary button has a light background, so the description must be dark too — the
+   default muted grey was invisible on it. */
+.prompt-action.primary .prompt-action-description,
+.prompt-action.primary:hover:not(:disabled) .prompt-action-description {
+  color: #1a1f2b;
+}
+
 .code-actions .code-run:hover:not(:disabled),
 .prompt-action.primary:hover:not(:disabled) {
   background: var(--accent);

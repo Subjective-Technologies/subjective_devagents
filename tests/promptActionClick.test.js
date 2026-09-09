@@ -190,3 +190,35 @@ test('backend options win over the prose heuristic', async () => {
   const labels = buttons.map((b) => b.querySelector('.prompt-action-label')?.textContent.trim());
   assert.deepStrictEqual(labels, ['Yes', 'No'], 'backend options should override the prose heuristic');
 });
+
+
+test('a stale stuck-busy is cleared by the server-authoritative hydrate, re-enabling the button', async () => {
+  // Reproduces the live wedge: a dropped socket ate llm-busy:false, so the conversation is
+  // stuck busy and the buttons render disabled. Opening/hydrating it with the server saying
+  // busy:false must re-enable them.
+  const harness = bootRenderer();
+  await tick(80);
+  const { window, state } = harness;
+  const target = 'llm:claude:local:wedged';
+  state.eventHandler({ type: 'llm-conversation', conversation: { target, label: 'wedged', kind: 'llm', provider: 'claude', writable: true, messages: [], icon: '', events: [] } });
+  vm.runInContext(`setActiveTarget(${JSON.stringify(target)})`, harness.dom.getInternalVMContext());
+  // Simulate the wedge: busy true, then the reply arrives but no llm-busy:false follows.
+  state.eventHandler({ type: 'llm-busy', target, busy: true });
+  state.eventHandler({ type: 'llm-message', target, provider: 'claude', message: { role: 'assistant', text: 'Shall I proceed?', time: Date.now() } });
+  await tick(80);
+  let yes = [...window.document.querySelectorAll('.prompt-action')].find((b) => /^yes/i.test(b.textContent.trim()));
+  assert.ok(yes && yes.disabled, 'precondition: the button should be disabled while stuck busy');
+
+  // Server-authoritative hydrate says the turn is not actually running.
+  vm.runInContext(
+    `upsertLlmConversation(${JSON.stringify({ target, label: 'wedged', provider: 'claude', writable: true, busy: false, loaded: true, messages: [{ role: 'assistant', text: 'Shall I proceed?', time: 2 }] })})`,
+    harness.dom.getInternalVMContext(),
+  );
+  await tick(80);
+  yes = [...window.document.querySelectorAll('.prompt-action')].find((b) => /^yes/i.test(b.textContent.trim()));
+  assert.ok(yes && !yes.disabled, 'the button should be re-enabled after the authoritative busy:false');
+  yes.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await tick(60);
+  assert.strictEqual(harness.calls.length, 1, 'the recovered button must send when clicked');
+  assert.strictEqual(harness.calls[0].text, 'Yes, proceed.');
+});

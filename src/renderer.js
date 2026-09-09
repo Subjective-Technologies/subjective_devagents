@@ -2448,6 +2448,10 @@ function llmListMetadata(payload) {
 function upsertLlmConversation(payload) {
   if (!payload?.target) return null;
   const existing = conversations.get(payload.target);
+  // The server sends the authoritative busy state on hydrate. Apply it before deciding
+  // anything else: a stale busy stuck true (from a dropped socket that ate llm-busy:false)
+  // would otherwise both wedge the UI and block this fresh transcript from rendering.
+  if (existing && typeof payload.busy === 'boolean') existing.busy = payload.busy;
   const live = Boolean(existing?.busy || existing?.pendingEchoes?.length || existing?.loading);
   const replaceEvents = payload.loaded !== false
     && Array.isArray(payload.messages)
@@ -2472,6 +2476,7 @@ function upsertLlmConversation(payload) {
     }
     conversation.hydrated = true;
   }
+  if (typeof payload.busy === 'boolean') conversation.busy = payload.busy;
   if (isTargetOnScreen(conversation.target) && (replaceEvents || !existing)) {
     renderTranscript();
     renderUsers();
@@ -2865,6 +2870,18 @@ window.addEventListener('resize', () => {
 
 window.subjectiveChat.onEvent((event) => {
   switch (event.type) {
+    case 'socket-reconnected': {
+      // The socket dropped and came back; while it was down we may have missed the agent's
+      // reply and the llm-busy:false that re-enables the UI. Re-hydrate the open chat from
+      // the server (authoritative busy + any messages that landed) so the view catches up.
+      const open = conversations.get(activeTarget);
+      if (open?.kind === 'llm' && window.subjectiveChat.getLlmConversation) {
+        window.subjectiveChat.getLlmConversation(activeTarget).then((loaded) => {
+          if (loaded?.ok) upsertLlmConversation(loaded.conversation);
+        }).catch(() => {});
+      }
+      break;
+    }
     case 'status':
       setStatus(event.state, event.text);
       break;

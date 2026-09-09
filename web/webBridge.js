@@ -121,8 +121,16 @@
     return API_TOKEN ? `${base}?token=${encodeURIComponent(API_TOKEN)}` : base;
   }
 
+  let reconnectDelay = 1000;
   function connectSocket() {
     socket = new WebSocket(socketUrl());
+    socket.addEventListener('open', () => {
+      reconnectDelay = 1000;  // reset backoff once a connection succeeds
+      // A dropped socket may have swallowed an llm-busy:false, leaving the UI wedged
+      // (disabled buttons/composer). Tell the renderer a fresh connection is up so it can
+      // resync; the server re-asserts real busy state on the next event.
+      for (const listener of listeners) listener({ type: 'socket-reconnected' });
+    });
     socket.addEventListener('message', (message) => {
       let event;
       try {
@@ -130,12 +138,17 @@
       } catch (_error) {
         return;
       }
+      // Heartbeat frames only keep the proxy from closing an idle socket; nothing renders.
+      if (event && event.type === 'ping') return;
       for (const listener of listeners) listener(event);
     });
     socket.addEventListener('close', () => {
       socket = null;
       clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connectSocket, 2000);
+      // Exponential backoff (capped) instead of hammering every 2s when the socket cannot
+      // establish — the old fixed retry produced dozens of failures a minute.
+      reconnectTimer = setTimeout(connectSocket, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     });
     socket.addEventListener('error', () => socket && socket.close());
   }
