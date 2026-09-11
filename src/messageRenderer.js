@@ -242,6 +242,7 @@
       '<button type="button" data-code-action="wrap" title="Toggle soft wrap">Wrap</button>',
       '<button type="button" data-code-action="copy">Copy</button>',
       command ? '<button type="button" class="code-run" data-code-action="run">Run</button>' : '',
+      command ? '<button type="button" class="code-run-direct" data-code-action="run-direct" title="Run this command directly on the server — no agent turn, no model involved">Run with no agent</button>' : '',
       '</div>',
       '</header>',
       `<pre><code class="hljs${languageClass}">${highlightedCode(code, language)}</code></pre>`,

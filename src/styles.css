@@ -1493,6 +1493,20 @@ img.provider-avatar[src$="cursor.svg"] {
   box-shadow: none;
 }
 
+/* Deliberately not the theme accent color like .code-run: this bypasses the agent and runs
+   directly on the host, a meaningfully different (and riskier) action that should not read
+   as visually interchangeable with the agent-mediated Run button. */
+.code-actions .code-run-direct {
+  border-color: #d98c2b;
+  color: #d98c2b;
+}
+
+.code-actions .code-run-direct:hover:not(:disabled) {
+  background: #d98c2b;
+  color: #080a0f;
+  box-shadow: 0 0 16px -6px #d98c2b;
+}
+
 /* "Something else..." - hands off to the composer instead of sending a canned reply, so
    it's styled as an outline/dashed pill to read as distinct from the real answer options. */
 .prompt-action.prompt-action-custom {

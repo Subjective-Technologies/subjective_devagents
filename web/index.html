@@ -6,7 +6,7 @@
   Check: View Source, document.documentElement.dataset.devagentsVersion,
   response header X-DevAgents-Version, or GET /api/version
 -->
-<html lang="en" data-devagents-version="DEVAGENTS_DEPLOY_VERSION">
+<html lang="en" data-devagents-version="DEVAGENTS_DEPLOY_VERSION" data-devagents-instance="DEVAGENTS_INSTANCE_ID">
   <head>
     <meta charset="UTF-8">
     <meta name="devagents-version" content="DEVAGENTS_DEPLOY_VERSION">
@@ -25,12 +25,16 @@
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
          the whole set. Keep in sync with WEB_UI_RELEASE in src/webServer.js. -->
-    <link rel="stylesheet" href="/styles.css?v=20260906k">
+    <link rel="stylesheet" href="/styles.css?v=20260911b">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
     <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
-    <link rel="stylesheet" href="/layout.css?v=20260906k">
+    <link rel="stylesheet" href="/layout.css?v=20260911a">
   </head>
   <body data-accent="gold">
+    <div id="versionBanner" class="version-banner" hidden role="status">
+      <span>A new version of this app is available.</span>
+      <button type="button" id="versionBannerReload">Reload</button>
+    </div>
     <main class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -102,6 +106,8 @@
             <section class="panel" id="conversationsPanel">
               <div class="panel-head">
                 <button type="button" id="collapseChatsButton" class="panel-collapse" title="Hide chats" aria-expanded="true" aria-controls="conversationBrowser">Chats</button>
+                <button type="button" id="importLlmButton" class="panel-add" title="Import chats from a zip of exported chat JSON files" aria-label="Import chats">⇪</button>
+                <input type="file" id="importLlmFileInput" accept=".zip" hidden>
                 <button type="button" id="createLlmButton" class="panel-add" title="New agent conversation" aria-label="New agent conversation">+</button>
               </div>
               <div id="conversationBrowser" class="conversation-browser">
@@ -262,8 +268,8 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js?v=20260909a"></script>
-    <script src="/messageRenderer.js?v=20260901e"></script>
-    <script src="/renderer.js?v=20260909a"></script>
+    <script src="/webBridge.js?v=20260911a"></script>
+    <script src="/messageRenderer.js?v=20260911b"></script>
+    <script src="/renderer.js?v=20260911b"></script>
   </body>
 </html>

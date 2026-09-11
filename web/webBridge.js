@@ -84,12 +84,7 @@
 
   window.subjectiveChatApiBase = API_BASE;
 
-  async function api(method, path, body, options = {}) {
-    const response = await fetch(apiUrl(path), {
-      method,
-      headers: authHeaders(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
-      body: body !== undefined ? JSON.stringify(body) : undefined
-    });
+  async function handleApiResponse(response, options = {}) {
     // The backend rejected the shared secret. Say so plainly: without this the UI just
     // renders an empty chat list and looks broken rather than locked.
     if (response.status === 401) {
@@ -111,6 +106,24 @@
     } catch (_error) {
       return { ok: false, error: 'Malformed server response.' };
     }
+  }
+
+  async function api(method, path, body, options = {}) {
+    const response = await fetch(apiUrl(path), {
+      method,
+      headers: authHeaders(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+    return handleApiResponse(response, options);
+  }
+
+  // Multipart upload — no Content-Type header, so the browser sets it (with the
+  // boundary) itself. Kept separate from api() because that one always JSON-encodes.
+  async function postFile(path, file, options = {}) {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+    const response = await fetch(apiUrl(path), { method: 'POST', headers: authHeaders(), body: formData });
+    return handleApiResponse(response, options);
   }
 
   const get = (path) => api('GET', path);
@@ -334,6 +347,9 @@
     deleteLlmConversation: (target) => post('/api/llm/delete-conversation', { target }),
     // LocalChats scan can take minutes on a cold archive; treat like an agent turn.
     refreshLlmHistory: () => post('/api/llm/refresh-history', {}, { longRunning: true }),
+    // A zip of another workstation's exported chat JSON files — no agent or sync setup
+    // needed on that machine, just its export folder zipped up.
+    importLlmChats: (file) => postFile('/api/llm/import-chats', file, { longRunning: true }),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),
     listProviderSessions: (provider) => get(`/api/llm/sessions?provider=${encodeURIComponent(provider || '')}`),
     // The only request that routinely runs for minutes: one agent turn.

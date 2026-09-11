@@ -52,6 +52,8 @@ const usersPane = document.getElementById('usersPane');
 const topActions = document.getElementById('topActions');
 const topbarMeta = document.getElementById('topbarMeta');
 const createLlmButton = document.getElementById('createLlmButton');
+const importLlmButton = document.getElementById('importLlmButton');
+const importLlmFileInput = document.getElementById('importLlmFileInput');
 const llmDialog = document.getElementById('llmDialog');
 const llmForm = document.getElementById('llmForm');
 const llmCloseButton = document.getElementById('llmCloseButton');
@@ -1014,6 +1016,26 @@ function setActiveTarget(target, options = {}) {
   if (conversation.kind === 'llm' && window.subjectiveChat.activateLlmConversation) {
     window.subjectiveChat.activateLlmConversation(target).then((result) => {
       if (result?.channel) identityLabel.textContent = `${conversation.provider} · ${result.channel} · ${conversation.workspace}`;
+      // Authoritative recovery for a conversation whose buttons got stuck disabled by a
+      // missed llm-busy:false (e.g. a dropped websocket mid-turn). Unlike the one-time
+      // hydrate fetch above (gated on !conversation.hydrated), activation runs every time
+      // this conversation is opened, so this is what actually self-heals it for as long as
+      // the tab stays open, not just the first time ever.
+      if (typeof result?.busy === 'boolean' && result.busy !== conversation.busy) {
+        conversation.busy = result.busy;
+        conversation.busySince = result.busy ? (conversation.busySince || Date.now()) : 0;
+        if (!result.busy) conversation.progress = '';
+        if (target === activeTarget) {
+          if (input) {
+            input.disabled = conversation.kind === 'llm' && (!conversation.writable || conversation.busy);
+            input.placeholder = conversation.busy
+              ? `${providerName(conversation.provider)} is working…`
+              : `Message ${providerName(conversation.provider)}`;
+          }
+          renderTranscript();
+        }
+        renderConversations();
+      }
     });
   }
 }
@@ -1333,10 +1355,14 @@ function commandDialog() {
   return commandConfirmationDialog;
 }
 
-function confirmAgentCommand(command, conversation) {
+function confirmAgentCommand(command, conversation, options = {}) {
   const dialog = commandDialog();
-  dialog.querySelector('h3').textContent = `Run with ${conversation.provider || 'agent'}?`;
-  dialog.querySelector('.command-confirm-copy').textContent = `Workspace: ${conversation.workspace || 'current workspace'}`;
+  dialog.querySelector('h3').textContent = options.direct
+    ? 'Run directly on the server?'
+    : `Run with ${conversation.provider || 'agent'}?`;
+  dialog.querySelector('.command-confirm-copy').textContent = options.direct
+    ? 'No agent is involved — this runs immediately on the machine hosting this service.'
+    : `Workspace: ${conversation.workspace || 'current workspace'}`;
   dialog.querySelector('code').textContent = command;
   return new Promise((resolve) => {
     let settled = false;
@@ -1511,6 +1537,41 @@ function wireRichMessage(content, data, context) {
           codeButton.textContent = 'Copy failed';
         }
         window.setTimeout(() => { codeButton.textContent = original; }, 1400);
+        return;
+      }
+      if (codeButton.dataset.codeAction === 'run-direct') {
+        if (!window.subjectiveChat.exec) return;
+        const target = context.conversation.target;
+        try {
+          if (!await confirmAgentCommand(code, context.conversation, { direct: true })) return;
+          const original = codeButton.textContent;
+          codeButton.disabled = true;
+          codeButton.textContent = 'Running…';
+          try {
+            const result = await window.subjectiveChat.exec(code);
+            if (!result?.ok) {
+              addEvent('system', { target, text: result?.error || 'Command execution failed.' });
+              return;
+            }
+            const output = [result.stdout, result.stderr].filter((part) => String(part || '').trim()).join('\n').trim();
+            addEvent('code', {
+              target,
+              from: 'Server (no agent)',
+              code: output || '(no output)',
+              language: 'text',
+              label: `exit ${result.exit_code}${result.truncated ? ' · truncated' : ''}`,
+              time: Date.now(),
+              icon: '',
+              assistant: false
+            });
+          } finally {
+            codeButton.disabled = false;
+            codeButton.textContent = original;
+          }
+        } catch (error) {
+          rendererLog('error', 'Direct exec failed', { message: error.message });
+          addEvent('system', { target, text: `Run failed: ${error.message}` });
+        }
         return;
       }
       if (!context.conversation.writable || context.conversation.busy) return;
@@ -2383,6 +2444,36 @@ sendImageButton.addEventListener('click', () => {
   window.subjectiveChat.sendImage(activeTarget);
 });
 
+// Only the web bundle ships #versionBanner (src/index.html, the Electron shell, does not),
+// and only it can go stale like this: a deploy lands while the tab stays open, and the
+// page keeps running JS from before the deploy no matter what the server now serves,
+// since a file changing on disk does not re-run already-loaded script in an open tab.
+(function initVersionWatcher() {
+  const banner = document.getElementById('versionBanner');
+  const reloadButton = document.getElementById('versionBannerReload');
+  if (!banner || !reloadButton || !window.subjectiveChat.getVersion) return;
+  const pageVersion = String(document.documentElement.dataset.devagentsVersion || '');
+  const pageInstance = String(document.documentElement.dataset.devagentsInstance || '');
+  if (!pageVersion || pageVersion === 'DEVAGENTS_DEPLOY_VERSION') return; // unstamped local checkout
+  reloadButton.addEventListener('click', () => window.location.reload());
+  const check = async () => {
+    try {
+      const result = await window.subjectiveChat.getVersion();
+      if (!result?.ok) return;
+      // version is a git SHA - unchanged across a plain restart with no new commit, which
+      // is most restarts during active development. instanceId is fresh every process
+      // start regardless, so it is what actually catches "this tab predates the restart".
+      const versionChanged = result.version && result.version !== pageVersion;
+      const instanceChanged = result.instanceId && pageInstance && result.instanceId !== pageInstance;
+      if (versionChanged || instanceChanged) banner.hidden = false;
+    } catch (_error) {
+      // A failed check is not itself news - stay quiet rather than nag on a flaky connection.
+    }
+  };
+  check();
+  window.setInterval(check, 2 * 60 * 1000);
+}());
+
 const PROVIDER_DISPLAY_NAMES = Object.freeze({
   chatgpt: 'ChatGPT',
   claude: 'Claude',
@@ -2787,6 +2878,36 @@ async function openLlmDialog() {
   llmDialog.showModal ? llmDialog.showModal() : llmDialog.setAttribute('open', '');
   llmNameInput.focus();
   await refreshLlmStatus();
+}
+
+async function importLlmChatsFromZip(file) {
+  if (!window.subjectiveChat.importLlmChats || !file) return;
+  const originalTitle = importLlmButton.title;
+  importLlmButton.disabled = true;
+  importLlmButton.title = 'Importing chats…';
+  try {
+    const result = await window.subjectiveChat.importLlmChats(file);
+    if (!result?.ok) {
+      rendererLog('error', 'Failed to import chats', { error: result?.error });
+      window.alert(result?.error || 'Could not import chats from that zip.');
+      return;
+    }
+    await loadLlmConversations();
+    const errorNote = result.errors?.length ? ` (${result.errors.length} file(s) could not be read)` : '';
+    window.alert(`Imported ${result.imported} chat(s), skipped ${result.skipped} already-known chat(s).${errorNote}`);
+  } finally {
+    importLlmButton.disabled = false;
+    importLlmButton.title = originalTitle;
+  }
+}
+
+if (importLlmButton && importLlmFileInput) {
+  importLlmButton.addEventListener('click', () => importLlmFileInput.click());
+  importLlmFileInput.addEventListener('change', async () => {
+    const file = importLlmFileInput.files?.[0];
+    importLlmFileInput.value = '';
+    if (file) await importLlmChatsFromZip(file);
+  });
 }
 
 if (createLlmButton) createLlmButton.addEventListener('click', openLlmDialog);
