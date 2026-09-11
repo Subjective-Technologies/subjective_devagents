@@ -5,20 +5,40 @@
     <!-- Must match index.html: this page drives a pty through the same backend, and a
          cross-origin call is blocked by CSP unless that origin is named here. -->
     <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://devagents-api.subjectivetechnologies.com:8080; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
+    <meta name="referrer" content="no-referrer">
+    <link rel="stylesheet" href="/auth.css?v=20260911auth1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Continue as…</title>
     <link rel="stylesheet" href="/assets/vendor/xterm.css">
     <link rel="stylesheet" href="/terminal.css">
   </head>
-  <body>
-    <div class="terminal-shell">
+  <body data-page="terminal">
+    <section id="ownerAuthPanel" class="owner-auth-panel" aria-labelledby="ownerAuthTitle">
+      <div class="owner-auth-card">
+        <h1 id="ownerAuthTitle">Sign in to DevAgents</h1>
+        <p id="ownerAuthStatus" role="status" aria-live="polite">Checking sign-in…</p>
+        <button id="ownerGoogleSignIn" type="button" disabled>Continue with Google</button>
+        <a href="https://dashboard.subjectivetechnologies.com/dashboard/st-backend/my-agents" target="_top">Continue in dashboard</a>
+        <details>
+          <summary>Use email and password</summary>
+          <form id="ownerEmailSignIn">
+            <label>Email<input id="ownerEmail" type="email" autocomplete="username" required disabled></label>
+            <label>Password<input id="ownerPassword" type="password" autocomplete="current-password" required disabled></label>
+            <button type="submit" disabled>Sign in</button>
+          </form>
+        </details>
+      </div>
+    </section>
+    <button id="ownerSignOut" class="secondary-button owner-auth-signout" type="button" hidden>Sign out</button>
+
+    <div class="terminal-shell" hidden inert>
       <div class="terminal-status" id="statusLine"></div>
       <div id="term"></div>
     </div>
     <script src="/assets/vendor/xterm.js"></script>
     <script src="/assets/vendor/xterm-addon-fit.js"></script>
-    <script src="/terminalWebBridge.js?v=20260827c"></script>
-    <script src="/terminal-renderer.js?v=20260827c"></script>
+    <script src="/firebaseAuth.js?v=20260911auth1"></script>
+    <script src="/bootstrap.js?v=20260911auth1"></script>
   </body>
 </html>

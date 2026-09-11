@@ -28,6 +28,7 @@
   // Whatever origin this resolves to must also appear in index.html's CSP connect-src, or
   // the browser blocks the call before it is sent.
   const API_BASE = (function resolveApiBase() {
+    if (window.devagentsAuth) return window.devagentsAuth.apiBase;
     const clean = (value) => String(value || '').trim().replace(/\/+$/, '');
     let override = '';
     let stored = '';
@@ -60,6 +61,7 @@
   // is remembered; thereafter it rides as a header, which is why the API can keep a wildcard
   // CORS origin - a header carries no ambient authority the way a cookie would.
   const API_TOKEN = (function resolveApiToken() {
+    if (window.devagentsAuth) return '';
     let token = '';
     try {
       token = String(new URLSearchParams(location.search).get('token') || '').trim();
@@ -88,6 +90,7 @@
     // The backend rejected the shared secret. Say so plainly: without this the UI just
     // renders an empty chat list and looks broken rather than locked.
     if (response.status === 401) {
+      if (window.devagentsAuth) return { ok: false, unauthorized: true, error: 'Sign in with the owner account to continue.' };
       return { ok: false, unauthorized: true, error: API_TOKEN
         ? 'The API rejected this token. Re-open with ?token=... to set a new one.'
         : 'This backend needs an API token. Open the page once with ?token=...' };
@@ -109,11 +112,15 @@
   }
 
   async function api(method, path, body, options = {}) {
-    const response = await fetch(apiUrl(path), {
+    const response = await (window.devagentsAuth ? window.devagentsAuth.request(path, {
       method,
       headers: authHeaders(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
       body: body !== undefined ? JSON.stringify(body) : undefined
-    });
+    }) : fetch(apiUrl(path), {
+      method,
+      headers: authHeaders(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    }));
     return handleApiResponse(response, options);
   }
 
@@ -122,7 +129,9 @@
   async function postFile(path, file, options = {}) {
     const formData = new FormData();
     formData.append('file', file, file.name);
-    const response = await fetch(apiUrl(path), { method: 'POST', headers: authHeaders(), body: formData });
+    const response = await (window.devagentsAuth
+      ? window.devagentsAuth.request(path, { method: 'POST', body: formData })
+      : fetch(apiUrl(path), { method: 'POST', headers: authHeaders(), body: formData }));
     return handleApiResponse(response, options);
   }
 
@@ -148,8 +157,15 @@
   }
 
   let reconnectDelay = 1000;
-  function connectSocket() {
-    socket = new WebSocket(socketUrl());
+  async function connectSocket() {
+    try {
+      socket = window.devagentsAuth
+        ? await window.devagentsAuth.socket(socketUrl()) : new WebSocket(socketUrl());
+    } catch (_error) {
+      reconnectTimer = setTimeout(connectSocket, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+      return;
+    }
     socket.addEventListener('open', () => {
       reconnectDelay = 1000;  // reset backoff once a connection succeeds
       // A dropped socket may have swallowed an llm-busy:false, leaving the UI wedged

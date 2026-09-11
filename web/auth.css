@@ -1,0 +1,26 @@
+/* Explicit hidden rule wins over existing flex/grid component declarations. */
+[hidden] { display: none !important; }
+.owner-auth-panel {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: #0b0d10;
+  color: #e7e9ee;
+  font-family: system-ui, sans-serif;
+}
+.owner-auth-card { width: min(100%, 390px); display: grid; gap: 16px; }
+.owner-auth-card h1, .owner-auth-card p { margin: 0; }
+.owner-auth-card p { color: #b6bdc9; line-height: 1.5; }
+.owner-auth-card form, .owner-auth-card label { display: grid; gap: 10px; }
+.owner-auth-card input, .owner-auth-card button {
+  box-sizing: border-box; width: 100%; min-height: 44px;
+  padding: 10px 14px; border: 1px solid #566070; border-radius: 8px;
+  background: #171c24; color: #f4f5f7; font: inherit;
+}
+.owner-auth-card button { cursor: pointer; background: #d9b75b; color: #151515; font-weight: 600; }
+.owner-auth-card button:disabled { opacity: .5; cursor: wait; }
+.owner-auth-card :focus-visible { outline: 2px solid #f0ca63; outline-offset: 3px; }
+.owner-auth-signout { position: fixed; right: 12px; top: 12px; z-index: 10000; }
+.owner-auth-card a { color: #edcd79; }

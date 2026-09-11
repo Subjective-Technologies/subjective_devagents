@@ -18,7 +18,9 @@
     <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
     <!-- connect-src must name the API origin explicitly: 'self' is the page's origin, so a
          cross-origin fetch to the API is blocked by CSP before it is ever sent. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://devagents-api.subjectivetechnologies.com:8080; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
+    <meta name="referrer" content="no-referrer">
+    <link rel="stylesheet" href="/auth.css?v=20260911auth1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
     <link rel="icon" type="image/svg+xml" href="/assets/subjective-logo.svg">
@@ -32,11 +34,29 @@
     <link rel="stylesheet" href="/layout.css?v=20260911a">
   </head>
   <body data-accent="gold">
+    <section id="ownerAuthPanel" class="owner-auth-panel" aria-labelledby="ownerAuthTitle">
+      <div class="owner-auth-card">
+        <h1 id="ownerAuthTitle">Sign in to DevAgents</h1>
+        <p id="ownerAuthStatus" role="status" aria-live="polite">Checking sign-in…</p>
+        <button id="ownerGoogleSignIn" type="button" disabled>Continue with Google</button>
+        <a href="https://dashboard.subjectivetechnologies.com/dashboard/st-backend/my-agents" target="_top">Continue in dashboard</a>
+        <details>
+          <summary>Use email and password</summary>
+          <form id="ownerEmailSignIn">
+            <label>Email<input id="ownerEmail" type="email" autocomplete="username" required disabled></label>
+            <label>Password<input id="ownerPassword" type="password" autocomplete="current-password" required disabled></label>
+            <button type="submit" disabled>Sign in</button>
+          </form>
+        </details>
+      </div>
+    </section>
+    <button id="ownerSignOut" class="secondary-button owner-auth-signout" type="button" hidden>Sign out</button>
+
     <div id="versionBanner" class="version-banner" hidden role="status">
       <span>A new version of this app is available.</span>
       <button type="button" id="versionBannerReload">Reload</button>
     </div>
-    <main class="app-shell">
+    <main class="app-shell" hidden inert>
       <aside class="sidebar">
         <div class="brand">
           <img class="brand-mark" src="/assets/subjective-logo.svg" alt="Subjective">
@@ -269,8 +289,7 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/webBridge.js?v=20260911a"></script>
-    <script src="/messageRenderer.js?v=20260911b"></script>
-    <script src="/renderer.js?v=20260911b"></script>
+    <script src="/firebaseAuth.js?v=20260911auth1"></script>
+    <script src="/bootstrap.js?v=20260911auth1"></script>
   </body>
 </html>

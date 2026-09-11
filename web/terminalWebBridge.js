@@ -12,6 +12,7 @@
   // the same ?api=/localStorage/meta chain means opening the raw terminal from a session
   // pointed at a non-default backend keeps talking to that backend.
   const API_BASE = (function resolveApiBase() {
+    if (window.devagentsAuth) return window.devagentsAuth.apiBase;
     const clean = (value) => String(value || '').trim().replace(/\/+$/, '');
     let base = '';
     try {
@@ -30,6 +31,7 @@
   // that machine, so it is gated identically; the token is only ever read from storage,
   // never stamped into the public HTML.
   const API_TOKEN = (function resolveApiToken() {
+    if (window.devagentsAuth) return '';
     try {
       return String(new URLSearchParams(location.search).get('token')
         || localStorage.getItem('devagents.apiToken') || '').trim();
@@ -46,9 +48,14 @@
     ? `${API_BASE.replace(/^http/, 'ws')}/ws`
     : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   const url = API_TOKEN ? `${wsBase}?token=${encodeURIComponent(API_TOKEN)}` : wsBase;
-  const socket = new WebSocket(url);
+  const fetchApi = (path, options) => window.devagentsAuth
+    ? window.devagentsAuth.request(path, options) : fetch(apiUrl(path), options);
+  async function connectSocket() {
+    let socket;
+    try { socket = window.devagentsAuth ? await window.devagentsAuth.socket(url) : new WebSocket(url); }
+    catch (_error) { setTimeout(connectSocket, 5000); return; }
   socket.addEventListener('open', () => {
-    fetch(apiUrl(`/api/switchuser/status?username=${encodeURIComponent(username)}`), { headers: authHeaders() })
+    fetchApi(`/api/switchuser/status?username=${encodeURIComponent(username)}`, { headers: authHeaders() })
       .then((response) => response.json())
       .then((result) => {
         if (result?.status) for (const listener of statusListeners) listener(result.status);
@@ -69,8 +76,12 @@
     }
   });
 
+    socket.addEventListener('close', () => setTimeout(connectSocket, 1000));
+  }
+  connectSocket();
+
   function post(path, body) {
-    return fetch(apiUrl(path), { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) })
+    return fetchApi(path, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) })
       .then((response) => response.json())
       .catch(() => ({ ok: false }));
   }
