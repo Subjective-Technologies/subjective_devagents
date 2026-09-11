@@ -1,7 +1,7 @@
 <!doctype html>
 <!--
   DEVAGENTS_DEPLOY_VERSION
-  Static placeholder replaced at serve time by webServer.js with
+  Static placeholder replaced at serve time by the backend with
   release+gitSHA (and -dirty if the working tree has local edits).
   Check: View Source, document.documentElement.dataset.devagentsVersion,
   response header X-DevAgents-Version, or GET /api/version
@@ -21,6 +21,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://devagents-api.subjectivetechnologies.com:8080; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/subjective-logo.svg">
     <script src="/fit-app.js?v=20260906k"></script>
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
          server); index.html is never cached, so bumping the version here atomically swaps
@@ -91,7 +92,7 @@
 
         <section class="content-grid">
           <div class="chat-main">
-            <div id="chatFrames" class="chat-frames" data-layout="1x1" style="--frame-rows: 1; --frame-cols: 1;"></div>
+            <div id="chatFrames" class="chat-frames" data-layout="1x1"></div>
           </div>
 
           <aside class="right-rail">
