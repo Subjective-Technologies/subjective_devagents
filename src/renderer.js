@@ -1231,10 +1231,25 @@ function flushRenders() {
   }
 }
 
+// requestAnimationFrame never fires while the tab is hidden/minimized, so a
+// background tab would queue renders forever and only paint on refocus
+// (the underlying work keeps running server-side the whole time — this was
+// purely a frozen UI, see flushRenders). Fall back to a timer while hidden,
+// and catch up immediately the moment the tab becomes visible again.
 function scheduleRender() {
   if (renderFrame) return;
-  renderFrame = window.requestAnimationFrame(flushRenders);
+  renderFrame = document.hidden
+    ? window.setTimeout(flushRenders, 250)
+    : window.requestAnimationFrame(flushRenders);
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (!renderFrame) return;
+  window.clearTimeout(renderFrame);
+  window.cancelAnimationFrame(renderFrame);
+  flushRenders();
+});
 
 function renderTranscript() {
   pendingTranscriptRender = true;
