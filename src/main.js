@@ -6,7 +6,7 @@ const tls = require('tls');
 const os = require('os');
 const dotenv = require('dotenv');
 const { fileURLToPath, pathToFileURL } = require('url');
-const { LlmService, providerLabel } = require('./llmService');
+const { LlmService, providerLabel, WRITABLE_PROVIDERS, DEFAULT_PROVIDER } = require('./llmService');
 const { listSystemUsers, isValidUsername } = require('./systemUsers');
 const { SuSessionManager } = require('./suSessionManager');
 const terminalWindow = require('./terminalWindow');
@@ -1438,6 +1438,18 @@ app.whenReady().then(() => {
       return { ok: false, error: error.message };
     }
   });
+
+  // The desktop build answers from its own llmService, not the FastAPI one: the two
+  // support different agent sets, and the picker must offer only what will actually run.
+  ipcMain.handle('llm:providers', async () => ({
+    ok: true,
+    default: DEFAULT_PROVIDER,
+    providers: Object.entries(WRITABLE_PROVIDERS).map(([key, value]) => ({
+      key,
+      label: value.label,
+      available: true
+    }))
+  }));
 
   ipcMain.handle('llm:status', async (_event, payload) => {
     const result = await llmService.status(payload?.provider);

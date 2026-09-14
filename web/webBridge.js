@@ -366,6 +366,9 @@
     // A zip of another workstation's exported chat JSON files — no agent or sync setup
     // needed on that machine, just its export folder zipped up.
     importLlmChats: (file) => postFile('/api/llm/import-chats', file, { longRunning: true }),
+    // Which agents this backend can actually create a chat with. The picker used to
+    // hard-code them and drifted from the backend it talks to.
+    listLlmProviders: () => get('/api/llm/providers'),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),
     listProviderSessions: (provider) => get(`/api/llm/sessions?provider=${encodeURIComponent(provider || '')}`),
     // The only request that routinely runs for minutes: one agent turn.

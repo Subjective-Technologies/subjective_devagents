@@ -1484,6 +1484,7 @@ module.exports = {
   HYDRATE_MESSAGE_LIMIT,
   PROVIDER_ICONS,
   WRITABLE_PROVIDERS,
+  DEFAULT_PROVIDER,
   LlmService,
   cleanVisibleMessage,
   epochMs,

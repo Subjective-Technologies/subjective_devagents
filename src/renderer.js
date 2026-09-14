@@ -2739,10 +2739,45 @@ function selectedLlmProvider() {
   return String(llmProviderSelect?.value || 'codex');
 }
 
+// Filled from the backend by loadLlmProviders(). The <option>s in index.html are only a
+// pre-load fallback: which agents exist differs between the FastAPI backend and the
+// desktop build, and hard-coding them in both index.html files is how Grok ended up
+// creatable but unofferable while Cursor was offered where it cannot run.
+let llmProviders = [];
+
 function llmProviderLabel(provider) {
-  if (provider === 'claude') return 'Claude';
-  if (provider === 'cursor') return 'Cursor';
-  return 'Codex';
+  const key = String(provider || '');
+  const known = llmProviders.find((item) => item.key === key);
+  if (known) return known.label;
+  // Pre-load, or a history-only provider (Gemini, ChatGPT) that has no writable
+  // datasource and so never appears in the picker but still labels its imported chats.
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Codex';
+}
+
+async function loadLlmProviders() {
+  if (!window.subjectiveChat.listLlmProviders) return;
+  let payload = null;
+  try {
+    payload = await window.subjectiveChat.listLlmProviders();
+  } catch (error) {
+    rendererLog('error', 'Failed to load agent list', { error: String(error) });
+  }
+  const listed = Array.isArray(payload?.providers) ? payload.providers : [];
+  if (!listed.length) return; // keep whatever index.html shipped rather than empty the picker
+  llmProviders = listed;
+  if (!llmProviderSelect) return;
+  const previous = llmProviderSelect.value;
+  llmProviderSelect.replaceChildren();
+  for (const provider of listed) {
+    const option = document.createElement('option');
+    option.value = provider.key;
+    // An agent whose datasource module is missing can still run through its exported
+    // bundle, so it stays selectable - just flagged, rather than silently absent.
+    option.textContent = provider.available === false ? `${provider.label} (unavailable)` : provider.label;
+    llmProviderSelect.appendChild(option);
+  }
+  const wanted = listed.some((item) => item.key === previous) ? previous : (payload?.default || listed[0].key);
+  llmProviderSelect.value = wanted;
 }
 
 let pendingSessionChoice = null;
@@ -3278,6 +3313,7 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
     renderVisibleFrameTranscripts();
   }
   syncMobileLayout();
+  loadLlmProviders();
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;
   if (accentGrid) {

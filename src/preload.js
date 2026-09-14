@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('subjectiveChat', {
   renameLlmConversation: (target, name) => ipcRenderer.invoke('llm:rename-conversation', { target, name }),
   deleteLlmConversation: (target) => ipcRenderer.invoke('llm:delete-conversation', { target }),
   refreshLlmHistory: () => ipcRenderer.invoke('llm:refresh-history'),
+  listLlmProviders: () => ipcRenderer.invoke('llm:providers'),
   getLlmStatus: (provider) => ipcRenderer.invoke('llm:status', { provider }),
   listProviderSessions: (provider) => ipcRenderer.invoke('llm:sessions', { provider }),
   sendLlmMessage: (target, text, files = []) => ipcRenderer.invoke('llm:send-message', { target, text, files }),
