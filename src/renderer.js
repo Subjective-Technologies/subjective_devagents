@@ -282,8 +282,15 @@ function isTargetOnScreen(target) {
   return visibleFrameTargets().includes(target);
 }
 
+// Nothing may save a layout before restoreChatFrames() has loaded the stored one.
+// updateConfig() activates the default channel on startup - through setActiveTarget ->
+// assignChatFrame -> persistChatFrames - and that runs before initChatFrames(), so an
+// unguarded save overwrote the saved panes with the 1x1 default and restore then read
+// back the value it had just destroyed. The multi-pane layout never survived a reload.
+let chatFramesRestored = false;
+
 function persistChatFrames() {
-  if (!framesEnabled()) return;
+  if (!framesEnabled() || !chatFramesRestored) return;
   try {
     localStorage.setItem(CHAT_FRAME_STORAGE, JSON.stringify({
       layout: frameLayoutKey(),
@@ -600,6 +607,7 @@ function buildFrameLayoutMatrix() {
 function initChatFrames() {
   if (!framesEnabled()) return;
   restoreChatFrames();
+  chatFramesRestored = true;
   buildFrameLayoutMatrix();
   ensureChatFrameDom();
   const toggle = document.getElementById('frameLayoutToggle');
@@ -1774,8 +1782,42 @@ function conversationUserPillHtml(conversation) {
   return `<span class="conversation-user-pill user-hue-${slot}" title="${escapeHtml(username)}">${escapeHtml(username)}</span>`;
 }
 
+function syncConversationTitles() {
+  const active = conversations.get(activeTarget);
+  if (active) {
+    topChannel.textContent = active.label;
+    topChannel.title = active.label;
+  }
+  if (framesEnabled()) {
+    [...chatFrames.children].forEach((frameEl, index) => syncChatFrame(frameEl, index));
+  }
+}
+
+// A re-render whose row set is unchanged patches the existing rows in place instead of
+// rebuilding the table. Replacing every row on each selection change or list refresh broke
+// inline rename two ways: it discarded a field the operator was already typing into, and -
+// since the row a double-click started on was swapped out between the two clicks - the
+// browser was often left with no common target to fire the opening dblclick on at all.
+function paintConversationRow(row, conversation) {
+  row.title = conversation.sourceUser
+    ? `${conversation.sourceUser}: ${conversation.label}`
+    : conversation.label;
+  row.classList.toggle('active', conversation.target === activeTarget);
+  row.classList.toggle('in-frame', framesEnabled() && frameTargets.includes(conversation.target));
+  row.classList.toggle('busy', Boolean(conversation.busy));
+  row.draggable = Boolean(framesEnabled() && conversation.kind === 'llm');
+  // A row mid-rename has no .conversation-label to repaint - the field replaced it, and
+  // overwriting it would throw away the operator's keystrokes.
+  const label = row.querySelector('.conversation-label');
+  if (label) label.textContent = conversation.label.replace(/^#/, '');
+  const unread = row.querySelector('.conversation-unread-cell');
+  if (unread) unread.innerHTML = conversation.unread ? `<b>${conversation.unread}</b>` : '';
+}
+
 function renderConversationsNow() {
-  conversationList.replaceChildren();
+  // Metadata-only updates (rename/list refresh) do not render transcripts. Keep
+  // every visible pane header in sync without replacing messages or drafts.
+  syncConversationTitles();
   const ordered = [...conversations.values()].sort((left, right) => {
     const groupDifference = conversationGroupRank(left) - conversationGroupRank(right);
     if (groupDifference) return groupDifference;
@@ -1794,6 +1836,18 @@ function renderConversationsNow() {
       ? `${shown}${total > shown ? `/${total}` : ''}`
       : (total > shown ? `${shown}/${total}` : String(shown || ordered.length));
   }
+  // Same rows in the same order: repaint them where they stand, keeping every live DOM
+  // node (the rename field included) attached.
+  const rendered = conversationList.querySelectorAll('.conversation-row');
+  if (
+    visible.length
+    && visible.length === rendered.length
+    && visible.every((conversation, index) => rendered[index].dataset.target === conversation.target)
+  ) {
+    visible.forEach((conversation, index) => paintConversationRow(rendered[index], conversation));
+    return;
+  }
+  conversationList.replaceChildren();
   if (!visible.length) {
     const empty = document.createElement('div');
     empty.className = 'conversation-empty';
@@ -1886,9 +1940,20 @@ function beginRenameConversation(target) {
   field.select();
 
   let settled = false;
+  // Put the label span back rather than leaving the field for the next render to clear:
+  // a render that finds the row set unchanged now patches rows in place and would keep
+  // the field (and the stale name inside it) on screen indefinitely.
+  const restore = () => {
+    if (!field.isConnected) return;
+    const span = document.createElement('span');
+    span.className = 'conversation-label';
+    span.textContent = conversation.label.replace(/^#/, '');
+    field.replaceWith(span);
+  };
   const cancel = () => {
     if (settled) return;
     settled = true;
+    restore();
     renderConversations();
   };
   const commit = async () => {
@@ -1896,15 +1961,23 @@ function beginRenameConversation(target) {
     settled = true;
     const name = field.value.trim();
     if (!name || name === conversation.label.replace(/^#/, '')) {
+      restore();
       renderConversations();
       return;
     }
-    const result = await window.subjectiveChat.renameLlmConversation(target, name);
-    // On success the label is applied via the 'llm-conversation-renamed' event; either way
-    // re-render to drop the inline input and restore the row.
-    if (!result?.ok) {
-      rendererLog('error', 'Failed to rename conversation', { target, error: result?.error });
+    try {
+      const result = await window.subjectiveChat.renameLlmConversation(target, name);
+      // Apply the confirmed HTTP result too: the WebSocket event can be missed
+      // during reconnect. Do not replace transcript state with the metadata reply.
+      if (result?.ok && result.conversation?.label) {
+        conversation.label = result.conversation.label;
+      } else if (!result?.ok) {
+        rendererLog('error', 'Failed to rename conversation', { target, error: result?.error });
+      }
+    } catch (error) {
+      rendererLog('error', 'Failed to rename conversation', { target, error: String(error) });
     }
+    restore();
     renderConversations();
   };
 
