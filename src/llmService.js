@@ -727,17 +727,25 @@ class LlmService {
     return this.codexRuntime;
   }
 
+  // `osUser` picks whose CLI login answers this chat. Each agent keeps its credentials
+  // in a home directory, so "Codex" is really "Codex as <someone>"; naming the account
+  // here starts a chat against any of them rather than only this one's, then switching
+  // afterwards with "Continue as". A turn for another user routes through that user's
+  // session, so only tag the chat when it is not our own account.
   createConversation(input = {}) {
     const now = Date.now();
     const provider = writableProvider(input.provider) ? providerKey(input.provider) : DEFAULT_PROVIDER;
     const label = providerLabel(provider);
+    const me = currentOsUsername();
+    const owner = String(input.osUser || '').trim() || me;
     const conversation = this._normalizeConversation({
       target: `llm:${provider}:local:${crypto.randomUUID()}`,
       provider,
       label: String(input.name || `New ${label} chat`).trim() || `New ${label} chat`,
-      description: `${label} CLI conversation`,
+      description: owner === me ? `${label} CLI conversation` : `${label} CLI conversation as ${owner}`,
       workspace: String(input.workspace || this.root).trim() || this.root,
-      sourceUser: currentOsUsername(),
+      sourceUser: owner,
+      osUser: owner === me ? null : owner,
       messages: [],
       createdAt: now,
       updatedAt: now,

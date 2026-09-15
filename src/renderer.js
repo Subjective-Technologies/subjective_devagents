@@ -59,6 +59,7 @@ const llmForm = document.getElementById('llmForm');
 const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
+const llmOsUserSelect = document.getElementById('llmOsUserSelect');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
 const llmStatusText = document.getElementById('llmStatusText');
 const sessionPickerDialog = document.getElementById('sessionPickerDialog');
@@ -3036,11 +3037,47 @@ async function refreshLlmStatus() {
   llmStatusText.dataset.ready = status.ok ? 'true' : 'false';
 }
 
+async function refreshLlmOsUsers() {
+  // Each agent keeps its credentials in a home directory, so which accounts can answer
+  // differs per agent: the Codex logins on this box are not the Claude ones. Re-asked
+  // whenever the agent changes rather than listed once.
+  if (!llmOsUserSelect || !window.subjectiveChat.listProviderSessions) return;
+  const provider = selectedLlmProvider();
+  let listed = null;
+  try {
+    listed = await window.subjectiveChat.listProviderSessions(provider);
+  } catch (error) {
+    rendererLog('error', 'Failed to list agent logins', { provider, error: String(error) });
+  }
+  if (selectedLlmProvider() !== provider) return; // the operator moved on while we asked
+  const users = Array.isArray(listed?.users) ? listed.users : [];
+  const previous = llmOsUserSelect.value;
+  llmOsUserSelect.replaceChildren();
+  const current = listed?.currentUser || '';
+  for (const user of users) {
+    const option = document.createElement('option');
+    // The service account's own chats carry no osUser — that flag means "route through
+    // someone else's session", and setting it for ourselves would demand a connection.
+    option.value = user.current ? '' : user.username;
+    const state = user.ready ? '' : (user.unknown ? ' · login unknown' : ' · not logged in');
+    option.textContent = `${user.username}${user.current ? ' (this machine)' : ''}${state}`;
+    llmOsUserSelect.appendChild(option);
+  }
+  if (!users.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = current ? `${current} (this machine)` : "This machine's account";
+    llmOsUserSelect.appendChild(option);
+  }
+  const stillThere = [...llmOsUserSelect.options].some((option) => option.value === previous);
+  llmOsUserSelect.value = stillThere ? previous : '';
+}
+
 async function openLlmDialog() {
   if (!llmDialog) return;
   llmDialog.showModal ? llmDialog.showModal() : llmDialog.setAttribute('open', '');
   llmNameInput.focus();
-  await refreshLlmStatus();
+  await Promise.all([refreshLlmStatus(), refreshLlmOsUsers()]);
 }
 
 async function importLlmChatsFromZip(file) {
@@ -3074,7 +3111,12 @@ if (importLlmButton && importLlmFileInput) {
 }
 
 if (createLlmButton) createLlmButton.addEventListener('click', openLlmDialog);
-if (llmProviderSelect) llmProviderSelect.addEventListener('change', refreshLlmStatus);
+if (llmProviderSelect) {
+  llmProviderSelect.addEventListener('change', () => {
+    refreshLlmStatus();
+    refreshLlmOsUsers();
+  });
+}
 if (llmCloseButton) llmCloseButton.addEventListener('click', () => llmDialog.close());
 if (llmDialog) llmDialog.addEventListener('click', (event) => {
   if (event.target === llmDialog) llmDialog.close();
@@ -3085,7 +3127,8 @@ if (llmForm) llmForm.addEventListener('submit', async (event) => {
   const result = await window.subjectiveChat.createLlmConversation({
     name: llmNameInput.value,
     workspace: llmWorkspaceInput.value,
-    provider
+    provider,
+    osUser: llmOsUserSelect ? llmOsUserSelect.value : ''
   });
   if (!result?.ok) {
     llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;
