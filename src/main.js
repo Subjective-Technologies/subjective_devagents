@@ -7,6 +7,7 @@ const os = require('os');
 const dotenv = require('dotenv');
 const { fileURLToPath, pathToFileURL } = require('url');
 const { LlmService, providerLabel, WRITABLE_PROVIDERS, DEFAULT_PROVIDER } = require('./llmService');
+const agentsRegistry = require('./agentsRegistry');
 const { listSystemUsers, isValidUsername } = require('./systemUsers');
 const { SuSessionManager } = require('./suSessionManager');
 const terminalWindow = require('./terminalWindow');
@@ -1441,6 +1442,11 @@ app.whenReady().then(() => {
 
   // The desktop build answers from its own llmService, not the FastAPI one: the two
   // support different agent sets, and the picker must offer only what will actually run.
+  ipcMain.handle('agents:list', async () => agentsRegistry.listAgents());
+  ipcMain.handle('agents:create', async (_event, payload) => agentsRegistry.createAgent(payload || {}));
+  ipcMain.handle('agents:set-model', async (_event, payload) =>
+    agentsRegistry.setAgentModel(String(payload?.id || ''), String(payload?.model || '')));
+
   ipcMain.handle('llm:providers', async () => ({
     ok: true,
     default: DEFAULT_PROVIDER,

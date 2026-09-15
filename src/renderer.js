@@ -60,6 +60,17 @@ const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmOsUserSelect = document.getElementById('llmOsUserSelect');
+const agentsFolder = document.getElementById('agentsFolder');
+const agentsList = document.getElementById('agentsList');
+const agentsCount = document.getElementById('agentsCount');
+const agentCreateButton = document.getElementById('agentCreateButton');
+const agentDialog = document.getElementById('agentDialog');
+const agentForm = document.getElementById('agentForm');
+const agentIdInput = document.getElementById('agentIdInput');
+const agentCapabilityInput = document.getElementById('agentCapabilityInput');
+const agentModelSelect = document.getElementById('agentModelSelect');
+const agentDialogStatus = document.getElementById('agentDialogStatus');
+const agentCloseButton = document.getElementById('agentCloseButton');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
 const llmStatusText = document.getElementById('llmStatusText');
 const sessionPickerDialog = document.getElementById('sessionPickerDialog');
@@ -2754,6 +2765,122 @@ async function loadLlmConversations() {
   }
 }
 
+// --- agents -----------------------------------------------------------------------
+// The registry in workflow/agents: one row per logical role, its role file, and the model
+// currently assigned to it. Models are runtime metadata there, never part of an agent's
+// identity, so changing one re-points the agent rather than defining a new one.
+let agents = [];
+
+function modelOptionsHtml(selected) {
+  const chosen = String(selected || '');
+  const options = llmProviders.length
+    ? llmProviders
+    : [...llmProviderSelect?.options || []].map((option) => ({ key: option.value, label: option.textContent }));
+  const rows = options.map((provider) =>
+    `<option value="${escapeHtml(provider.key)}"${provider.key === chosen ? ' selected' : ''}>${escapeHtml(provider.label)}</option>`
+  );
+  // "Unset" is a real state: a role may deliberately leave the model to the caller.
+  return `<option value=""${chosen ? '' : ' selected'}>Not set</option>${rows.join('')}`;
+}
+
+function renderAgents() {
+  if (!agentsList) return;
+  agentsList.replaceChildren();
+  if (agentsCount) agentsCount.textContent = agents.length ? String(agents.length) : '';
+  if (!agents.length) {
+    const empty = document.createElement('div');
+    empty.className = 'conversation-empty';
+    empty.textContent = 'No agent registry found';
+    agentsList.appendChild(empty);
+    return;
+  }
+  for (const agent of agents) {
+    const row = document.createElement('div');
+    row.className = 'agent-row';
+    row.dataset.agent = agent.id;
+    // A registry row whose role file is missing is shown and flagged, not hidden:
+    // hiding it would make a broken registry look healthy.
+    row.classList.toggle('is-missing', agent.exists === false);
+    row.title = agent.exists === false
+      ? `${agent.id} — role file ${agent.roleFile} is missing`
+      : `${agent.id}${agent.capability ? ` — ${agent.capability}` : ''}`;
+    row.innerHTML = `
+      <button type="button" class="agent-open" title="Start a chat with this agent">${escapeHtml(agent.id)}</button>
+      <select class="agent-model" aria-label="Model for ${escapeHtml(agent.id)}">${modelOptionsHtml(agent.model)}</select>
+    `;
+    row.querySelector('.agent-open').addEventListener('click', () => startAgentChat(agent.id));
+    row.querySelector('.agent-model').addEventListener('change', (event) => {
+      setAgentModel(agent.id, event.target.value);
+    });
+    agentsList.appendChild(row);
+  }
+}
+
+async function loadAgents() {
+  if (!window.subjectiveChat.listAgents) {
+    if (agentsFolder) agentsFolder.hidden = true; // a backend that has no registry to serve
+    return;
+  }
+  let payload = null;
+  try {
+    payload = await window.subjectiveChat.listAgents();
+  } catch (error) {
+    rendererLog('error', 'Failed to load agents', { error: String(error) });
+  }
+  agents = Array.isArray(payload?.agents) ? payload.agents : [];
+  renderAgents();
+}
+
+async function setAgentModel(id, model) {
+  if (!window.subjectiveChat.setAgentModel) return;
+  try {
+    const result = await window.subjectiveChat.setAgentModel(id, model);
+    if (!result?.ok) {
+      rendererLog('error', 'Failed to set agent model', { id, error: result?.error });
+      await loadAgents(); // put the picker back to what is actually on disk
+      return;
+    }
+    const agent = agents.find((item) => item.id === id);
+    if (agent) agent.model = result.model || '';
+  } catch (error) {
+    rendererLog('error', 'Failed to set agent model', { id, error: String(error) });
+    await loadAgents();
+  }
+}
+
+async function startAgentChat(id) {
+  const agent = agents.find((item) => item.id === id);
+  if (!agent || !window.subjectiveChat.createLlmConversation) return;
+  // An agent with no model assigned cannot pick one for you — say so rather than
+  // silently starting the chat on whatever the default happens to be.
+  if (!agent.model) {
+    addEvent('system', { target: activeTarget, text: `${id} has no model set. Choose one next to it first.` });
+    return;
+  }
+  const result = await window.subjectiveChat.createLlmConversation({
+    name: id,
+    provider: agent.model,
+    workspace: ''
+  });
+  if (!result?.ok) {
+    rendererLog('error', 'Failed to start agent chat', { id, error: result?.error });
+    addEvent('system', { target: activeTarget, text: result?.error || `Could not start ${id}.` });
+    return;
+  }
+  const conversation = upsertLlmConversation(result.conversation);
+  setActiveTarget(conversation.target);
+}
+
+function openAgentDialog() {
+  if (!agentDialog) return;
+  if (agentDialogStatus) agentDialogStatus.textContent = '';
+  if (agentIdInput) agentIdInput.value = '';
+  if (agentCapabilityInput) agentCapabilityInput.value = '';
+  if (agentModelSelect) agentModelSelect.innerHTML = modelOptionsHtml('');
+  agentDialog.showModal ? agentDialog.showModal() : agentDialog.setAttribute('open', '');
+  if (agentIdInput) agentIdInput.focus();
+}
+
 async function stopActiveTurn(frameEl) {
   if (!window.subjectiveChat.cancelLlmMessage) return;
   const index = Number(frameEl?.dataset?.frame ?? focusedFrame);
@@ -3111,6 +3238,34 @@ if (importLlmButton && importLlmFileInput) {
 }
 
 if (createLlmButton) createLlmButton.addEventListener('click', openLlmDialog);
+if (agentCreateButton) {
+  agentCreateButton.addEventListener('click', (event) => {
+    // Inside a <summary>, so a plain click would toggle the folder instead.
+    event.preventDefault();
+    event.stopPropagation();
+    openAgentDialog();
+  });
+}
+if (agentCloseButton) agentCloseButton.addEventListener('click', () => agentDialog.close());
+if (agentForm) {
+  agentForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = String(agentIdInput?.value || '').trim().toLowerCase();
+    const result = await window.subjectiveChat.createAgent({
+      id,
+      capability: String(agentCapabilityInput?.value || '').trim(),
+      model: String(agentModelSelect?.value || '')
+    });
+    if (!result?.ok) {
+      if (agentDialogStatus) agentDialogStatus.textContent = result?.error || 'Could not create the agent.';
+      return;
+    }
+    agentDialog.close();
+    // Re-read rather than trusting the local copy: the registry is a file two processes
+    // can edit, and the row order is the file's, not ours.
+    await loadAgents();
+  });
+}
 if (llmProviderSelect) {
   llmProviderSelect.addEventListener('change', () => {
     refreshLlmStatus();
@@ -3396,7 +3551,7 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
     renderVisibleFrameTranscripts();
   }
   syncMobileLayout();
-  loadLlmProviders();
+  loadLlmProviders().then(loadAgents);
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;
   if (accentGrid) {

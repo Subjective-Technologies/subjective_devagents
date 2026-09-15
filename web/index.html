@@ -141,6 +141,14 @@
                   </label>
                   <small id="conversationSearchCount" class="conversation-search-count"></small>
                 </div>
+                <details id="agentsFolder" class="agents-folder" open>
+                  <summary class="agents-folder-head">
+                    <span class="agents-folder-title">Agents</span>
+                    <small id="agentsCount" class="agents-folder-count"></small>
+                    <button type="button" id="agentCreateButton" class="agents-folder-add" title="New agent" aria-label="New agent">+</button>
+                  </summary>
+                  <div id="agentsList" class="agents-list"></div>
+                </details>
                 <div id="conversationList" class="conversation-list"></div>
               </div>
             </section>
@@ -225,6 +233,30 @@
         <div class="settings-actions">
           <button type="button" id="saveBookmarkButton" class="secondary-button">Save Bookmark</button>
           <button type="submit" class="primary-button">Connect</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="agentDialog" class="settings-dialog">
+      <form id="agentForm" class="settings-form">
+        <div class="settings-head">
+          <strong>New agent</strong>
+          <button type="button" id="agentCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <label>
+          <span>Agent ID</span>
+          <input id="agentIdInput" autocomplete="off" placeholder="triage_agent" pattern="[a-z][a-z0-9_]{1,62}" required>
+        </label>
+        <label>
+          <span>Primary capability</span>
+          <input id="agentCapabilityInput" autocomplete="off" placeholder="incident triage" required>
+        </label>
+        <label>
+          <span>Model</span>
+          <select id="agentModelSelect"></select>
+        </label>
+        <p id="agentDialogStatus" class="settings-status"></p>
+        <div class="settings-actions">
+          <button type="submit" class="primary-button">Create agent</button>
         </div>
       </form>
     </dialog>

@@ -369,6 +369,10 @@
     // Which agents this backend can actually create a chat with. The picker used to
     // hard-code them and drifted from the backend it talks to.
     listLlmProviders: () => get('/api/llm/providers'),
+    // The agent registry in workflow/agents.
+    listAgents: () => get('/api/agents'),
+    createAgent: (payload) => post('/api/agents', payload),
+    setAgentModel: (id, model) => post('/api/agents/model', { id, model }),
     // Stop a turn that is already running.
     cancelLlmMessage: (target) => post('/api/llm/cancel-message', { target }),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),
