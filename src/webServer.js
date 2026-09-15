@@ -169,6 +169,13 @@ function createApp(core, options = {}) {
       let body = data;
       if (ext === '.html') {
         body = Buffer.from(stampHtml(data.toString('utf8')), 'utf8');
+      } else if (ext === '.js' && data.includes('DEVAGENTS_DEPLOY_VERSION')) {
+        // bootstrap.js carries the ?v= tags for the scripts it loads. Those were
+        // hand-maintained constants, unchanged since 2026-09-11, so every renderer change
+        // after that reached the origin and was still served from Cloudflare's edge and
+        // from browsers' own caches. Stamping the live deploy version makes each deploy a
+        // new URL, which is the only thing those caches key on.
+        body = Buffer.from(data.toString('utf8').split('DEVAGENTS_DEPLOY_VERSION').join(DEPLOY_VERSION), 'utf8');
       }
       const headers = {
         'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',

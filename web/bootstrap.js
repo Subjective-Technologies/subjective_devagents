@@ -3,8 +3,8 @@
   try {
     await window.devagentsAuth.ready;
     const scripts = document.body.dataset.page === 'terminal'
-      ? ['/terminalWebBridge.js?v=20260911auth1', '/terminal-renderer.js?v=20260827c']
-      : ['/webBridge.js?v=20260911auth1', '/messageRenderer.js?v=20260911b', '/renderer.js?v=20260911b'];
+      ? ['/terminalWebBridge.js?v=DEVAGENTS_DEPLOY_VERSION', '/terminal-renderer.js?v=DEVAGENTS_DEPLOY_VERSION']
+      : ['/webBridge.js?v=DEVAGENTS_DEPLOY_VERSION', '/messageRenderer.js?v=DEVAGENTS_DEPLOY_VERSION', '/renderer.js?v=DEVAGENTS_DEPLOY_VERSION'];
     for (const source of scripts) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
