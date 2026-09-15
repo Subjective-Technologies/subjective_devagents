@@ -363,6 +363,10 @@ class LlmService {
     this.suSessionManager = options.suSessionManager || null;
     this.log = typeof options.log === 'function' ? options.log : () => {};
     this.busy = new Set();
+    // Stop: how to abort the turn in flight for a target. Registered while a turn runs,
+    // cleared on the way out. Keyed by target because turns run concurrently.
+    this._cancellers = new Map();
+    this._cancelledTargets = new Set();
     this._historyCache = null;
     this._sortedCache = null;
     fs.mkdirSync(this.appHome, { recursive: true });
@@ -984,6 +988,35 @@ class LlmService {
     return { provider: key, ...result };
   }
 
+  _registerCanceller(target, canceller) {
+    this._cancellers.set(target, canceller);
+    // Stop can land before the child exists; honour a latched request immediately.
+    if (this._cancelledTargets.has(target)) {
+      try { canceller(); } catch (_error) { /* already gone */ }
+    }
+  }
+
+  _clearCanceller(target) {
+    this._cancellers.delete(target);
+    this._cancelledTargets.delete(target);
+  }
+
+  cancelMessage(target) {
+    const key = String(target || '');
+    if (!key) return { ok: false, error: 'Missing conversation target.' };
+    const running = this.busy.has(key);
+    if (running) this._cancelledTargets.add(key);
+    const canceller = this._cancellers.get(key);
+    let stopped = false;
+    if (canceller) {
+      try { stopped = Boolean(canceller()); } catch (error) {
+        this.log('error', 'LLM cancel failed', { target: key, message: error.message });
+      }
+    }
+    this.log('info', 'LLM turn cancel requested', { target: key, running, signalled: stopped });
+    return { ok: true, target: key, running, stopped };
+  }
+
   async listProviderSessions(provider = '') {
     const listed = await listProviderSessions();
     if (!provider) return listed;
@@ -1387,6 +1420,15 @@ class LlmService {
       });
       let stdout = '';
       let stderr = '';
+      const cancelTarget = (payload && payload.target) ? String(payload.target) : '';
+      if (cancelTarget) {
+        this._registerCanceller(cancelTarget, () => {
+          if (child.exitCode !== null || child.signalCode) return false;
+          try { child.kill('SIGTERM'); } catch (_error) { return false; }
+          setTimeout(() => { try { child.kill('SIGKILL'); } catch (_error) { /* gone */ } }, 5000);
+          return true;
+        });
+      }
       child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
       child.stderr.on('data', (chunk) => {
         const text = chunk.toString();
@@ -1394,10 +1436,12 @@ class LlmService {
         this._consumeProgress(text, payload);
       });
       child.on('error', (error) => {
+        if (cancelTarget) this._clearCanceller(cancelTarget);
         this.log('error', 'LLM pipeline spawn error', { action, runtime: path.basename(runtimePath), message: error.message, ms: Date.now() - started });
         resolve({ success: false, status: 'runtime_error', error: error.message });
       });
       child.on('close', (code) => {
+        if (cancelTarget) this._clearCanceller(cancelTarget);
         const parsed = this._parsePipelineOutput(stdout, stderr);
         this.log(parsed.success === false ? 'error' : 'info', 'LLM pipeline exit', {
           action,

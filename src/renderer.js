@@ -346,6 +346,14 @@ function attachFrameComposer(frameEl) {
   form.dataset.bound = '1';
   attachImagePicker(form);
   form.addEventListener('submit', onComposerSubmit);
+  const stopButton = frameEl.querySelector('.frame-stop');
+  if (stopButton) {
+    stopButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      stopActiveTurn(frameEl);
+    });
+  }
   textarea.addEventListener('keydown', onComposerKeydown);
   textarea.addEventListener('input', () => updateCommandPalette());
   textarea.addEventListener('blur', () => {
@@ -373,6 +381,7 @@ function createChatFrame(index) {
       <div class="pending-images" hidden></div>
       <textarea rows="1" autocomplete="off" placeholder="Drop a chat from the list"></textarea>
       <div class="command-palette" hidden></div>
+      <button type="button" class="frame-stop" hidden title="Stop this agent" aria-label="Stop this agent">Stop</button>
       <button type="submit">Send</button>
     </form>
   `;
@@ -420,6 +429,15 @@ function syncChatFrame(frameEl, index) {
   }
   if (refresh) refresh.hidden = !target;
   if (clear) clear.hidden = !target;
+  const stop = frameEl.querySelector('.frame-stop');
+  if (stop) {
+    // Only while this pane's own agent is working. The composer is disabled then, so
+    // without this there is no way to interrupt a turn at all.
+    stop.hidden = !(conversation && conversation.busy);
+    stop.disabled = false;
+  }
+  const send = frameEl.querySelector('button[type="submit"]');
+  if (send) send.hidden = Boolean(conversation && conversation.busy);
   if (textarea) {
     textarea.disabled = Boolean(conversation?.kind === 'llm' && (!conversation.writable || conversation.busy));
     textarea.placeholder = !conversation
@@ -2732,6 +2750,28 @@ async function loadLlmConversations() {
       open.loading = false;
       if (loaded?.ok) upsertLlmConversation(loaded.conversation);
     });
+  }
+}
+
+async function stopActiveTurn(frameEl) {
+  if (!window.subjectiveChat.cancelLlmMessage) return;
+  const index = Number(frameEl?.dataset?.frame ?? focusedFrame);
+  const target = (framesEnabled() ? frameTargets[index] : activeTarget) || activeTarget;
+  const conversation = target ? conversations.get(target) : null;
+  if (!conversation || !conversation.busy) return;
+  const button = frameEl?.querySelector('.frame-stop');
+  if (button) button.disabled = true; // one press per turn; re-enabled by the next render
+  try {
+    const result = await window.subjectiveChat.cancelLlmMessage(target);
+    if (!result?.ok) {
+      rendererLog('error', 'Failed to stop turn', { target, error: result?.error });
+      if (button) button.disabled = false;
+    }
+    // The busy flag is cleared by the broadcast the backend sends, not here, so every
+    // connected tab agrees on whether the agent is still running.
+  } catch (error) {
+    rendererLog('error', 'Failed to stop turn', { target, error: String(error) });
+    if (button) button.disabled = false;
   }
 }
 

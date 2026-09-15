@@ -1451,6 +1451,16 @@ app.whenReady().then(() => {
     }))
   }));
 
+  ipcMain.handle('llm:cancel-message', async (_event, payload) => {
+    const target = String(payload?.target || '');
+    const result = llmService.cancelMessage(target);
+    if (result.ok && result.running) {
+      emit('llm-busy', { target, busy: false });
+      emit('system', { target, text: 'Stopped.' });
+    }
+    return result;
+  });
+
   ipcMain.handle('llm:status', async (_event, payload) => {
     const result = await llmService.status(payload?.provider);
     return { ok: Boolean(result.success), ...result };
