@@ -2688,23 +2688,28 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   }
 }
 
-/* --- agents section ------------------------------------------------------------
-   Agents and chats share the sidebar's single scroll container. This section must
-   never scroll on its own: a nested scrollbar turned the agents into a fixed-height
-   pane stuck above the chats instead of one continuous list. */
-.agents-section {
-  margin: 0 0 0.35rem;
-}
-.agents-head {
+/* --- agents in the chat list ---------------------------------------------------
+   Agent rows are <tr>s of the same .conversation-table as the chats: one list, one set
+   of columns, one scroll container. Nothing here may introduce a scroller of its own. */
+.agents-header-row > .agents-header-cell {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.2rem 0.35rem;
-  font-size: 0.68rem;
-  letter-spacing: 0.06em;
+  padding: 0.35rem 0.35rem 0.15rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   opacity: 0.6;
+  cursor: pointer;
   user-select: none;
+}
+.agents-header-cell::before {
+  content: '\25B8';
+  font-size: 0.8em;
+  transition: transform 120ms ease;
+}
+.agents-header-row:not(.is-collapsed) .agents-header-cell::before {
+  transform: rotate(90deg);
 }
 .agents-title { flex: 1; }
 .agents-count { font-variant-numeric: tabular-nums; }
@@ -2720,32 +2725,23 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   opacity: 0.75;
 }
 .agents-add:hover { opacity: 1; background: rgba(var(--accent-rgb, 229 162 61), 0.18); }
-.agent-row {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.1rem 0.35rem;
+
+.agent-row .agent-icon {
+  display: block;
+  margin: 0 auto;
+  opacity: 0.75;
 }
-.agent-open {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 0.82rem;
-  padding: 0.18rem 0.3rem;
-  border-radius: 4px;
-  cursor: pointer;
+.agent-row:hover .agent-icon { opacity: 1; }
+.agent-name {
+  font-size: 0.84rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-open:hover { background: rgba(var(--accent-rgb, 229 162 61), 0.14); }
 .agent-model {
-  font-size: 0.68rem;
-  max-width: 6.5rem;
+  width: 100%;
+  max-width: 100%;
+  font-size: 0.66rem;
   background: transparent;
   color: inherit;
   border: 1px solid rgba(var(--border-tint-rgb, 255 255 255), 0.16);
@@ -2753,22 +2749,4 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   padding: 0.05rem 0.15rem;
 }
 /* A registry row whose role file is missing: shown and flagged, never hidden. */
-.agent-row.is-missing .agent-open { opacity: 0.55; text-decoration: line-through; }
-
-/* Collapsed by default. 28 registered roles are ~720px of list; expanded on load they
-   push the chats off the bottom of the sidebar, which is what a folder is for avoiding.
-   Collapsing hides the rows only — the section stays in the one shared scroll container,
-   so there is still a single list and a single scrollbar. */
-.agents-section.is-collapsed .agents-list {
-  display: none;
-}
-.agents-head { cursor: pointer; }
-.agents-head::before {
-  content: '\25B8';
-  font-size: 0.7em;
-  opacity: 0.8;
-  transition: transform 120ms ease;
-}
-.agents-section:not(.is-collapsed) .agents-head::before {
-  transform: rotate(90deg);
-}
+.agent-row.is-missing .agent-name { opacity: 0.55; text-decoration: line-through; }

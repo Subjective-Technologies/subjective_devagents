@@ -75,15 +75,25 @@ function boot({ agents = AGENTS, withBridge = true } = {}) {
   return { dom, window, calls };
 }
 
-const rows = (window) => [...window.document.querySelectorAll('#agentsList .agent-row')];
+const rows = (window) => [...window.document.querySelectorAll('tr.agent-row')];
+const header = (window) => window.document.querySelector('tr.agents-header-row');
+
+// The group starts collapsed, and collapsed means the rows are not in the table at all.
+async function expand(h) {
+  if (header(h.window)?.classList.contains('is-collapsed')) {
+    header(h.window).dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    await tick(150);
+  }
+}
 
 test('every registered agent gets a row, with its assigned model selected', async (t) => {
   const h = boot();
   t.after(() => h.dom.window.close());
   await tick(200);
 
+  await expand(h);
   assert.deepStrictEqual(rows(h.window).map((r) => r.dataset.agent), ['manager_agent', 'coder_agent', 'ghost_agent']);
-  assert.strictEqual(h.window.document.getElementById('agentsCount').textContent, '3');
+  assert.strictEqual(header(h.window).querySelector('#agentsCount').textContent, '3');
   const manager = rows(h.window)[0].querySelector('.agent-model');
   assert.strictEqual(manager.value, 'claude');
   // A role may deliberately leave the model to the caller.
@@ -95,6 +105,7 @@ test('an agent whose role file is missing is flagged, not hidden', async (t) => 
   t.after(() => h.dom.window.close());
   await tick(200);
 
+  await expand(h);
   const ghost = rows(h.window).find((r) => r.dataset.agent === 'ghost_agent');
   assert.ok(ghost, 'the row must still be listed');
   assert.ok(ghost.classList.contains('is-missing'));
@@ -106,6 +117,7 @@ test('changing an agent model writes it through to the registry', async (t) => {
   t.after(() => h.dom.window.close());
   await tick(200);
 
+  await expand(h);
   const select = rows(h.window)[1].querySelector('.agent-model');
   select.value = 'grok';
   select.dispatchEvent(new h.window.Event('change', { bubbles: true }));
@@ -133,6 +145,7 @@ test('the + button creates an agent and the list is re-read from disk', async (t
   // so its prototype is not this file's Object.
   assert.strictEqual(h.calls.created.length, 1);
   assert.deepStrictEqual({ ...h.calls.created[0] }, { id: 'triage_agent', capability: 'incident triage', model: 'claude' });
+  await expand(h);
   assert.ok(rows(h.window).some((r) => r.dataset.agent === 'triage_agent'), 'new agent never appeared');
 });
 
@@ -141,7 +154,8 @@ test('clicking an agent starts a chat on its own model', async (t) => {
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  rows(h.window)[0].querySelector('.agent-open').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  await expand(h);
+  rows(h.window)[0].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
   await tick(200);
 
   assert.strictEqual(h.calls.chats.length, 1);
@@ -154,50 +168,74 @@ test('an agent with no model set does not silently start on the default', async 
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  rows(h.window)[1].querySelector('.agent-open').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  await expand(h);
+  rows(h.window)[1].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
   await tick(200);
 
   assert.deepStrictEqual(h.calls.chats, [], 'a chat was started without a model chosen');
 });
 
-test('a backend with no agent registry renders no agents section at all', async (t) => {
+test('a backend with no agent registry renders no agent rows at all', async (t) => {
   const h = boot({ withBridge: false });
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  assert.strictEqual(h.window.document.getElementById('agentsFolder'), null);
+  assert.strictEqual(rows(h.window).length, 0);
+  assert.strictEqual(header(h.window), null);
 });
 
-test('agents and chats share one scroll container, with no nested scrollbar', async (t) => {
-  // A nested scroller made the agents a fixed-height pane stuck above the chats.
+test('agents and chats are rows of one and the same table', async (t) => {
   const h = boot();
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  const list = h.window.document.getElementById('conversationList');
-  const section = h.window.document.getElementById('agentsFolder');
-  assert.ok(section, 'the agents section should exist');
-  assert.ok(list.contains(section), 'agents must live inside the chat list, not beside it');
-  assert.strictEqual(section.previousElementSibling, null, 'agents come first in the single list');
+  await expand(h);
+  const tables = h.window.document.querySelectorAll('#conversationList table.conversation-table');
+  assert.strictEqual(tables.length, 1, 'there must be exactly one list');
+  const bodyRows = [...tables[0].querySelectorAll('tbody > tr')];
+  const kinds = bodyRows.map((row) =>
+    row.classList.contains('agents-header-row') ? 'header'
+      : row.classList.contains('agent-row') ? 'agent' : 'chat');
+  assert.deepStrictEqual(kinds, ['header', 'agent', 'agent', 'agent', 'chat'],
+    'agents and chats must share one tbody');
+  // Same columns as the chats, so the two kinds of row line up.
+  assert.strictEqual(bodyRows[1].querySelectorAll('td').length, 4);
 
   const css = fs.readFileSync(path.join(ROOT, 'src', 'styles.css'), 'utf8');
-  const agentRules = css.slice(css.indexOf('--- agents section'));
-  assert.ok(!/\.agents-list\s*\{[^}]*overflow/.test(agentRules), '.agents-list must not scroll on its own');
-  assert.ok(!/\.agents-list\s*\{[^}]*max-height/.test(agentRules), '.agents-list must not be height-capped');
+  const agentRules = css.slice(css.indexOf('--- agents in the chat list'));
+  // `overflow: hidden` clips a long agent name; only auto/scroll add a second scrollbar,
+  // and a height cap is what turned the agents into a pane stuck above the chats.
+  assert.ok(!/overflow(-[xy])?\s*:\s*(auto|scroll)/.test(agentRules), 'agent styling must not add a scroller');
+  assert.ok(!/max-height\s*:/.test(agentRules), 'agent styling must not cap its height');
 });
 
-test('a chat-list re-render keeps the agents section and its model pickers', async (t) => {
+test('agent rows carry an inline person icon that follows the theme', async (t) => {
   const h = boot();
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  const before = h.window.document.getElementById('agentsFolder');
+  await expand(h);
+  const icon = rows(h.window)[0].querySelector('td.conversation-icon-cell svg.agent-icon');
+  assert.ok(icon, 'each agent row needs a person icon');
+  assert.strictEqual(icon.getAttribute('viewBox'), '0 0 16 16');
+  // currentColor, not a fixed fill, so it tracks the theme and hover like the rest.
+  assert.ok([...icon.querySelectorAll('[fill]')].every((n) => n.getAttribute('fill') === 'currentColor'));
+  assert.strictEqual(icon.getAttribute('aria-hidden'), 'true');
+});
+
+test('a chat-list re-render keeps the same agent row nodes', async (t) => {
+  const h = boot();
+  t.after(() => h.dom.window.close());
+  await tick(200);
+
+  await expand(h);
+  const before = rows(h.window)[0];
   vm.runInContext('renderConversationsNow()', h.dom.getInternalVMContext());
   await tick(150);
 
-  const after = h.window.document.getElementById('agentsFolder');
-  assert.ok(after, 'the agents section was dropped by a chat-list render');
-  assert.strictEqual(after, before, 'it must be the same node, or an open <select> would be closed');
+  const after = rows(h.window)[0];
+  assert.ok(after, 'the agent rows were dropped by a chat-list render');
+  assert.strictEqual(after, before, 'same node, or an open model <select> would be closed');
   assert.strictEqual(rows(h.window).length, 3);
 });
 
@@ -206,12 +244,13 @@ test('the folder starts collapsed so 28 roles cannot bury the chats', async (t) 
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  const section = h.window.document.getElementById('agentsFolder');
-  assert.ok(section.classList.contains('is-collapsed'), 'expanded by default would push chats off-screen');
+  assert.ok(header(h.window).classList.contains('is-collapsed'), 'expanded by default would push chats off-screen');
+  assert.strictEqual(rows(h.window).length, 0, 'collapsed means not in the table at all');
 
-  section.querySelector('.agents-head').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  header(h.window).dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
   await tick(80);
-  assert.ok(!section.classList.contains('is-collapsed'), 'the header should toggle it open');
+  assert.ok(!header(h.window).classList.contains('is-collapsed'), 'the header should toggle it open');
+  assert.strictEqual(rows(h.window).length, 3);
   assert.strictEqual(h.window.localStorage.getItem('subjective-chat-agents-collapsed'), 'false');
 });
 
@@ -220,14 +259,12 @@ test('the + button opens the dialog without collapsing the folder', async (t) =>
   t.after(() => h.dom.window.close());
   await tick(200);
 
-  const section = h.window.document.getElementById('agentsFolder');
-  section.querySelector('.agents-head').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
-  await tick(80);
-  assert.ok(!section.classList.contains('is-collapsed'));
+  await expand(h);
+  assert.ok(!header(h.window).classList.contains('is-collapsed'));
 
   h.window.document.getElementById('agentCreateButton').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
   await tick(120);
 
   assert.ok(h.window.document.getElementById('agentDialog').hasAttribute('open'));
-  assert.ok(!section.classList.contains('is-collapsed'), 'the + must not also toggle the folder');
+  assert.ok(!header(h.window).classList.contains('is-collapsed'), 'the + must not also toggle the group');
 });

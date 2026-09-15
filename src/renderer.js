@@ -1864,19 +1864,27 @@ function renderConversationsNow() {
   }
   // Same rows in the same order: repaint them where they stand, keeping every live DOM
   // node (the rename field included) attached.
-  const rendered = conversationList.querySelectorAll('.conversation-row');
+  const rendered = conversationList.querySelectorAll('.conversation-row:not(.agent-row)');
   if (
     visible.length
     && visible.length === rendered.length
     && visible.every((conversation, index) => rendered[index].dataset.target === conversation.target)
   ) {
     visible.forEach((conversation, index) => paintConversationRow(rendered[index], conversation));
+    syncAgentRows();
     return;
   }
   conversationList.replaceChildren();
-  // Agents first, in the same scroll container as the chats — one list, one scrollbar.
-  if (agentsAvailable && agents.length) conversationList.appendChild(ensureAgentsSection());
   if (!visible.length) {
+    // The agents are part of this list, so they stay even when no chat matches.
+    if (agentsAvailable && agents.length) {
+      const table = document.createElement('table');
+      table.className = 'conversation-table';
+      const body = document.createElement('tbody');
+      appendAgentRows(body);
+      table.appendChild(body);
+      conversationList.appendChild(table);
+    }
     const empty = document.createElement('div');
     empty.className = 'conversation-empty';
     empty.textContent = query ? `No chats matching “${conversationSearch.value.trim()}”` : 'No conversations yet';
@@ -1896,6 +1904,8 @@ function renderConversationsNow() {
   }
   table.appendChild(colgroup);
   const body = document.createElement('tbody');
+  // Agents first, as rows of this same table: one list, one set of columns, one scrollbar.
+  appendAgentRows(body);
   for (const conversation of visible) {
     const row = document.createElement('tr');
     row.className = 'conversation-row';
@@ -2767,50 +2777,32 @@ async function loadLlmConversations() {
 // The registry in workflow/agents: one row per logical role, its role file, and the model
 // currently assigned to it. Models are runtime metadata there, never part of an agent's
 // identity, so changing one re-points the agent rather than defining a new one.
+//
+// Agent rows are <tr>s in the same <table> as the chats, sharing its columns and its one
+// scroll container: agents and chats are a single list, not two stacked ones.
 let agents = [];
-let agentsSection = null;
-const AGENTS_COLLAPSED_KEY = 'subjective-chat-agents-collapsed';
 let agentsAvailable = true;
+let agentsCollapsed = true; // set from storage on first render
+// Kept across renders so rebuilding the chat list cannot close a model <select> that the
+// operator has open, and so the person icon is not re-parsed 28 times a render.
+const agentRowNodes = new Map();
+let agentsHeaderRow = null;
+const AGENTS_COLLAPSED_KEY = 'subjective-chat-agents-collapsed';
 
-// Agents and chats share one scrolling list: the sidebar has a single scroll container,
-// and a nested one made the agents a fixed-height pane stuck above the chats. Built once
-// and re-inserted on each list render rather than rebuilt, so re-rendering the chat list
-// cannot close a model <select> the operator has open.
-function ensureAgentsSection() {
-  if (agentsSection) return agentsSection;
-  const section = document.createElement('div');
-  section.id = 'agentsFolder';
-  section.className = 'agents-section';
-  section.innerHTML = `
-    <div class="agents-head">
-      <span class="agents-title">Agents</span>
-      <small id="agentsCount" class="agents-count"></small>
-      <button type="button" id="agentCreateButton" class="agents-add" title="New agent" aria-label="New agent">+</button>
-    </div>
-    <div id="agentsList" class="agents-list"></div>
-  `;
-  section.querySelector('#agentCreateButton').addEventListener('click', (event) => {
-    // The header toggles the folder, so the + must not also collapse it.
-    event.preventDefault();
-    event.stopPropagation();
-    openAgentDialog();
-  });
-  // Collapsed unless the operator opened it before: the registry is long enough to push
-  // the chats off the bottom of the sidebar if it is expanded on every load.
-  let collapsed = true;
+// Inline rather than an <img>: it inherits the row's colour through currentColor, so it
+// tracks the theme and the hover state like the rest of the list.
+const AGENT_ICON_SVG = `
+  <svg class="agent-icon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+    <circle cx="8" cy="5" r="3" fill="currentColor"></circle>
+    <path d="M8 9.4c-3.05 0-5.4 1.9-5.4 4.3 0 .33.27.6.6.6h9.6c.33 0 .6-.27.6-.6 0-2.4-2.35-4.3-5.4-4.3Z" fill="currentColor"></path>
+  </svg>`;
+
+function readAgentsCollapsed() {
   try {
-    collapsed = localStorage.getItem(AGENTS_COLLAPSED_KEY) !== 'false';
-  } catch (_error) { /* private mode: fall back to collapsed */ }
-  section.classList.toggle('is-collapsed', collapsed);
-  section.querySelector('.agents-head').addEventListener('click', () => {
-    const next = !section.classList.contains('is-collapsed');
-    section.classList.toggle('is-collapsed', next);
-    try {
-      localStorage.setItem(AGENTS_COLLAPSED_KEY, next ? 'true' : 'false');
-    } catch (_error) { /* ignore quota / private mode */ }
-  });
-  agentsSection = section;
-  return section;
+    return localStorage.getItem(AGENTS_COLLAPSED_KEY) !== 'false';
+  } catch (_error) {
+    return true; // private mode: collapsed, so the registry cannot bury the chats
+  }
 }
 
 function modelOptionsHtml(selected) {
@@ -2821,57 +2813,142 @@ function modelOptionsHtml(selected) {
   const rows = options.map((provider) =>
     `<option value="${escapeHtml(provider.key)}"${provider.key === chosen ? ' selected' : ''}>${escapeHtml(provider.label)}</option>`
   );
-  // "Unset" is a real state: a role may deliberately leave the model to the caller.
+  // "Not set" is a real state: a role may deliberately leave the model to the caller.
   return `<option value=""${chosen ? '' : ' selected'}>Not set</option>${rows.join('')}`;
+}
+
+function setAgentsCollapsed(next) {
+  agentsCollapsed = Boolean(next);
+  try {
+    localStorage.setItem(AGENTS_COLLAPSED_KEY, agentsCollapsed ? 'true' : 'false');
+  } catch (_error) { /* ignore quota / private mode */ }
+  renderConversations();
+}
+
+function applyAgentsCollapsed() {
+  if (agentsHeaderRow) agentsHeaderRow.classList.toggle('is-collapsed', agentsCollapsed);
+}
+
+function ensureAgentsHeaderRow() {
+  if (agentsHeaderRow) return agentsHeaderRow;
+  const row = document.createElement('tr');
+  row.className = 'agents-header-row';
+  row.innerHTML = `
+    <td class="agents-header-cell" colspan="4">
+      <span class="agents-title">Agents</span>
+      <small id="agentsCount" class="agents-count"></small>
+      <button type="button" id="agentCreateButton" class="agents-add" title="New agent" aria-label="New agent">+</button>
+    </td>
+  `;
+  row.querySelector('#agentCreateButton').addEventListener('click', (event) => {
+    // The header toggles the group, so the + must not also collapse it.
+    event.preventDefault();
+    event.stopPropagation();
+    openAgentDialog();
+  });
+  row.addEventListener('click', () => setAgentsCollapsed(!agentsCollapsed));
+  agentsHeaderRow = row;
+  return row;
+}
+
+function buildAgentRow(agent) {
+  const row = document.createElement('tr');
+  row.className = 'conversation-row agent-row';
+  row.dataset.agent = agent.id;
+  // A registry row whose role file is missing is shown and flagged, not hidden: hiding it
+  // would make a broken registry look healthy.
+  row.classList.toggle('is-missing', agent.exists === false);
+  row.title = agent.exists === false
+    ? `${agent.id} — role file ${agent.roleFile} is missing`
+    : `${agent.id}${agent.capability ? ` — ${agent.capability}` : ''}`;
+  row.innerHTML = `
+    <td class="conversation-user-cell">
+      <select class="agent-model" aria-label="Model for ${escapeHtml(agent.id)}">${modelOptionsHtml(agent.model)}</select>
+    </td>
+    <td class="conversation-icon-cell">${AGENT_ICON_SVG}</td>
+    <td class="conversation-name-cell"><span class="agent-name">${escapeHtml(agent.id)}</span></td>
+    <td class="conversation-unread-cell"></td>
+  `;
+  row.querySelector('.agent-model').addEventListener('click', (event) => event.stopPropagation());
+  row.querySelector('.agent-model').addEventListener('change', (event) => {
+    event.stopPropagation();
+    setAgentModel(agent.id, event.target.value);
+  });
+  row.addEventListener('click', () => startAgentChat(agent.id));
+  return row;
 }
 
 function renderAgents() {
   if (!agentsAvailable) return;
-  const section = ensureAgentsSection();
-  const agentsList = section.querySelector('#agentsList');
-  const agentsCount = section.querySelector('#agentsCount');
-  agentsList.replaceChildren();
-  agentsCount.textContent = agents.length ? String(agents.length) : '';
-  // Attach here too: agents can finish loading after the last full list render, and a
-  // render that patches rows in place never reaches the insertion below.
-  if (agents.length && conversationList && !conversationList.contains(section)) {
-    conversationList.prepend(section);
+  agentsCollapsed = readAgentsCollapsed();
+  const header = ensureAgentsHeaderRow();
+  const count = header.querySelector('#agentsCount');
+  if (count) count.textContent = agents.length ? String(agents.length) : '';
+  const seen = new Set();
+  for (const agent of agents) {
+    seen.add(agent.id);
+    const existing = agentRowNodes.get(agent.id);
+    // Rebuild only what changed, so an open <select> elsewhere in the group survives.
+    if (!existing || existing.dataset.model !== String(agent.model || '')) {
+      const row = buildAgentRow(agent);
+      row.dataset.model = String(agent.model || '');
+      agentRowNodes.set(agent.id, row);
+    }
   }
-  if (!agents.length) {
-    const empty = document.createElement('div');
-    empty.className = 'conversation-empty';
-    empty.textContent = 'No agent registry found';
-    agentsList.appendChild(empty);
+  for (const id of [...agentRowNodes.keys()]) {
+    if (!seen.has(id)) agentRowNodes.delete(id);
+  }
+  applyAgentsCollapsed();
+  renderConversations();
+}
+
+// Reconcile the agent rows inside the table that is already on screen. Rebuilding the
+// whole tbody because the agent list changed would replace every chat row too, and a row
+// swapped out from under a click becomes a stale element.
+function syncAgentRows() {
+  const body = conversationList.querySelector('table.conversation-table tbody');
+  if (!body) return;
+  for (const row of agentRowNodes.values()) row.remove();
+  if (!agentsAvailable || !agents.length) {
+    agentsHeaderRow?.remove();
     return;
   }
+  const header = ensureAgentsHeaderRow();
+  applyAgentsCollapsed();
+  if (header.parentNode !== body || body.firstChild !== header) {
+    body.insertBefore(header, body.firstChild);
+  }
+  if (agentsCollapsed) return;
+  const firstChat = header.nextSibling;
   for (const agent of agents) {
-    const row = document.createElement('div');
-    row.className = 'agent-row';
-    row.dataset.agent = agent.id;
-    // A registry row whose role file is missing is shown and flagged, not hidden:
-    // hiding it would make a broken registry look healthy.
-    row.classList.toggle('is-missing', agent.exists === false);
-    row.title = agent.exists === false
-      ? `${agent.id} — role file ${agent.roleFile} is missing`
-      : `${agent.id}${agent.capability ? ` — ${agent.capability}` : ''}`;
-    row.innerHTML = `
-      <button type="button" class="agent-open" title="Start a chat with this agent">${escapeHtml(agent.id)}</button>
-      <select class="agent-model" aria-label="Model for ${escapeHtml(agent.id)}">${modelOptionsHtml(agent.model)}</select>
-    `;
-    row.querySelector('.agent-open').addEventListener('click', () => startAgentChat(agent.id));
-    row.querySelector('.agent-model').addEventListener('change', (event) => {
-      setAgentModel(agent.id, event.target.value);
-    });
-    agentsList.appendChild(row);
+    const row = agentRowNodes.get(agent.id);
+    if (row) body.insertBefore(row, firstChat);
+  }
+}
+
+function appendAgentRows(body) {
+  if (!agentsAvailable || !agents.length) return;
+  body.appendChild(ensureAgentsHeaderRow());
+  applyAgentsCollapsed();
+  // Collapsed means not in the table at all, rather than present-but-hidden. Agent rows
+  // carry .conversation-row so they match the chat rows' styling, and those rules set
+  // `display` — including a mobile grid override — which beats [hidden]. Leaving them out
+  // is unambiguous and cannot be re-shown by a stylesheet.
+  if (agentsCollapsed) return;
+  for (const agent of agents) {
+    const row = agentRowNodes.get(agent.id);
+    if (row) body.appendChild(row);
   }
 }
 
 async function loadAgents() {
   if (!window.subjectiveChat.listAgents) {
-    // A backend with no registry to serve: no section at all, rather than an empty one.
+    // A backend with no registry to serve: no agent rows at all, rather than an empty group.
     agentsAvailable = false;
-    agentsSection?.remove();
-    agentsSection = null;
+    agents = [];
+    agentRowNodes.clear();
+    agentsHeaderRow = null;
+    renderConversations();
     return;
   }
   let payload = null;
