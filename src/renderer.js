@@ -60,10 +60,6 @@ const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmOsUserSelect = document.getElementById('llmOsUserSelect');
-const agentsFolder = document.getElementById('agentsFolder');
-const agentsList = document.getElementById('agentsList');
-const agentsCount = document.getElementById('agentsCount');
-const agentCreateButton = document.getElementById('agentCreateButton');
 const agentDialog = document.getElementById('agentDialog');
 const agentForm = document.getElementById('agentForm');
 const agentIdInput = document.getElementById('agentIdInput');
@@ -1878,6 +1874,8 @@ function renderConversationsNow() {
     return;
   }
   conversationList.replaceChildren();
+  // Agents first, in the same scroll container as the chats — one list, one scrollbar.
+  if (agentsAvailable && agents.length) conversationList.appendChild(ensureAgentsSection());
   if (!visible.length) {
     const empty = document.createElement('div');
     empty.className = 'conversation-empty';
@@ -2770,6 +2768,50 @@ async function loadLlmConversations() {
 // currently assigned to it. Models are runtime metadata there, never part of an agent's
 // identity, so changing one re-points the agent rather than defining a new one.
 let agents = [];
+let agentsSection = null;
+const AGENTS_COLLAPSED_KEY = 'subjective-chat-agents-collapsed';
+let agentsAvailable = true;
+
+// Agents and chats share one scrolling list: the sidebar has a single scroll container,
+// and a nested one made the agents a fixed-height pane stuck above the chats. Built once
+// and re-inserted on each list render rather than rebuilt, so re-rendering the chat list
+// cannot close a model <select> the operator has open.
+function ensureAgentsSection() {
+  if (agentsSection) return agentsSection;
+  const section = document.createElement('div');
+  section.id = 'agentsFolder';
+  section.className = 'agents-section';
+  section.innerHTML = `
+    <div class="agents-head">
+      <span class="agents-title">Agents</span>
+      <small id="agentsCount" class="agents-count"></small>
+      <button type="button" id="agentCreateButton" class="agents-add" title="New agent" aria-label="New agent">+</button>
+    </div>
+    <div id="agentsList" class="agents-list"></div>
+  `;
+  section.querySelector('#agentCreateButton').addEventListener('click', (event) => {
+    // The header toggles the folder, so the + must not also collapse it.
+    event.preventDefault();
+    event.stopPropagation();
+    openAgentDialog();
+  });
+  // Collapsed unless the operator opened it before: the registry is long enough to push
+  // the chats off the bottom of the sidebar if it is expanded on every load.
+  let collapsed = true;
+  try {
+    collapsed = localStorage.getItem(AGENTS_COLLAPSED_KEY) !== 'false';
+  } catch (_error) { /* private mode: fall back to collapsed */ }
+  section.classList.toggle('is-collapsed', collapsed);
+  section.querySelector('.agents-head').addEventListener('click', () => {
+    const next = !section.classList.contains('is-collapsed');
+    section.classList.toggle('is-collapsed', next);
+    try {
+      localStorage.setItem(AGENTS_COLLAPSED_KEY, next ? 'true' : 'false');
+    } catch (_error) { /* ignore quota / private mode */ }
+  });
+  agentsSection = section;
+  return section;
+}
 
 function modelOptionsHtml(selected) {
   const chosen = String(selected || '');
@@ -2784,9 +2826,17 @@ function modelOptionsHtml(selected) {
 }
 
 function renderAgents() {
-  if (!agentsList) return;
+  if (!agentsAvailable) return;
+  const section = ensureAgentsSection();
+  const agentsList = section.querySelector('#agentsList');
+  const agentsCount = section.querySelector('#agentsCount');
   agentsList.replaceChildren();
-  if (agentsCount) agentsCount.textContent = agents.length ? String(agents.length) : '';
+  agentsCount.textContent = agents.length ? String(agents.length) : '';
+  // Attach here too: agents can finish loading after the last full list render, and a
+  // render that patches rows in place never reaches the insertion below.
+  if (agents.length && conversationList && !conversationList.contains(section)) {
+    conversationList.prepend(section);
+  }
   if (!agents.length) {
     const empty = document.createElement('div');
     empty.className = 'conversation-empty';
@@ -2818,7 +2868,10 @@ function renderAgents() {
 
 async function loadAgents() {
   if (!window.subjectiveChat.listAgents) {
-    if (agentsFolder) agentsFolder.hidden = true; // a backend that has no registry to serve
+    // A backend with no registry to serve: no section at all, rather than an empty one.
+    agentsAvailable = false;
+    agentsSection?.remove();
+    agentsSection = null;
     return;
   }
   let payload = null;
@@ -3238,14 +3291,6 @@ if (importLlmButton && importLlmFileInput) {
 }
 
 if (createLlmButton) createLlmButton.addEventListener('click', openLlmDialog);
-if (agentCreateButton) {
-  agentCreateButton.addEventListener('click', (event) => {
-    // Inside a <summary>, so a plain click would toggle the folder instead.
-    event.preventDefault();
-    event.stopPropagation();
-    openAgentDialog();
-  });
-}
 if (agentCloseButton) agentCloseButton.addEventListener('click', () => agentDialog.close());
 if (agentForm) {
   agentForm.addEventListener('submit', async (event) => {

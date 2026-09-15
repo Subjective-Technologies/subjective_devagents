@@ -2688,52 +2688,43 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   }
 }
 
-/* --- agents folder -------------------------------------------------------------
-   A registry of logical roles, above the chat list: these are definitions, not
-   conversations, so they get their own section rather than being mixed in. */
-.agents-folder {
-  border-bottom: 1px solid rgba(var(--border-tint-rgb, 255 255 255), 0.08);
-  margin-bottom: 0.25rem;
+/* --- agents section ------------------------------------------------------------
+   Agents and chats share the sidebar's single scroll container. This section must
+   never scroll on its own: a nested scrollbar turned the agents into a fixed-height
+   pane stuck above the chats instead of one continuous list. */
+.agents-section {
+  margin: 0 0 0.35rem;
 }
-.agents-folder-head {
+.agents-head {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.35rem 0.5rem;
-  cursor: pointer;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
+  padding: 0.2rem 0.35rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  opacity: 0.75;
+  opacity: 0.6;
   user-select: none;
 }
-.agents-folder-head::-webkit-details-marker { display: none; }
-.agents-folder-head::before {
-  content: '▸';
-  font-size: 0.7em;
-  transition: transform 120ms ease;
-}
-.agents-folder[open] .agents-folder-head::before { transform: rotate(90deg); }
-.agents-folder-title { flex: 1; }
-.agents-folder-count { opacity: 0.6; font-variant-numeric: tabular-nums; }
-.agents-folder-add {
+.agents-title { flex: 1; }
+.agents-count { font-variant-numeric: tabular-nums; }
+.agents-add {
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 1.05rem;
+  font-size: 1rem;
   line-height: 1;
-  padding: 0 0.25rem;
+  padding: 0 0.3rem;
   cursor: pointer;
   border-radius: 4px;
-  opacity: 0.7;
+  opacity: 0.75;
 }
-.agents-folder-add:hover { opacity: 1; background: rgba(var(--accent-rgb, 229 162 61), 0.18); }
-.agents-list { max-height: 34vh; overflow-y: auto; }
+.agents-add:hover { opacity: 1; background: rgba(var(--accent-rgb, 229 162 61), 0.18); }
 .agent-row {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.12rem 0.5rem 0.12rem 1rem;
+  padding: 0.1rem 0.35rem;
 }
 .agent-open {
   flex: 1;
@@ -2744,7 +2735,7 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   color: inherit;
   font: inherit;
   font-size: 0.82rem;
-  padding: 0.18rem 0.25rem;
+  padding: 0.18rem 0.3rem;
   border-radius: 4px;
   cursor: pointer;
   overflow: hidden;
@@ -2753,13 +2744,31 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 }
 .agent-open:hover { background: rgba(var(--accent-rgb, 229 162 61), 0.14); }
 .agent-model {
-  font-size: 0.7rem;
-  max-width: 7.5rem;
+  font-size: 0.68rem;
+  max-width: 6.5rem;
   background: transparent;
   color: inherit;
   border: 1px solid rgba(var(--border-tint-rgb, 255 255 255), 0.16);
   border-radius: 4px;
-  padding: 0.05rem 0.2rem;
+  padding: 0.05rem 0.15rem;
 }
 /* A registry row whose role file is missing: shown and flagged, never hidden. */
 .agent-row.is-missing .agent-open { opacity: 0.55; text-decoration: line-through; }
+
+/* Collapsed by default. 28 registered roles are ~720px of list; expanded on load they
+   push the chats off the bottom of the sidebar, which is what a folder is for avoiding.
+   Collapsing hides the rows only — the section stays in the one shared scroll container,
+   so there is still a single list and a single scrollbar. */
+.agents-section.is-collapsed .agents-list {
+  display: none;
+}
+.agents-head { cursor: pointer; }
+.agents-head::before {
+  content: '\25B8';
+  font-size: 0.7em;
+  opacity: 0.8;
+  transition: transform 120ms ease;
+}
+.agents-section:not(.is-collapsed) .agents-head::before {
+  transform: rotate(90deg);
+}
