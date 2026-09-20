@@ -815,6 +815,42 @@ img.provider-avatar[src$="cursor.svg"] {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* Wider than the plain settings dialogs: a role file is prose, not a couple of fields. */
+.agent-edit-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.agent-edit-dialog code {
+  color: #eef3fb;
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.agent-edit-textarea {
+  min-width: 0;
+  height: min(52vh, 560px);
+  resize: vertical;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  background: #0b0f17;
+  color: #eef3fb;
+  padding: 10px 12px;
+  outline: none;
+  text-transform: none;
+  font-weight: 400;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+
+.agent-edit-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .checkbox-row {
   display: flex !important;
   grid-template-columns: none;

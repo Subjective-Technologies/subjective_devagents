@@ -69,6 +69,13 @@ const agentCapabilityInput = document.getElementById('agentCapabilityInput');
 const agentModelSelect = document.getElementById('agentModelSelect');
 const agentDialogStatus = document.getElementById('agentDialogStatus');
 const agentCloseButton = document.getElementById('agentCloseButton');
+const agentEditDialog = document.getElementById('agentEditDialog');
+const agentEditForm = document.getElementById('agentEditForm');
+const agentEditTitle = document.getElementById('agentEditTitle');
+const agentEditRoleFile = document.getElementById('agentEditRoleFile');
+const agentEditTextarea = document.getElementById('agentEditTextarea');
+const agentEditStatus = document.getElementById('agentEditStatus');
+const agentEditCloseButton = document.getElementById('agentEditCloseButton');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
 const llmStatusText = document.getElementById('llmStatusText');
 const sessionPickerDialog = document.getElementById('sessionPickerDialog');
@@ -2877,6 +2884,10 @@ function buildAgentRow(agent) {
     setAgentModel(agent.id, event.target.value);
   });
   row.addEventListener('click', () => startAgentChat(agent.id));
+  row.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    window.subjectiveChat.showAgentContextMenu?.(agent.id, event.clientX, event.clientY);
+  });
   return row;
 }
 
@@ -3011,6 +3022,27 @@ function openAgentDialog() {
   if (agentModelSelect) agentModelSelect.innerHTML = modelOptionsHtml('');
   agentDialog.showModal ? agentDialog.showModal() : agentDialog.setAttribute('open', '');
   if (agentIdInput) agentIdInput.focus();
+}
+
+// Right-click an agent row -> "Edit agent…" -> load its role .md and let the operator edit
+// the file directly. Unlike openAgentDialog (a few fields for a brand-new agent), this is
+// the agent's actual prose, so the source of truth is the file's full text, not a form.
+async function beginEditAgent(id) {
+  if (!agentEditDialog || !window.subjectiveChat.getAgentRole) return;
+  if (agentEditStatus) agentEditStatus.textContent = 'Loading…';
+  if (agentEditTitle) agentEditTitle.textContent = id;
+  if (agentEditRoleFile) agentEditRoleFile.textContent = `roles/${id}.md`;
+  if (agentEditTextarea) agentEditTextarea.value = '';
+  agentEditForm?.setAttribute('data-agent-id', id);
+  agentEditDialog.showModal ? agentEditDialog.showModal() : agentEditDialog.setAttribute('open', '');
+  const result = await window.subjectiveChat.getAgentRole(id);
+  if (!result?.ok) {
+    if (agentEditStatus) agentEditStatus.textContent = result?.error || `Could not load ${id}.`;
+    return;
+  }
+  if (agentEditTextarea) agentEditTextarea.value = result.text || '';
+  if (agentEditStatus) agentEditStatus.textContent = '';
+  agentEditTextarea?.focus();
 }
 
 async function stopActiveTurn(frameEl) {
@@ -3423,6 +3455,21 @@ if (agentForm) {
     await loadAgents();
   });
 }
+if (agentEditCloseButton) agentEditCloseButton.addEventListener('click', () => agentEditDialog.close());
+if (agentEditForm) {
+  agentEditForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = agentEditForm.getAttribute('data-agent-id') || '';
+    if (!id || !window.subjectiveChat.saveAgentRole) return;
+    const result = await window.subjectiveChat.saveAgentRole(id, agentEditTextarea?.value || '');
+    if (!result?.ok) {
+      if (agentEditStatus) agentEditStatus.textContent = result?.error || 'Could not save the agent.';
+      return;
+    }
+    agentEditDialog.close();
+    await loadAgents();
+  });
+}
 if (llmProviderSelect) {
   llmProviderSelect.addEventListener('change', () => {
     refreshLlmStatus();
@@ -3576,6 +3623,9 @@ window.subjectiveChat.onEvent((event) => {
       break;
     case 'conversation-rename-request':
       beginRenameConversation(event.target);
+      break;
+    case 'agent-edit-request':
+      beginEditAgent(event.id);
       break;
     case 'llm-conversation-renamed': {
       const conversation = conversations.get(event.target);

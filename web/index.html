@@ -252,6 +252,25 @@
         </div>
       </form>
     </dialog>
+    <dialog id="agentEditDialog" class="settings-dialog agent-edit-dialog">
+      <form id="agentEditForm" class="settings-form">
+        <div class="settings-head">
+          <div>
+            <h3>Edit <span id="agentEditTitle"></span></h3>
+            <p>Editing <code id="agentEditRoleFile"></code> directly. Saved changes take effect on that agent's next turn.</p>
+          </div>
+          <button type="button" id="agentEditCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <label>
+          <span>Role definition (Markdown)</span>
+          <textarea id="agentEditTextarea" class="agent-edit-textarea" spellcheck="false" required></textarea>
+        </label>
+        <p id="agentEditStatus" class="settings-status"></p>
+        <div class="settings-actions">
+          <button type="submit" class="primary-button">Save</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="llmDialog" class="settings-dialog">
       <form id="llmForm" class="settings-form">
         <div class="settings-head">
