@@ -60,6 +60,8 @@ const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmOsUserSelect = document.getElementById('llmOsUserSelect');
+const llmOsUserRow = document.getElementById('llmOsUserRow');
+const llmWorkspaceLabel = document.getElementById('llmWorkspaceLabel');
 const agentDialog = document.getElementById('agentDialog');
 const agentForm = document.getElementById('agentForm');
 const agentIdInput = document.getElementById('agentIdInput');
@@ -3281,9 +3283,40 @@ if (suLoginDialog) {
   suLoginDialog.addEventListener('close', () => { suLoginUsername = null; });
 }
 
+// An SSH chat is a shell on another machine, not a CLI on this one. Three fields in
+// this dialog mean something different for it, so the dialog changes shape rather
+// than asking for answers that do not apply.
+const SSH_PROVIDER = 'ssh';
+
+function applyProviderShape(provider) {
+  const ssh = provider === SSH_PROVIDER;
+  // "Run as" picks whose *local* CLI login answers. An SSH chat's account is part of
+  // the target instead, so the question is meaningless and the row goes away.
+  if (llmOsUserRow) llmOsUserRow.hidden = ssh;
+  if (llmWorkspaceLabel) llmWorkspaceLabel.textContent = ssh ? 'SSH target' : 'Workspace';
+  if (!llmWorkspaceInput) return;
+  if (ssh) {
+    llmWorkspaceInput.placeholder = 'deploy@host:/srv/app  ·  or a ~/.ssh/config alias';
+    // The local default is not a machine; leaving it there would look like an answer.
+    if (llmWorkspaceInput.value === '/subjective') llmWorkspaceInput.value = '';
+  } else {
+    llmWorkspaceInput.placeholder = '';
+    if (!llmWorkspaceInput.value) llmWorkspaceInput.value = '/subjective';
+  }
+}
+
 async function refreshLlmStatus() {
   const provider = selectedLlmProvider();
   const label = llmProviderLabel(provider);
+  applyProviderShape(provider);
+  if (provider === SSH_PROVIDER) {
+    // Nothing to probe until a target exists: the status of "some machine" is not a
+    // question, and asking the backend would only report the host as missing.
+    llmStatusText.textContent = 'Name a machine above. Credentials come from this '
+      + "server's ~/.ssh — a Host alias needs nothing else.";
+    llmStatusText.dataset.ready = 'true';
+    return;
+  }
   llmStatusText.textContent = `Checking ${label} datasource…`;
   llmStatusText.dataset.ready = 'false';
   const status = await window.subjectiveChat.getLlmStatus(provider);
@@ -3300,6 +3333,7 @@ async function refreshLlmOsUsers() {
   // whenever the agent changes rather than listed once.
   if (!llmOsUserSelect || !window.subjectiveChat.listProviderSessions) return;
   const provider = selectedLlmProvider();
+  if (provider === SSH_PROVIDER) return; // no local login is involved
   let listed = null;
   try {
     listed = await window.subjectiveChat.listProviderSessions(provider);
@@ -3333,6 +3367,7 @@ async function refreshLlmOsUsers() {
 async function openLlmDialog() {
   if (!llmDialog) return;
   llmDialog.showModal ? llmDialog.showModal() : llmDialog.setAttribute('open', '');
+  applyProviderShape(selectedLlmProvider());
   llmNameInput.focus();
   await Promise.all([refreshLlmStatus(), refreshLlmOsUsers()]);
 }
@@ -3401,11 +3436,20 @@ if (llmDialog) llmDialog.addEventListener('click', (event) => {
 if (llmForm) llmForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const provider = selectedLlmProvider();
+  const workspace = llmWorkspaceInput.value.trim();
+  if (provider === SSH_PROVIDER && !workspace) {
+    llmStatusText.textContent = 'Name the machine: user@host, user@host:/path, or a ~/.ssh/config alias.';
+    llmStatusText.dataset.ready = 'false';
+    llmWorkspaceInput.focus();
+    return;
+  }
   const result = await window.subjectiveChat.createLlmConversation({
     name: llmNameInput.value,
-    workspace: llmWorkspaceInput.value,
+    workspace,
     provider,
-    osUser: llmOsUserSelect ? llmOsUserSelect.value : ''
+    // An SSH chat's remote account is part of its target, so it never carries the
+    // local "run as" flag — sending one would ask the backend to su before ssh.
+    osUser: provider === SSH_PROVIDER ? '' : (llmOsUserSelect ? llmOsUserSelect.value : '')
   });
   if (!result?.ok) {
     llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;

@@ -268,9 +268,10 @@
             <option value="claude">Claude</option>
             <option value="cursor">Cursor</option>
             <option value="grok">Grok</option>
+            <option value="ssh">SSH</option>
           </select>
         </label>
-        <label>
+        <label id="llmOsUserRow">
           <span>Run as</span>
           <select id="llmOsUserSelect">
             <option value="">This machine's account</option>
@@ -281,7 +282,7 @@
           <input id="llmNameInput" autocomplete="off" placeholder="Implement authentication" required>
         </label>
         <label>
-          <span>Workspace</span>
+          <span id="llmWorkspaceLabel">Workspace</span>
           <input id="llmWorkspaceInput" autocomplete="off" value="/subjective" required>
         </label>
         <div id="llmStatusText" class="llm-status">Checking Codex datasource…</div>
