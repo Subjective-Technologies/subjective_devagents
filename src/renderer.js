@@ -75,6 +75,7 @@ const sshPasswordRow = document.getElementById('sshPasswordRow');
 const sshPasswordInput = document.getElementById('sshPasswordInput');
 const sshPassphraseRow = document.getElementById('sshPassphraseRow');
 const sshPassphraseInput = document.getElementById('sshPassphraseInput');
+const sshHostKeySelect = document.getElementById('sshHostKeySelect');
 const sshDirectoryInput = document.getElementById('sshDirectoryInput');
 const sshNameInput = document.getElementById('sshNameInput');
 const sshKeyUploadButton = document.getElementById('sshKeyUploadButton');
@@ -3482,6 +3483,12 @@ function applyConnectionChoice() {
     if (sshKeySelect && saved.private_key_path) sshKeySelect.value = saved.private_key_path;
     sshDirectoryInput.value = saved.working_directory || '';
     sshNameInput.value = saved.name || '';
+    if (sshHostKeySelect) {
+      // A connection saved before the policy existed carries the boolean it replaced.
+      sshHostKeySelect.value = saved.host_key_policy
+        || (saved.strict_host_key_checking === false ? 'off'
+          : saved.strict_host_key_checking === true ? 'strict' : 'accept-new');
+    }
     // Stored secrets are never sent to the browser. An empty box with this
     // placeholder means "one is saved"; typing replaces it, clearing it removes it.
     sshPasswordInput.value = '';
@@ -3496,6 +3503,7 @@ function applyConnectionChoice() {
       if (input) input.value = '';
     }
     if (sshAuthSelect) sshAuthSelect.value = 'agent';
+    if (sshHostKeySelect) sshHostKeySelect.value = 'accept-new';
     if (sshPasswordInput) sshPasswordInput.placeholder = '';
     if (sshPassphraseInput) sshPassphraseInput.placeholder = 'only if the key is encrypted';
   }
@@ -3509,6 +3517,7 @@ function sshFormValues() {
     auth_method: sshAuthSelect.value,
     working_directory: sshDirectoryInput.value.trim(),
     name: sshNameInput.value.trim(),
+    host_key_policy: sshHostKeySelect ? sshHostKeySelect.value : 'accept-new',
   };
   if (sshPortInput.value.trim()) values.port = sshPortInput.value.trim();
   if (values.auth_method === 'private_key_path') {

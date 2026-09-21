@@ -342,6 +342,13 @@
             <label id="sshPassphraseRow" hidden><span>Key passphrase</span>
               <input id="sshPassphraseInput" type="password" autocomplete="new-password"
                      placeholder="only if the key is encrypted"></label>
+            <label><span>Host key</span>
+              <select id="sshHostKeySelect">
+                <option value="accept-new">Trust on first use, refuse if it changes</option>
+                <option value="strict">Strict — must already be in known_hosts</option>
+                <option value="off">Do not check</option>
+              </select>
+            </label>
             <label><span>Directory</span>
               <input id="sshDirectoryInput" autocomplete="off" placeholder="/srv/app  (optional)"></label>
             <label class="ssh-wide"><span>Save as</span>
