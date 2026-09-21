@@ -3928,9 +3928,12 @@ if (llmForm) llmForm.addEventListener('submit', async (event) => {
     workspace,
     provider,
     sshConnection,
-    // An SSH chat's remote account is part of its target, so it never carries the
-    // local "run as" flag — sending one would ask the backend to su before ssh.
-    osUser: provider === SSH_PROVIDER ? '' : (llmOsUserSelect ? llmOsUserSelect.value : '')
+    // Never both. "Run as" asks the backend to su into a local account first, which
+    // is meaningless once the agent runs on another computer — and the backend
+    // checks it before anything else, so sending one would make an SSH chat fail
+    // with "reconnect as <user>" and never reach SSH at all. Hiding the row was not
+    // enough: a hidden <select> still has a value.
+    osUser: usingSsh(provider) ? '' : (llmOsUserSelect ? llmOsUserSelect.value : '')
   });
   if (!result?.ok) {
     llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;
