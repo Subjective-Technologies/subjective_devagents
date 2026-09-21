@@ -401,6 +401,10 @@
     updateSshConnection: (connection) => post('/api/ssh/connections/update', connection),
     deleteSshConnection: (id) => post('/api/ssh/connections/delete', { id }),
     testSshConnection: (connection) => post('/api/ssh/connections/test', connection),
+    // The key text is read in the browser and posted; it is never echoed back by
+    // any later call, which only ever returns paths and names.
+    uploadSshKey: (name, content) => post('/api/ssh/keys', { name, content }),
+    deleteSshKey: (path) => post('/api/ssh/keys/delete', { path }),
     // The agent registry in workflow/agents.
     listAgents: () => get('/api/agents'),
     createAgent: (payload) => post('/api/agents', payload),

@@ -2810,3 +2810,5 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 .ssh-test-status[data-ok="true"] { color: var(--accent-ok, #63c088); opacity: 1; }
 .ssh-test-status[data-ok="false"] { color: var(--accent-bad, #f2635f); opacity: 1; }
 @media (max-width: 560px) { .ssh-grid { grid-template-columns: minmax(0, 1fr); } }
+.ssh-key-picker { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.ssh-key-picker select { flex: 1; min-width: 0; }

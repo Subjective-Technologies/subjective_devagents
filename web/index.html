@@ -328,7 +328,15 @@
               </select>
             </label>
             <label id="sshKeyRow" hidden><span>Key</span>
-              <select id="sshKeySelect"></select></label>
+              <span class="ssh-key-picker">
+                <select id="sshKeySelect"></select>
+                <!-- The server's ~/.ssh is the server's, not this laptop's, so on a
+                     deployed instance the only way to reach a new machine is to send
+                     the key. Read in the browser and posted; never sent back. -->
+                <button type="button" id="sshKeyUploadButton" class="plain-button">Upload…</button>
+                <button type="button" id="sshKeyDeleteButton" class="plain-button" hidden>Remove</button>
+                <input type="file" id="sshKeyFileInput" hidden>
+              </span></label>
             <label id="sshPasswordRow" hidden><span>Password</span>
               <input id="sshPasswordInput" type="password" autocomplete="new-password"></label>
             <label id="sshPassphraseRow" hidden><span>Key passphrase</span>

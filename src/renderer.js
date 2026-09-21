@@ -77,6 +77,9 @@ const sshPassphraseRow = document.getElementById('sshPassphraseRow');
 const sshPassphraseInput = document.getElementById('sshPassphraseInput');
 const sshDirectoryInput = document.getElementById('sshDirectoryInput');
 const sshNameInput = document.getElementById('sshNameInput');
+const sshKeyUploadButton = document.getElementById('sshKeyUploadButton');
+const sshKeyDeleteButton = document.getElementById('sshKeyDeleteButton');
+const sshKeyFileInput = document.getElementById('sshKeyFileInput');
 const sshTestButton = document.getElementById('sshTestButton');
 const sshDeleteButton = document.getElementById('sshDeleteButton');
 const sshTestStatus = document.getElementById('sshTestStatus');
@@ -3416,21 +3419,41 @@ async function refreshSshCatalog() {
 
   // Keys are offered by path; their contents never leave the server.
   if (sshKeySelect) {
+    const previousKey = sshKeySelect.value;
     sshKeySelect.replaceChildren();
     if (!sshCatalog.keys.length) {
       const option = document.createElement('option');
       option.value = '';
-      option.textContent = 'No keys found in the server\u2019s ~/.ssh';
+      option.textContent = 'No keys yet — use Upload…';
       sshKeySelect.appendChild(option);
     }
     for (const key of sshCatalog.keys) {
       const option = document.createElement('option');
       option.value = key.path;
-      option.textContent = key.tooOpen ? `${key.name} — too readable, ssh will refuse it` : key.name;
+      const where = key.source === 'uploaded' ? 'uploaded' : "server's ~/.ssh";
+      option.textContent = key.tooOpen
+        ? `${key.name} — too readable, ssh will refuse it`
+        : `${key.name} · ${where}`;
       sshKeySelect.appendChild(option);
     }
+    if ([...sshKeySelect.options].some((option) => option.value === previousKey)) {
+      sshKeySelect.value = previousKey;
+    }
   }
+  applyKeyShape();
   applyConnectionChoice();
+}
+
+function selectedKey() {
+  const path = sshKeySelect ? sshKeySelect.value : '';
+  return sshCatalog.keys.find((key) => key.path === path) || null;
+}
+
+function applyKeyShape() {
+  // Only an uploaded key can be removed from here. One in the server's own ~/.ssh
+  // belongs to the machine, and deleting it from a chat dialog would be a surprise.
+  const key = selectedKey();
+  if (sshKeyDeleteButton) sshKeyDeleteButton.hidden = !(key && key.source === 'uploaded');
 }
 
 function applyAuthShape() {
@@ -3675,6 +3698,54 @@ async function resolveSshWorkspace() {
 
 if (sshConnectionSelect) sshConnectionSelect.addEventListener('change', applyConnectionChoice);
 if (sshAuthSelect) sshAuthSelect.addEventListener('change', applyAuthShape);
+if (sshKeySelect) sshKeySelect.addEventListener('change', applyKeyShape);
+
+if (sshKeyUploadButton) sshKeyUploadButton.addEventListener('click', () => sshKeyFileInput.click());
+
+if (sshKeyFileInput) sshKeyFileInput.addEventListener('change', async () => {
+  const file = sshKeyFileInput.files && sshKeyFileInput.files[0];
+  // Clear it immediately: re-picking the same file fires no change event otherwise,
+  // so a failed upload could not be retried with the same key.
+  sshKeyFileInput.value = '';
+  if (!file) return;
+  sshTestStatus.textContent = `Uploading ${file.name}…`;
+  sshTestStatus.dataset.ok = '';
+  try {
+    const content = await file.text();
+    const result = await window.subjectiveChat.uploadSshKey(file.name, content);
+    if (!result?.ok) {
+      sshTestStatus.textContent = result?.error || 'Could not store that key.';
+      sshTestStatus.dataset.ok = 'false';
+      return;
+    }
+    await refreshSshCatalog();
+    // Selecting it is the point of having uploaded it.
+    if (sshAuthSelect) sshAuthSelect.value = 'private_key_path';
+    if (sshKeySelect) sshKeySelect.value = result.key.path;
+    applyAuthShape();
+    applyKeyShape();
+    sshTestStatus.textContent = `${result.key.name} added.`;
+    sshTestStatus.dataset.ok = 'true';
+  } catch (error) {
+    sshTestStatus.textContent = String(error);
+    sshTestStatus.dataset.ok = 'false';
+  }
+});
+
+if (sshKeyDeleteButton) sshKeyDeleteButton.addEventListener('click', async () => {
+  const key = selectedKey();
+  if (!key || key.source !== 'uploaded') return;
+  if (!window.confirm(`Delete the uploaded key “${key.name}” from the server?`)) return;
+  const result = await window.subjectiveChat.deleteSshKey(key.path);
+  if (!result?.ok) {
+    sshTestStatus.textContent = result?.error || 'Could not delete that key.';
+    sshTestStatus.dataset.ok = 'false';
+    return;
+  }
+  await refreshSshCatalog();
+  sshTestStatus.textContent = `${key.name} deleted.`;
+  sshTestStatus.dataset.ok = '';
+});
 
 if (sshTestButton) sshTestButton.addEventListener('click', async () => {
   // The failures worth catching — a wrong account, an unreadable key, a changed
