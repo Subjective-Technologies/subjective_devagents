@@ -1848,6 +1848,43 @@ function conversationUserPillHtml(conversation) {
   return `<span class="conversation-user-pill user-hue-${slot}" title="${escapeHtml(username)}">${escapeHtml(username)}</span>`;
 }
 
+// Which machine a chat's agent runs on. Worth a column of its own: two chats with
+// the same agent and the same name behave completely differently depending on the
+// answer, and nothing else in the row distinguishes them.
+const LOCATION_ICONS = {
+  // Two nodes and a link — the conventional "somewhere else on the network".
+  ssh: '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+     + '<rect x="1" y="2" width="6" height="4" rx="1"/><rect x="9" y="10" width="6" height="4" rx="1"/>'
+     + '<path d="M4 6v3a1 1 0 0 0 1 1h7"/></svg>',
+  // One box, standing on its own.
+  local: '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+       + '<rect x="2" y="3" width="12" height="8" rx="1"/><path d="M6 14h4"/></svg>',
+};
+
+function conversationLocationHtml(conversation) {
+  if (conversation.kind !== 'llm') {
+    return '<span class="conversation-location is-empty" aria-hidden="true"></span>';
+  }
+  const overSsh = conversation.provider === SSH_PROVIDER || Boolean(conversation.sshConnection);
+  if (!overSsh) {
+    return `<span class="conversation-location is-local" title="Runs on this machine">`
+      + `${LOCATION_ICONS.local}</span>`;
+  }
+  let where = '';
+  if (conversation.provider === SSH_PROVIDER) {
+    // An SSH chat's target is its workspace, so that string is the machine.
+    where = String(conversation.workspace || '').trim();
+  } else {
+    // The catalog is loaded once at startup; a chat can outlive the connection it
+    // names, and saying so beats a tooltip that claims a machine that is gone.
+    const saved = savedConnection(conversation.sshConnection);
+    where = saved ? `${saved.username ? saved.username + '@' : ''}${saved.host}` : '';
+  }
+  const title = where ? `Runs over SSH on ${where}` : 'Runs over SSH — that connection no longer exists';
+  return `<span class="conversation-location is-ssh${where ? '' : ' is-broken'}" `
+    + `title="${escapeHtml(title)}">${LOCATION_ICONS.ssh}</span>`;
+}
+
 function syncConversationTitles() {
   const active = conversations.get(activeTarget);
   if (active) {
@@ -1937,7 +1974,7 @@ function renderConversationsNow() {
   const table = document.createElement('table');
   table.className = 'conversation-table';
   const colgroup = document.createElement('colgroup');
-  for (const name of ['col-user', 'col-icon', 'col-name', 'col-unread']) {
+  for (const name of ['col-user', 'col-location', 'col-icon', 'col-name', 'col-unread']) {
     const col = document.createElement('col');
     col.className = name;
     colgroup.appendChild(col);
@@ -1970,6 +2007,7 @@ function renderConversationsNow() {
       : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
     row.innerHTML = `
       <td class="conversation-user-cell">${conversationUserPillHtml(conversation)}</td>
+      <td class="conversation-location-cell">${conversationLocationHtml(conversation)}</td>
       <td class="conversation-icon-cell">${icon}</td>
       <td class="conversation-name-cell"><span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span></td>
       <td class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</td>
@@ -2923,6 +2961,9 @@ function buildAgentRow(agent) {
     <td class="conversation-user-cell">
       <select class="agent-model" aria-label="Model for ${escapeHtml(agent.id)}">${modelOptionsHtml(agent.model)}</select>
     </td>
+    <!-- An agent row is a registry entry, not a chat, so it has no machine. The
+         cell still has to be here: it shares this table's columns. -->
+    <td class="conversation-location-cell"><span class="conversation-location is-empty" aria-hidden="true"></span></td>
     <td class="conversation-icon-cell">${AGENT_ICON_SVG}</td>
     <td class="conversation-name-cell"><span class="agent-name">${escapeHtml(agent.id)}</span></td>
     <td class="conversation-unread-cell"></td>
@@ -3797,6 +3838,10 @@ if (sshSecretForm) sshSecretForm.addEventListener('submit', async (event) => {
 });
 document.getElementById('sshSecretCloseButton')?.addEventListener('click', closeSshSecretDialog);
 document.getElementById('sshSecretCancelButton')?.addEventListener('click', closeSshSecretDialog);
+
+// Loaded at startup, not just when the dialog opens: the chat list's SSH markers
+// name the machine each chat runs on, and that name comes from here.
+refreshSshCatalog().then(() => renderConversations()).catch(() => {});
 
 if (llmOverSshToggle) llmOverSshToggle.addEventListener('change', () => {
   applyProviderShape(selectedLlmProvider());

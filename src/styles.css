@@ -2834,3 +2834,28 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 .ssh-secret-dialog code { word-break: break-all; }
 .llm-ssh-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; }
 .llm-ssh-toggle input { width: auto; }
+
+/* Which machine a chat's agent runs on. A column rather than a badge: two chats
+   with the same agent and name behave completely differently depending on it. */
+.conversation-table col.col-location { width: 22px; }
+.conversation-location-cell { text-align: center; vertical-align: middle; }
+.conversation-location {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  opacity: 0.55;
+}
+.conversation-location svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.conversation-location.is-ssh { color: var(--accent-ok, #63c088); opacity: 0.9; }
+/* A chat pointing at a connection that has been deleted still has to be legible. */
+.conversation-location.is-ssh.is-broken { color: var(--accent-bad, #f2635f); }
+.conversation-location.is-empty { visibility: hidden; }
+.conversation-row.active .conversation-location { opacity: 1; }
