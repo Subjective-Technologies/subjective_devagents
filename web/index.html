@@ -290,6 +290,13 @@
             <option value="ssh">SSH</option>
           </select>
         </label>
+        <!-- Any agent can run its CLI on another machine instead of this one. The
+             connection picker below is shared with SSH chats: same saved
+             connections, same keys, same "New connection…". -->
+        <label class="llm-ssh-toggle">
+          <input type="checkbox" id="llmOverSshToggle">
+          <span>Run this agent over SSH, on another machine</span>
+        </label>
         <label id="llmOsUserRow">
           <span>Run as</span>
           <select id="llmOsUserSelect">

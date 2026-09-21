@@ -2832,3 +2832,5 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 .code-card.terminal-card pre code.hljs { color: inherit; line-height: 1.4; }
 .ssh-secret-dialog .settings-form { max-width: 420px; }
 .ssh-secret-dialog code { word-break: break-all; }
+.llm-ssh-toggle { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.llm-ssh-toggle input { width: auto; }

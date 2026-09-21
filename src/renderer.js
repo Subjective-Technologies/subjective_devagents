@@ -62,6 +62,7 @@ const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmOsUserSelect = document.getElementById('llmOsUserSelect');
 const llmOsUserRow = document.getElementById('llmOsUserRow');
 const llmWorkspaceLabel = document.getElementById('llmWorkspaceLabel');
+const llmOverSshToggle = document.getElementById('llmOverSshToggle');
 const sshConnectionRow = document.getElementById('sshConnectionRow');
 const sshConnectionSelect = document.getElementById('sshConnectionSelect');
 const sshConnectionForm = document.getElementById('sshConnectionForm');
@@ -3372,15 +3373,33 @@ const SSH_PROVIDER = 'ssh';
 // them. Never contains a password: the server reports only whether one is stored.
 let sshCatalog = { connections: [], keys: [], configHosts: [] };
 
+// True when the chat being created should run its agent on another machine: either
+// the SSH datasource itself, or an LLM with the toggle on.
+function usingSsh(provider) {
+  return provider === SSH_PROVIDER || Boolean(llmOverSshToggle?.checked);
+}
+
 function applyProviderShape(provider) {
-  const ssh = provider === SSH_PROVIDER;
-  // "Run as" picks whose *local* CLI login answers. An SSH chat's account is part of
-  // the connection instead, so the question is meaningless and the row goes away.
+  const ssh = usingSsh(provider);
+  // The toggle is meaningless for the SSH datasource, which is nothing but SSH.
+  const toggleRow = llmOverSshToggle?.closest('label');
+  if (toggleRow) toggleRow.hidden = provider === SSH_PROVIDER;
+  // "Run as" picks whose *local* CLI login answers, which is meaningless once the
+  // agent runs on a different computer — that machine has its own accounts.
   if (llmOsUserRow) llmOsUserRow.hidden = ssh;
-  // A machine needs a host, an account and a credential. The workspace box holds one
-  // string and cannot carry those, so for SSH it is replaced by the connection picker.
-  if (llmWorkspaceInput) llmWorkspaceInput.closest('label').hidden = ssh;
-  if (llmWorkspaceInput) llmWorkspaceInput.required = !ssh;
+  // For the SSH datasource the workspace box *is* the target and is replaced by the
+  // picker. For an LLM over SSH it stays: it is the directory the agent works in,
+  // now a path on the remote machine.
+  const workspaceRow = llmWorkspaceInput?.closest('label');
+  const bareSsh = provider === SSH_PROVIDER;
+  if (workspaceRow) workspaceRow.hidden = bareSsh;
+  if (llmWorkspaceInput) {
+    llmWorkspaceInput.required = !bareSsh;
+    if (ssh && !bareSsh) llmWorkspaceInput.placeholder = 'a path on the remote machine';
+  }
+  if (llmWorkspaceLabel && !bareSsh) {
+    llmWorkspaceLabel.textContent = ssh ? 'Remote workspace' : 'Workspace';
+  }
   if (sshConnectionRow) sshConnectionRow.hidden = !ssh;
   if (!ssh && sshConnectionForm) sshConnectionForm.hidden = true;
   if (llmWorkspaceInput && !ssh && !llmWorkspaceInput.value) llmWorkspaceInput.value = '/subjective';
@@ -3562,6 +3581,14 @@ async function refreshLlmStatus() {
   const provider = selectedLlmProvider();
   const label = llmProviderLabel(provider);
   applyProviderShape(provider);
+  if (provider !== SSH_PROVIDER && usingSsh(provider)) {
+    // Nothing local to probe: the login that matters is on the other machine, and
+    // the connection's own Test button is what checks it.
+    llmStatusText.textContent = `${label} will run on the machine you pick below. `
+      + 'Use Test connection to check it is reachable.';
+    llmStatusText.dataset.ready = 'true';
+    return;
+  }
   if (provider === SSH_PROVIDER) {
     // Nothing to probe until a target exists: the status of "some machine" is not a
     // question, and asking the backend would only report the host as missing.
@@ -3771,6 +3798,10 @@ if (sshSecretForm) sshSecretForm.addEventListener('submit', async (event) => {
 document.getElementById('sshSecretCloseButton')?.addEventListener('click', closeSshSecretDialog);
 document.getElementById('sshSecretCancelButton')?.addEventListener('click', closeSshSecretDialog);
 
+if (llmOverSshToggle) llmOverSshToggle.addEventListener('change', () => {
+  applyProviderShape(selectedLlmProvider());
+  refreshLlmStatus();
+});
 if (sshConnectionSelect) sshConnectionSelect.addEventListener('change', applyConnectionChoice);
 if (sshAuthSelect) sshAuthSelect.addEventListener('change', applyAuthShape);
 if (sshKeySelect) sshKeySelect.addEventListener('change', applyKeyShape);
@@ -3873,16 +3904,30 @@ if (llmForm) llmForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const provider = selectedLlmProvider();
   let workspace = llmWorkspaceInput.value.trim();
+  let sshConnection = '';
   if (provider === SSH_PROVIDER) {
     // The chat stores one string. For SSH it is either `saved:<id>`, which carries
     // the key and options with it, or a plain target for a ~/.ssh/config alias.
     workspace = await resolveSshWorkspace();
     if (!workspace) return;
+  } else if (usingSsh(provider)) {
+    // An agent over SSH keeps its workspace as the remote directory and names the
+    // machine separately — the two answer different questions.
+    const reference = await resolveSshWorkspace();
+    if (!reference) return;
+    if (!reference.startsWith('saved:')) {
+      llmStatusText.textContent = 'Give this connection a name so the chat can refer to it.';
+      llmStatusText.dataset.ready = 'false';
+      sshNameInput.focus();
+      return;
+    }
+    sshConnection = reference.slice('saved:'.length);
   }
   const result = await window.subjectiveChat.createLlmConversation({
     name: llmNameInput.value,
     workspace,
     provider,
+    sshConnection,
     // An SSH chat's remote account is part of its target, so it never carries the
     // local "run as" flag — sending one would ask the backend to su before ssh.
     osUser: provider === SSH_PROVIDER ? '' : (llmOsUserSelect ? llmOsUserSelect.value : '')
