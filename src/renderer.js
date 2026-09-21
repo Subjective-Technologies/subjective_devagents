@@ -484,7 +484,12 @@ function syncChatFrame(frameEl, index) {
   const send = frameEl.querySelector('button[type="submit"]');
   if (send) send.hidden = Boolean(conversation && conversation.busy);
   if (textarea) {
-    textarea.disabled = Boolean(conversation?.kind === 'llm' && (!conversation.writable || conversation.busy));
+    // Busy no longer disables the composer: a disabled control cannot hold focus,
+    // so sending a message took the cursor out of the box and the next message
+    // could not be typed without clicking back in. An agent turn can run for
+    // minutes; composing the next message during one is normal. Only sending is
+    // gated — see onComposerSubmit.
+    textarea.disabled = Boolean(conversation?.kind === 'llm' && !conversation.writable);
     textarea.placeholder = !conversation
       ? 'Drop a chat from the list'
       : (conversation.kind === 'llm' && !conversation.writable
@@ -1052,7 +1057,7 @@ function setActiveTarget(target, options = {}) {
   conversation.unread = 0;
   topChannel.textContent = conversation.label;
   topChannel.title = conversation.label;
-  input.disabled = conversation.kind === 'llm' && (!conversation.writable || conversation.busy);
+  input.disabled = conversation.kind === 'llm' && !conversation.writable;
   input.placeholder = conversation.kind === 'llm' && !conversation.writable
     ? `${conversation.provider} history is read-only`
     : (conversation.busy ? `${providerName(conversation.provider)} is working…` : (conversation.kind === 'llm' ? `Message ${providerName(conversation.provider)}` : `Message ${conversation.label}`));
@@ -1105,7 +1110,7 @@ function setActiveTarget(target, options = {}) {
         if (!result.busy) conversation.progress = '';
         if (target === activeTarget) {
           if (input) {
-            input.disabled = conversation.kind === 'llm' && (!conversation.writable || conversation.busy);
+            input.disabled = conversation.kind === 'llm' && !conversation.writable;
             input.placeholder = conversation.busy
               ? `${providerName(conversation.provider)} is working…`
               : `Message ${providerName(conversation.provider)}`;
@@ -2276,7 +2281,8 @@ function addOptimisticLlmEcho(conversation, text, attachments = []) {
   conversation.busy = true;
   conversation.busySince = conversation.busySince || Date.now();
   if (conversation.target === activeTarget) {
-    input.disabled = true;
+    // Placeholder only: the box stays usable so the next message can be written
+    // while this turn runs.
     input.placeholder = `${providerName(conversation.provider)} is working…`;
   }
   addEvent('message', {
@@ -2306,7 +2312,6 @@ function dropOptimisticLlmEcho(conversation, text) {
   conversation.busy = false;
   conversation.busySince = 0;
   if (conversation.target === activeTarget) {
-    input.disabled = false;
     input.placeholder = `Message ${providerName(conversation.provider)}`;
     // Only reclaim the composer if the user has not started typing something else.
     if (!input.value.trim()) input.value = text;
@@ -2569,6 +2574,17 @@ async function onComposerSubmit(event) {
   }
   const images = pendingImages.map((image) => image.file);
   if (!text.trim() && !images.length) return;
+  // The composer stays typable during a turn, so this is where a second send is
+  // refused. The text is deliberately left in the box: the operator wrote it, and
+  // clearing it to show a "still working" notice would throw their words away.
+  const activeConversation = conversations.get(activeTarget);
+  if (activeConversation?.kind === 'llm' && activeConversation.busy) {
+    addEvent('system', {
+      target: activeTarget,
+      text: `${providerName(activeConversation.provider)} is still working. Your message is kept in the box — send it when the turn finishes.`,
+    });
+    return;
+  }
   if (input) {
     input.value = '';
     // Sending should not cost the operator their cursor: without this the next
@@ -4217,7 +4233,8 @@ window.subjectiveChat.onEvent((event) => {
         });
         if (isTargetOnScreen(event.target)) {
           if (event.target === activeTarget && input) {
-            input.disabled = event.busy;
+            // Busy leaves the composer typable; see syncChatFrame.
+            input.disabled = false;
             input.placeholder = event.busy ? `${providerName(conversation.provider)} is working…` : `Message ${providerName(conversation.provider)}`;
           }
           renderTranscript();
