@@ -425,7 +425,12 @@ function createChatFrame(index) {
       <button type="submit">Send</button>
     </form>
   `;
-  frame.addEventListener('pointerdown', () => focusChatFrame(Number(frame.dataset.frame)));
+  // `click`, not `pointerdown`. Focusing re-renders the pane, and on pointerdown
+  // that happened *between* the press and the release — so the element under the
+  // cursor was replaced before the browser could raise a click on it, and every
+  // button inside a pane silently did nothing. On click the button's own handler
+  // has already run by the time this bubbles up.
+  frame.addEventListener('click', () => focusChatFrame(Number(frame.dataset.frame)));
   frame.querySelector('.frame-refresh').addEventListener('click', (event) => {
     event.stopPropagation();
     refreshChatFrame(index);
@@ -542,6 +547,9 @@ function focusChatFrame(index, options = {}) {
   if (!framesEnabled()) return;
   const count = frameLayoutCount();
   if (index < 0 || index >= count) return;
+  // Focusing the pane that already has focus is not a state change, and doing the
+  // work anyway meant every click inside it rebuilt its transcript.
+  if (index === focusedFrame && frameTargets[index] === activeTarget) return;
   focusedFrame = index;
   bindFocusedFrameDom(chatFrames.children[index]);
   const target = frameTargets[index];
@@ -1035,6 +1043,10 @@ function ensureConversation(target, label = target, kind = target.startsWith('#'
 function setActiveTarget(target, options = {}) {
   if (mobileDrawer && mobileDrawer.open) closeMobileDrawer();
   const conversation = ensureConversation(target);
+  // Re-selecting the chat that is already open rebuilds its transcript for no
+  // reason, which throws away whatever the reader was in the middle of — a text
+  // selection, a hovered button, or a press that has not been released yet.
+  const unchanged = activeTarget === target;
   activeTarget = target;
   if (framesEnabled() && !options.skipFrame) assignChatFrame(focusedFrame, target, { skipActive: true });
   conversation.unread = 0;
@@ -1054,7 +1066,7 @@ function setActiveTarget(target, options = {}) {
   }
   sendImageButton.hidden = conversation.kind === 'llm';
   renderConversations();
-  renderTranscript();
+  if (!unchanged) renderTranscript();
   renderUsers();
   if (conversation.kind === 'llm' && !conversation.hydrated && !conversation.loading) {
     conversation.loading = true;
