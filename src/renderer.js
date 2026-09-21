@@ -1485,6 +1485,12 @@ async function sendAgentAction(conversation, reply, controls) {
   rendererLog('info', 'Agent action send', { target: conversation.target, provider: conversation.provider, replyChars: String(reply || '').length });
   for (const button of controls.querySelectorAll('button')) button.disabled = true;
   controls.classList.add('pending');
+  // The same echo typing a message gets. Without it a clicked option produced no
+  // visible change at all: the POST only returns {ok, pending}, and the answer and
+  // the reply both arrive later over the event socket — so whenever that socket is
+  // not delivering, clicking a button was indistinguishable from a dead button.
+  // This is the difference the bug reports were describing.
+  addOptimisticLlmEcho(conversation, reply);
   try {
     const result = await window.subjectiveChat.sendLlmMessage(conversation.target, reply);
     if (result?.unauthorized) {
