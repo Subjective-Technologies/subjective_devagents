@@ -1696,15 +1696,21 @@ function renderEntry(kind, data, context = {}) {
       ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
       : `<div class="avatar">${initials(data.from)}</div>`;
     const attachments = imageAttachmentMarkup(data.attachments);
+    // Terminal output is shown verbatim in a monospace block: the server has
+    // already turned whatever the remote drew into the text of that screen, and
+    // anything further here would only reflow it again.
+    const body = data.terminal
+      ? `<pre class="text terminal-text">${escapeHtml(data.text || '')}</pre>`
+      : `<div class="text rich-text">${richMessages.renderMessage(data.text)}</div>`;
     item.innerHTML = `
       ${avatar}
       <div class="bubble">
         <div class="meta"><span>${escapeHtml(data.from)}</span><time>${timeLabel(data.time)}</time></div>
-        <div class="text rich-text">${richMessages.renderMessage(data.text)}</div>
+        ${body}
         ${attachments}
       </div>
     `;
-    wireRichMessage(item.querySelector('.rich-text'), data, context);
+    if (!data.terminal) wireRichMessage(item.querySelector('.rich-text'), data, context);
     wireImageAttachments(item);
   } else if (kind === 'command') {
     item.classList.add('command-entry');
@@ -2637,7 +2643,8 @@ const PROVIDER_DISPLAY_NAMES = Object.freeze({
   codex: 'Codex',
   cursor: 'Cursor',
   gemini: 'Gemini',
-  grok: 'Grok'
+  grok: 'Grok',
+  ssh: 'SSH'
 });
 
 function providerName(provider) {
@@ -2660,6 +2667,10 @@ function llmMessageEvent(message, conversation) {
       mine: !assistant,
       icon: assistant ? conversation.icon : '',
       assistant,
+      // An SSH reply is terminal output, not prose. Markdown reflows it — every
+      // run of spaces collapses, so `ls` columns and any box drawing fall apart —
+      // and there is no markdown in it to render in the first place.
+      terminal: assistant && String(conversation.provider || '').toLowerCase() === 'ssh',
       // The backend's structured choices for this message, when it is an assistant question.
       // appendPromptActions prefers this over parsing the prose itself.
       promptOptions: message.promptOptions || null

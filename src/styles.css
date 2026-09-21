@@ -2812,3 +2812,17 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
 @media (max-width: 560px) { .ssh-grid { grid-template-columns: minmax(0, 1fr); } }
 .ssh-key-picker { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .ssh-key-picker select { flex: 1; min-width: 0; }
+
+/* Terminal output in a chat bubble. Monospace and verbatim: the server already
+   rendered whatever the remote drew into the text of that screen, so the only job
+   left is not to reflow it. Scrolls sideways rather than wrapping, because a
+   wrapped column layout is unreadable and a wrapped box drawing is worse. */
+.terminal-text {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 8;
+}
