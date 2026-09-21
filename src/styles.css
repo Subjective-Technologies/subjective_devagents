@@ -2826,3 +2826,9 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   overflow-x: auto;
   tab-size: 8;
 }
+
+/* Terminal output reuses the code card, so it only needs what differs: no syntax
+   colouring, and a slightly tighter line for dense output. */
+.code-card.terminal-card pre code.hljs { color: inherit; line-height: 1.4; }
+.ssh-secret-dialog .settings-form { max-width: 420px; }
+.ssh-secret-dialog code { word-break: break-all; }

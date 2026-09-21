@@ -368,6 +368,30 @@
         </div>
       </form>
     </dialog>
+    <!-- A remote program asking for a password. Collected here rather than in the
+         composer so it is not echoed, not kept in the message history, and not
+         written into the transcript. -->
+    <dialog id="sshSecretDialog" class="settings-dialog ssh-secret-dialog">
+      <form id="sshSecretForm" class="settings-form">
+        <div class="settings-head">
+          <div>
+            <h3>The remote machine is asking for a password</h3>
+            <p><code id="sshSecretPrompt"></code></p>
+          </div>
+          <button type="button" id="sshSecretCloseButton" class="plain-icon" aria-label="Close">×</button>
+        </div>
+        <label>
+          <span>Password</span>
+          <input id="sshSecretInput" type="password" autocomplete="off" required>
+        </label>
+        <p class="ssh-note">Sent straight to that terminal. It is not shown in the chat,
+          not saved with the connection, and not written to any log.</p>
+        <div class="settings-actions">
+          <button type="button" id="sshSecretCancelButton" class="plain-button">Cancel</button>
+          <button type="submit" class="primary-button">Send</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="sessionPickerDialog" class="settings-dialog">
       <form id="sessionPickerForm" class="settings-form" method="dialog">
         <div class="settings-head">

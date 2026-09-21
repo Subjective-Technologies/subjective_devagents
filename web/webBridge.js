@@ -405,6 +405,9 @@
     // any later call, which only ever returns paths and names.
     uploadSshKey: (name, content) => post('/api/ssh/keys', { name, content }),
     deleteSshKey: (path) => post('/api/ssh/keys/delete', { path }),
+    // Answers a password prompt in a live SSH chat. Deliberately not sendLlmMessage:
+    // that records what was sent.
+    sendSshSecret: (target, secret) => post('/api/llm/ssh-secret', { target, secret }),
     // The agent registry in workflow/agents.
     listAgents: () => get('/api/agents'),
     createAgent: (payload) => post('/api/agents', payload),

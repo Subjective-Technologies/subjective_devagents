@@ -256,6 +256,30 @@
     return highlightCached(String(code ?? ''), String(language ?? ''));
   }
 
+  // Terminal output from an SSH chat. It goes through the same code card as a
+  // fenced block — so it gets Copy, Wrap and the line count for free — but starts
+  // wrapped, because a terminal line is often wider than a chat bubble and a
+  // horizontal scrollbar inside every reply is worse than a wrapped line.
+  function renderTerminalSource(text) {
+    const body = String(text ?? '');
+    const lineCount = body ? body.split('\n').length : 0;
+    return [
+      '<section class="code-card terminal-card wrapped" data-language="terminal">',
+      '<header class="code-toolbar">',
+      '<span class="code-lang"><i class="code-lang-dot" aria-hidden="true"></i>terminal</span>',
+      '<div class="code-actions">',
+      lineCount > 1 ? `<span class="code-lines">${lineCount} lines</span>` : '',
+      '<button type="button" data-code-action="wrap" class="active" title="Toggle soft wrap">Wrap</button>',
+      '<button type="button" data-code-action="copy">Copy</button>',
+      '</div>',
+      '</header>',
+      // Not highlighted: terminal output is not a language, and guessing one
+      // colours arbitrary words in a log for no reason.
+      `<pre><code class="hljs">${escapeHtml(body)}</code></pre>`,
+      '</section>'
+    ].join('');
+  }
+
   function renderCommandSource(command, shell = 'bash') {
     const language = /powershell|pwsh|ps1/i.test(shell) ? 'powershell' : /cmd/i.test(shell) ? 'dos' : 'bash';
     return fenceMarkup([{ content: String(command || ''), info: language }], 0);
@@ -266,6 +290,11 @@
   }
 
   const renderCommandCached = memoize(renderCommandSource, 300);
+  const renderTerminalCached = memoize(renderTerminalSource, 300);
+
+  function renderTerminal(value) {
+    return renderTerminalCached(String(value ?? ''));
+  }
   const renderCodeCached = memoize(renderCodeSource, 300);
 
   function renderCommand(command, shell = 'bash') {
@@ -438,6 +467,7 @@
     normalizeToolMessages,
     renderCode,
     renderCommand,
-    renderMessage
+    renderMessage,
+    renderTerminal
   };
 }));

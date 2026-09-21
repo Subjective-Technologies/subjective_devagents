@@ -1696,11 +1696,11 @@ function renderEntry(kind, data, context = {}) {
       ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
       : `<div class="avatar">${initials(data.from)}</div>`;
     const attachments = imageAttachmentMarkup(data.attachments);
-    // Terminal output is shown verbatim in a monospace block: the server has
-    // already turned whatever the remote drew into the text of that screen, and
-    // anything further here would only reflow it again.
+    // Terminal output goes into the same code card as a fenced block — Copy, Wrap,
+    // line count — rather than through markdown, which would reflow the runs of
+    // spaces that carry the layout.
     const body = data.terminal
-      ? `<pre class="text terminal-text">${escapeHtml(data.text || '')}</pre>`
+      ? `<div class="text rich-text">${richMessages.renderTerminal(data.text)}</div>`
       : `<div class="text rich-text">${richMessages.renderMessage(data.text)}</div>`;
     item.innerHTML = `
       ${avatar}
@@ -1710,8 +1710,10 @@ function renderEntry(kind, data, context = {}) {
         ${attachments}
       </div>
     `;
-    if (!data.terminal) wireRichMessage(item.querySelector('.rich-text'), data, context);
+    // Wired either way: the card's Copy and Wrap buttons live behind this.
+    wireRichMessage(item.querySelector('.rich-text'), data, context);
     wireImageAttachments(item);
+    if (data.awaitingSecret) openSshSecretDialog(data.target, data.awaitingSecret);
   } else if (kind === 'command') {
     item.classList.add('command-entry');
     const avatar = data.icon
@@ -2510,7 +2512,12 @@ async function onComposerSubmit(event) {
   }
   const images = pendingImages.map((image) => image.file);
   if (!text.trim() && !images.length) return;
-  if (input) input.value = '';
+  if (input) {
+    input.value = '';
+    // Sending should not cost the operator their cursor: without this the next
+    // message has to start by clicking back into the box.
+    input.focus();
+  }
   hideCommandPalette();
   clearPendingImages();
   const broadcast = Boolean(frameBroadcast?.checked) && framesEnabled();
@@ -2561,7 +2568,11 @@ async function onComposerKeydown(event) {
       return;
     }
   }
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+  if (event.key === 'Enter') {
+    // Enter sends, Ctrl/Cmd+Enter and Shift+Enter make a new line. A chat composer
+    // is typed in far more often than it is used to compose a paragraph, and this
+    // is the way round every other chat works.
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     (event.currentTarget.closest('form') || composer)?.requestSubmit();
   }
@@ -2671,6 +2682,10 @@ function llmMessageEvent(message, conversation) {
       // run of spaces collapses, so `ls` columns and any box drawing fall apart —
       // and there is no markdown in it to render in the first place.
       terminal: assistant && String(conversation.provider || '').toLowerCase() === 'ssh',
+      // Set when the remote is blocked on a password prompt; the composer must not
+      // be how that is answered.
+      awaitingSecret: message.awaitingSecret || '',
+      target: conversation.target,
       // The backend's structured choices for this message, when it is an assistant question.
       // appendPromptActions prefers this over parsing the prose itself.
       promptOptions: message.promptOptions || null
@@ -3715,6 +3730,46 @@ async function resolveSshWorkspace() {
   applyConnectionChoice();
   return `saved:${created.connection.id}`;
 }
+
+// --- answering a password prompt ---------------------------------------------------
+
+const sshSecretDialog = document.getElementById('sshSecretDialog');
+const sshSecretForm = document.getElementById('sshSecretForm');
+const sshSecretInput = document.getElementById('sshSecretInput');
+const sshSecretPrompt = document.getElementById('sshSecretPrompt');
+let sshSecretTarget = '';
+
+function openSshSecretDialog(target, prompt) {
+  if (!sshSecretDialog || sshSecretDialog.open) return;
+  sshSecretTarget = target || activeTarget;
+  if (sshSecretPrompt) sshSecretPrompt.textContent = prompt;
+  if (sshSecretInput) sshSecretInput.value = '';
+  sshSecretDialog.showModal ? sshSecretDialog.showModal() : sshSecretDialog.setAttribute('open', '');
+  if (sshSecretInput) sshSecretInput.focus();
+}
+
+function closeSshSecretDialog() {
+  // Clear before closing, so the value does not sit in the DOM until next time.
+  if (sshSecretInput) sshSecretInput.value = '';
+  sshSecretTarget = '';
+  if (sshSecretDialog?.open) sshSecretDialog.close();
+}
+
+if (sshSecretForm) sshSecretForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const secret = sshSecretInput.value;
+  const target = sshSecretTarget;
+  closeSshSecretDialog();
+  if (!secret || !target) return;
+  try {
+    const result = await window.subjectiveChat.sendSshSecret(target, secret);
+    if (!result?.ok) addEvent('system', { target, text: result?.error || 'Could not send that input.' });
+  } catch (error) {
+    addEvent('system', { target, text: `Could not send that input: ${error.message}` });
+  }
+});
+document.getElementById('sshSecretCloseButton')?.addEventListener('click', closeSshSecretDialog);
+document.getElementById('sshSecretCancelButton')?.addEventListener('click', closeSshSecretDialog);
 
 if (sshConnectionSelect) sshConnectionSelect.addEventListener('change', applyConnectionChoice);
 if (sshAuthSelect) sshAuthSelect.addEventListener('change', applyAuthShape);
