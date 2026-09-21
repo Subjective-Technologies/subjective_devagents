@@ -116,8 +116,26 @@
     } catch (_error) { lock('Unable to verify dashboard sign-in. Reload to retry.'); }
   });
 
+  // A shared token supplied in the URL, kept for this page only. Deliberately not
+  // stored: the block below retires manual-token links precisely so a credential
+  // does not linger in a URL or in storage, and nothing here should undo that. A
+  // reload without the parameter simply asks for it again.
+  let staticToken = '';
+
+  async function tokenWorks(token) {
+    try {
+      const response = await fetch(url('/api/version'), {
+        cache: 'no-store', headers: { 'X-DevAgents-Token': token },
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async function getToken(forceRefresh = false) {
     if (!allowed) throw new Error('Authentication required.');
+    if (mode === 'token') return staticToken;
     if (mode === 'development' && !firebaseAuth) return '';
     if (parentOrigin) {
       if (forceRefresh || !parentToken || parentExpiry < Date.now() / 1000 + 60) return requestParentToken(forceRefresh);
@@ -167,6 +185,10 @@
   try {
     const current = new URL(location.href);
     if (current.searchParams.has('token')) {
+      // Captured before it is removed. A shared-token deployment has no identity
+      // provider, so this is the only credential such a page can ever be given —
+      // but it still leaves the address bar immediately, and is never stored.
+      staticToken = String(current.searchParams.get('token') || '').trim();
       current.searchParams.delete('token');
       history.replaceState(null, '', current.pathname + current.search + current.hash);
     }
@@ -179,6 +201,19 @@
     const config = await response.json();
     mode = config.mode;
     if (mode === 'development' && config.required === false) { unlock(); return; }
+    if (mode === 'token') {
+      // A shared-token deployment has no identity provider, so there was nothing
+      // for this gate to ask and the app stayed locked forever — token mode was
+      // supported by the server and unusable in a browser. Holding a token the
+      // server accepts is the whole of the credential here, so it is also the
+      // whole of the sign-in. Nothing is weakened by showing the UI: every call
+      // behind it still carries the token and the server is still the authority.
+      if (staticToken && await tokenWorks(staticToken)) { unlock(); return; }
+      lock(staticToken
+        ? 'That API token was rejected. Open this page once as ?token=YOUR_TOKEN.'
+        : 'This backend uses a shared API token. Open this page once as ?token=YOUR_TOKEN.');
+      return;
+    }
     if (parentOrigin) {
       googleButton.textContent = 'Open dashboard sign-in';
       googleButton.disabled = false;
