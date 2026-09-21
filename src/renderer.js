@@ -62,6 +62,24 @@ const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmOsUserSelect = document.getElementById('llmOsUserSelect');
 const llmOsUserRow = document.getElementById('llmOsUserRow');
 const llmWorkspaceLabel = document.getElementById('llmWorkspaceLabel');
+const sshConnectionRow = document.getElementById('sshConnectionRow');
+const sshConnectionSelect = document.getElementById('sshConnectionSelect');
+const sshConnectionForm = document.getElementById('sshConnectionForm');
+const sshHostInput = document.getElementById('sshHostInput');
+const sshPortInput = document.getElementById('sshPortInput');
+const sshUsernameInput = document.getElementById('sshUsernameInput');
+const sshAuthSelect = document.getElementById('sshAuthSelect');
+const sshKeyRow = document.getElementById('sshKeyRow');
+const sshKeySelect = document.getElementById('sshKeySelect');
+const sshPasswordRow = document.getElementById('sshPasswordRow');
+const sshPasswordInput = document.getElementById('sshPasswordInput');
+const sshPassphraseRow = document.getElementById('sshPassphraseRow');
+const sshPassphraseInput = document.getElementById('sshPassphraseInput');
+const sshDirectoryInput = document.getElementById('sshDirectoryInput');
+const sshNameInput = document.getElementById('sshNameInput');
+const sshTestButton = document.getElementById('sshTestButton');
+const sshDeleteButton = document.getElementById('sshDeleteButton');
+const sshTestStatus = document.getElementById('sshTestStatus');
 const agentDialog = document.getElementById('agentDialog');
 const agentForm = document.getElementById('agentForm');
 const agentIdInput = document.getElementById('agentIdInput');
@@ -3320,21 +3338,166 @@ if (suLoginDialog) {
 // than asking for answers that do not apply.
 const SSH_PROVIDER = 'ssh';
 
+// Saved connections, ~/.ssh keys and ~/.ssh/config aliases, as the server last sent
+// them. Never contains a password: the server reports only whether one is stored.
+let sshCatalog = { connections: [], keys: [], configHosts: [] };
+
 function applyProviderShape(provider) {
   const ssh = provider === SSH_PROVIDER;
   // "Run as" picks whose *local* CLI login answers. An SSH chat's account is part of
-  // the target instead, so the question is meaningless and the row goes away.
+  // the connection instead, so the question is meaningless and the row goes away.
   if (llmOsUserRow) llmOsUserRow.hidden = ssh;
-  if (llmWorkspaceLabel) llmWorkspaceLabel.textContent = ssh ? 'SSH target' : 'Workspace';
-  if (!llmWorkspaceInput) return;
-  if (ssh) {
-    llmWorkspaceInput.placeholder = 'deploy@host:/srv/app  ·  or a ~/.ssh/config alias';
-    // The local default is not a machine; leaving it there would look like an answer.
-    if (llmWorkspaceInput.value === '/subjective') llmWorkspaceInput.value = '';
-  } else {
-    llmWorkspaceInput.placeholder = '';
-    if (!llmWorkspaceInput.value) llmWorkspaceInput.value = '/subjective';
+  // A machine needs a host, an account and a credential. The workspace box holds one
+  // string and cannot carry those, so for SSH it is replaced by the connection picker.
+  if (llmWorkspaceInput) llmWorkspaceInput.closest('label').hidden = ssh;
+  if (llmWorkspaceInput) llmWorkspaceInput.required = !ssh;
+  if (sshConnectionRow) sshConnectionRow.hidden = !ssh;
+  if (!ssh && sshConnectionForm) sshConnectionForm.hidden = true;
+  if (llmWorkspaceInput && !ssh && !llmWorkspaceInput.value) llmWorkspaceInput.value = '/subjective';
+  if (ssh) applyConnectionChoice();
+}
+
+function selectedSshChoice() {
+  return sshConnectionSelect ? sshConnectionSelect.value : '';
+}
+
+function savedConnection(id) {
+  return sshCatalog.connections.find((item) => item.id === id) || null;
+}
+
+async function refreshSshCatalog() {
+  if (!window.subjectiveChat.listSshConnections || !sshConnectionSelect) return;
+  let payload = null;
+  try {
+    payload = await window.subjectiveChat.listSshConnections();
+  } catch (error) {
+    rendererLog('error', 'Failed to load SSH connections', { error: String(error) });
+    return;
   }
+  sshCatalog = {
+    connections: Array.isArray(payload?.connections) ? payload.connections : [],
+    keys: Array.isArray(payload?.keys) ? payload.keys : [],
+    configHosts: Array.isArray(payload?.configHosts) ? payload.configHosts : [],
+  };
+
+  const previous = sshConnectionSelect.value;
+  sshConnectionSelect.replaceChildren();
+  const add = (value, label, parent) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    (parent || sshConnectionSelect).appendChild(option);
+    return option;
+  };
+  const group = (label) => {
+    const element = document.createElement('optgroup');
+    element.label = label;
+    sshConnectionSelect.appendChild(element);
+    return element;
+  };
+
+  if (sshCatalog.connections.length) {
+    const saved = group('Saved');
+    for (const item of sshCatalog.connections) {
+      const account = item.username ? `${item.username}@` : '';
+      add(`saved:${item.id}`, `${item.name} — ${account}${item.host}`, saved);
+    }
+  }
+  if (sshCatalog.configHosts.length) {
+    // Already saved, in the place ssh itself reads. Offered, never copied here.
+    const fromConfig = group('From ~/.ssh/config');
+    for (const item of sshCatalog.configHosts) add(item.host, item.host, fromConfig);
+  }
+  add('__new__', 'New connection…');
+  sshConnectionSelect.value =
+    [...sshConnectionSelect.options].some((option) => option.value === previous)
+      ? previous
+      : (sshCatalog.connections.length ? `saved:${sshCatalog.connections[0].id}` : '__new__');
+
+  // Keys are offered by path; their contents never leave the server.
+  if (sshKeySelect) {
+    sshKeySelect.replaceChildren();
+    if (!sshCatalog.keys.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'No keys found in the server\u2019s ~/.ssh';
+      sshKeySelect.appendChild(option);
+    }
+    for (const key of sshCatalog.keys) {
+      const option = document.createElement('option');
+      option.value = key.path;
+      option.textContent = key.tooOpen ? `${key.name} — too readable, ssh will refuse it` : key.name;
+      sshKeySelect.appendChild(option);
+    }
+  }
+  applyConnectionChoice();
+}
+
+function applyAuthShape() {
+  const method = sshAuthSelect ? sshAuthSelect.value : 'agent';
+  if (sshKeyRow) sshKeyRow.hidden = method !== 'private_key_path';
+  if (sshPasswordRow) sshPasswordRow.hidden = method !== 'password';
+  // A passphrase only means anything for a key file; an agent already holds one.
+  if (sshPassphraseRow) sshPassphraseRow.hidden = method !== 'private_key_path';
+}
+
+function applyConnectionChoice() {
+  if (!sshConnectionForm) return;
+  const choice = selectedSshChoice();
+  const saved = choice.startsWith('saved:') ? savedConnection(choice.slice(6)) : null;
+  // The form is for creating or editing. A ~/.ssh/config alias has nothing to edit
+  // here — its settings live in that file — so the form stays shut for one.
+  sshConnectionForm.hidden = !(choice === '__new__' || saved);
+  if (sshTestStatus) sshTestStatus.textContent = '';
+  if (sshDeleteButton) sshDeleteButton.hidden = !saved;
+
+  if (saved) {
+    sshHostInput.value = saved.host || '';
+    sshPortInput.value = saved.port || '';
+    sshUsernameInput.value = saved.username || '';
+    sshAuthSelect.value = saved.auth_method || 'agent';
+    if (sshKeySelect && saved.private_key_path) sshKeySelect.value = saved.private_key_path;
+    sshDirectoryInput.value = saved.working_directory || '';
+    sshNameInput.value = saved.name || '';
+    // Stored secrets are never sent to the browser. An empty box with this
+    // placeholder means "one is saved"; typing replaces it, clearing it removes it.
+    sshPasswordInput.value = '';
+    sshPasswordInput.placeholder = saved.hasPassword ? '•••••••• saved' : '';
+    sshPassphraseInput.value = '';
+    sshPassphraseInput.placeholder = saved.hasKeyPassphrase
+      ? '•••••••• saved'
+      : 'only if the key is encrypted';
+  } else if (choice === '__new__') {
+    for (const input of [sshHostInput, sshPortInput, sshUsernameInput, sshDirectoryInput,
+                         sshNameInput, sshPasswordInput, sshPassphraseInput]) {
+      if (input) input.value = '';
+    }
+    if (sshAuthSelect) sshAuthSelect.value = 'agent';
+    if (sshPasswordInput) sshPasswordInput.placeholder = '';
+    if (sshPassphraseInput) sshPassphraseInput.placeholder = 'only if the key is encrypted';
+  }
+  applyAuthShape();
+}
+
+function sshFormValues() {
+  const values = {
+    host: sshHostInput.value.trim(),
+    username: sshUsernameInput.value.trim(),
+    auth_method: sshAuthSelect.value,
+    working_directory: sshDirectoryInput.value.trim(),
+    name: sshNameInput.value.trim(),
+  };
+  if (sshPortInput.value.trim()) values.port = sshPortInput.value.trim();
+  if (values.auth_method === 'private_key_path') {
+    values.private_key_path = sshKeySelect ? sshKeySelect.value : '';
+    // Only send a secret the operator actually typed: an untouched box means
+    // "leave whatever is stored alone", not "clear it".
+    if (sshPassphraseInput.value) values.key_passphrase = sshPassphraseInput.value;
+  }
+  if (values.auth_method === 'password' && sshPasswordInput.value) {
+    values.password = sshPasswordInput.value;
+  }
+  return values;
 }
 
 async function refreshLlmStatus() {
@@ -3401,7 +3564,8 @@ async function openLlmDialog() {
   llmDialog.showModal ? llmDialog.showModal() : llmDialog.setAttribute('open', '');
   applyProviderShape(selectedLlmProvider());
   llmNameInput.focus();
-  await Promise.all([refreshLlmStatus(), refreshLlmOsUsers()]);
+  await Promise.all([refreshLlmStatus(), refreshLlmOsUsers(), refreshSshCatalog()]);
+  applyProviderShape(selectedLlmProvider());
 }
 
 async function importLlmChatsFromZip(file) {
@@ -3470,6 +3634,85 @@ if (agentEditForm) {
     await loadAgents();
   });
 }
+async function resolveSshWorkspace() {
+  const choice = selectedSshChoice();
+  const fail = (message, focus) => {
+    llmStatusText.textContent = message;
+    llmStatusText.dataset.ready = 'false';
+    if (focus) focus.focus();
+    return '';
+  };
+
+  // A ~/.ssh/config alias is already a complete connection; store it as-is.
+  if (choice && choice !== '__new__' && !choice.startsWith('saved:')) return choice;
+
+  const values = sshFormValues();
+  if (!values.host) return fail('Name the machine this chat connects to.', sshHostInput);
+
+  const existing = choice.startsWith('saved:') ? choice.slice(6) : '';
+  if (existing) {
+    const updated = await window.subjectiveChat.updateSshConnection({ id: existing, ...values });
+    if (!updated?.ok) return fail(updated?.error || 'Could not save the connection.', sshHostInput);
+    return `saved:${existing}`;
+  }
+  // Naming it is what makes it reusable; without a name this chat gets the target
+  // written out longhand and nothing is stored.
+  if (!values.name) {
+    const account = values.username ? `${values.username}@` : '';
+    const path = values.working_directory ? `:${values.working_directory}` : '';
+    if (values.auth_method !== 'agent') {
+      return fail('Give this connection a name so its key or password can be saved.', sshNameInput);
+    }
+    return `${account}${values.host}${path}`;
+  }
+  const created = await window.subjectiveChat.saveSshConnection(values);
+  if (!created?.ok) return fail(created?.error || 'Could not save the connection.', sshHostInput);
+  await refreshSshCatalog();
+  sshConnectionSelect.value = `saved:${created.connection.id}`;
+  applyConnectionChoice();
+  return `saved:${created.connection.id}`;
+}
+
+if (sshConnectionSelect) sshConnectionSelect.addEventListener('change', applyConnectionChoice);
+if (sshAuthSelect) sshAuthSelect.addEventListener('change', applyAuthShape);
+
+if (sshTestButton) sshTestButton.addEventListener('click', async () => {
+  // The failures worth catching — a wrong account, an unreadable key, a changed
+  // host key — are otherwise only discoverable by starting a chat and watching it
+  // fail, which leaves a dead conversation behind.
+  const choice = selectedSshChoice();
+  const payload = choice.startsWith('saved:') && !sshHostInput.value.trim()
+    ? { id: choice.slice(6) }
+    : sshFormValues();
+  if (!payload.id && !payload.host) {
+    sshTestStatus.textContent = 'Name a host first.';
+    return;
+  }
+  sshTestButton.disabled = true;
+  sshTestStatus.textContent = 'Connecting…';
+  try {
+    const result = await window.subjectiveChat.testSshConnection(payload);
+    sshTestStatus.textContent = result?.ok
+      ? 'Connected.'
+      : `${result?.status || 'Failed'} — ${result?.error || 'could not connect'}`;
+    sshTestStatus.dataset.ok = result?.ok ? 'true' : 'false';
+  } catch (error) {
+    sshTestStatus.textContent = String(error);
+    sshTestStatus.dataset.ok = 'false';
+  } finally {
+    sshTestButton.disabled = false;
+  }
+});
+
+if (sshDeleteButton) sshDeleteButton.addEventListener('click', async () => {
+  const choice = selectedSshChoice();
+  if (!choice.startsWith('saved:')) return;
+  const saved = savedConnection(choice.slice(6));
+  if (!window.confirm(`Delete the saved connection “${saved?.name || choice}”?`)) return;
+  await window.subjectiveChat.deleteSshConnection(choice.slice(6));
+  await refreshSshCatalog();
+});
+
 if (llmProviderSelect) {
   llmProviderSelect.addEventListener('change', () => {
     refreshLlmStatus();
@@ -3483,12 +3726,12 @@ if (llmDialog) llmDialog.addEventListener('click', (event) => {
 if (llmForm) llmForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const provider = selectedLlmProvider();
-  const workspace = llmWorkspaceInput.value.trim();
-  if (provider === SSH_PROVIDER && !workspace) {
-    llmStatusText.textContent = 'Name the machine: user@host, user@host:/path, or a ~/.ssh/config alias.';
-    llmStatusText.dataset.ready = 'false';
-    llmWorkspaceInput.focus();
-    return;
+  let workspace = llmWorkspaceInput.value.trim();
+  if (provider === SSH_PROVIDER) {
+    // The chat stores one string. For SSH it is either `saved:<id>`, which carries
+    // the key and options with it, or a plain target for a ~/.ssh/config alias.
+    workspace = await resolveSshWorkspace();
+    if (!workspace) return;
   }
   const result = await window.subjectiveChat.createLlmConversation({
     name: llmNameInput.value,

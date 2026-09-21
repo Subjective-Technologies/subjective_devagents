@@ -304,6 +304,49 @@
           <span id="llmWorkspaceLabel">Workspace</span>
           <input id="llmWorkspaceInput" autocomplete="off" value="/subjective" required>
         </label>
+        <!-- SSH only. A machine needs a host, an account and a credential, which no
+             single workspace string can carry; this is the saved-connection list any
+             SSH client has, plus the operator's own ~/.ssh entries. -->
+        <label id="sshConnectionRow" hidden>
+          <span>Connection</span>
+          <select id="sshConnectionSelect"></select>
+        </label>
+        <fieldset id="sshConnectionForm" class="ssh-connection-form" hidden>
+          <legend>Connection details</legend>
+          <div class="ssh-grid">
+            <label><span>Host</span>
+              <input id="sshHostInput" autocomplete="off" placeholder="server.example.com"></label>
+            <label><span>Port</span>
+              <input id="sshPortInput" autocomplete="off" inputmode="numeric" placeholder="22"></label>
+            <label><span>Username</span>
+              <input id="sshUsernameInput" autocomplete="off" placeholder="deploy"></label>
+            <label><span>Authentication</span>
+              <select id="sshAuthSelect">
+                <option value="agent">SSH agent / default keys</option>
+                <option value="private_key_path">Private key</option>
+                <option value="password">Password</option>
+              </select>
+            </label>
+            <label id="sshKeyRow" hidden><span>Key</span>
+              <select id="sshKeySelect"></select></label>
+            <label id="sshPasswordRow" hidden><span>Password</span>
+              <input id="sshPasswordInput" type="password" autocomplete="new-password"></label>
+            <label id="sshPassphraseRow" hidden><span>Key passphrase</span>
+              <input id="sshPassphraseInput" type="password" autocomplete="new-password"
+                     placeholder="only if the key is encrypted"></label>
+            <label><span>Directory</span>
+              <input id="sshDirectoryInput" autocomplete="off" placeholder="/srv/app  (optional)"></label>
+            <label class="ssh-wide"><span>Save as</span>
+              <input id="sshNameInput" autocomplete="off" placeholder="Agents box  (blank keeps this chat only)"></label>
+          </div>
+          <p class="ssh-note">A saved password or passphrase is stored on this server, readable
+            only by it. Agent and key authentication store no secret at all.</p>
+          <div class="ssh-actions">
+            <button type="button" id="sshTestButton" class="plain-button">Test connection</button>
+            <button type="button" id="sshDeleteButton" class="plain-button" hidden>Delete</button>
+            <span id="sshTestStatus" class="ssh-test-status"></span>
+          </div>
+        </fieldset>
         <div id="llmStatusText" class="llm-status">Checking Codex datasource…</div>
         <div class="settings-actions">
           <button type="submit" class="primary-button">Create channel</button>
