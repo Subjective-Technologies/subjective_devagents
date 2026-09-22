@@ -1189,6 +1189,14 @@ function appendTranscriptEntry(conversation) {
   const thinking = transcript.querySelector('.thinking-entry');
   if (thinking) transcript.insertBefore(node, thinking);
   else transcript.appendChild(node);
+  // The message that *starts* a turn arrives through this fast path, and the thinking
+  // row is only ever built by a full render — so the pane showed the sent message and
+  // then nothing at all for the rest of the turn: no verb, no steps, no elapsed clock.
+  // Only the composer's placeholder and the Stop button said anything was happening.
+  if (!thinking && conversation.kind === 'llm' && conversation.busy) {
+    transcript.appendChild(renderThinkingRow(conversation));
+    startThinkingAnimation();
+  }
   transcriptRenderedCount = events.length;
   if (frameEl) frameEl.dataset.renderedCount = String(events.length);
   if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
@@ -3675,7 +3683,11 @@ async function refreshLlmStatus() {
   llmStatusText.textContent = `Checking ${label} datasource…`;
   llmStatusText.dataset.ready = 'false';
   const status = await window.subjectiveChat.getLlmStatus(provider);
-  if (selectedLlmProvider() !== provider) return;
+  if (selectedLlmProvider() !== provider) return; // the operator moved on while we asked
+  // The machine can change under us too: ticking "run this over SSH" while the probe
+  // is in flight rewrites the status, and this answer — about *this* box's CLI login —
+  // would then land on top of it and describe a login the chat will never use.
+  if (usingSsh(provider)) return;
   llmStatusText.textContent = status.ok
     ? `Ready · ${status.cli_version || `${label} CLI`} · existing login`
     : `${status.status || 'Unavailable'} · ${status.error || `${label} CLI login required`}`;
