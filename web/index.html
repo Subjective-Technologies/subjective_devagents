@@ -18,7 +18,7 @@
     <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
     <!-- connect-src must name the API origin explicitly: 'self' is the page's origin, so a
          cross-origin fetch to the API is blocked by CSP before it is ever sent. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080 https://cloudflareinsights.com; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com https://static.cloudflareinsights.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
     <meta name="referrer" content="no-referrer">
     <link rel="stylesheet" href="/auth.css?v=DEVAGENTS_DEPLOY_VERSION">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
