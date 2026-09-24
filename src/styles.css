@@ -1706,6 +1706,82 @@ img.provider-avatar[src$="cursor.svg"] {
   opacity: 0.68;
 }
 
+/* Several questions in one message stack; a single one keeps the old inline row, so the
+   common case looks exactly as it did before groups existed. */
+.prompt-actions-multi {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 11px;
+}
+
+.prompt-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt-group-question {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #dbe5f5;
+  letter-spacing: 0.01em;
+}
+
+.prompt-group-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+/* A picked answer has to stay visibly picked: with several questions the send happens
+   later, so the buttons are the only record of what is about to be sent. */
+.prompt-action.chosen {
+  border-color: rgba(120,190,255,0.75);
+  background: rgba(120,190,255,0.16);
+  color: #eaf3ff;
+}
+
+.prompt-free-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(420px, 100%);
+}
+
+.prompt-free-text-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #8fa2bd;
+}
+
+.prompt-free-text-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 34px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  color: #dfe8f6;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.prompt-free-text-input:focus {
+  outline: none;
+  border-color: rgba(120,190,255,0.6);
+}
+
+.prompt-free-text-input:disabled {
+  opacity: 0.5;
+}
+
+.prompt-action-send {
+  align-self: flex-start;
+}
+
 .command-entry {
   width: min(900px, 100%);
   max-width: min(900px, 100%);

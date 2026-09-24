@@ -374,14 +374,18 @@ function bindFocusedFrameDom(frameEl) {
   if (!frameEl) return;
   transcript = frameEl.querySelector('.transcript');
   composer = frameEl.querySelector('.composer');
-  input = frameEl.querySelector('textarea');
+  // '.composer textarea', not 'textarea': a prompt-options block in the transcript has
+  // its own free-text box, and it comes first in the pane. An unscoped lookup found
+  // that one instead — the composer's placeholder landed in it, and a submit read its
+  // value as the message being sent.
+  input = frameEl.querySelector('.composer textarea');
   pendingImagesEl = frameEl.querySelector('.pending-images');
   commandPalette = frameEl.querySelector('.command-palette');
 }
 
 function attachFrameComposer(frameEl) {
   const form = frameEl.querySelector('.composer');
-  const textarea = frameEl.querySelector('textarea');
+  const textarea = frameEl.querySelector('.composer textarea');
   if (!form || form.dataset.bound === '1') return;
   form.dataset.bound = '1';
   attachImagePicker(form);
@@ -464,7 +468,7 @@ function syncChatFrame(frameEl, index) {
   const icon = frameEl.querySelector('.frame-icon');
   const refresh = frameEl.querySelector('.frame-refresh');
   const clear = frameEl.querySelector('.frame-clear');
-  const textarea = frameEl.querySelector('textarea');
+  const textarea = frameEl.querySelector('.composer textarea');
   title.textContent = conversation?.label || (target ? target : 'Drop a chat here');
   title.title = title.textContent;
   if (icon) {
@@ -1563,52 +1567,201 @@ function resolvePromptActions(data) {
   return richMessages.detectPromptActions(data.text);
 }
 
+// One message can ask several questions, each with its own choices. Everything below draws
+// that shape; a single question is just the one-group case, so there is one code path
+// rather than two that drift. An older backend, or the client-side heuristic, produces one
+// unnamed group — which renders exactly as it did before this existed.
+function resolvePromptGroups(data) {
+  const backend = data.promptOptions;
+  const freeText = backend?.free_text?.enabled
+    ? { label: backend.free_text.label || 'Add anything else (optional)', placeholder: backend.free_text.placeholder || '' }
+    : null;
+  const groups = backend && Array.isArray(backend.groups) ? backend.groups.filter((group) => group?.options?.length) : [];
+  if (groups.length) {
+    return {
+      groups: groups.map((group, index) => ({
+        id: group.id || `q${index + 1}`,
+        question: group.question || '',
+        actions: [
+          ...group.options.map((option, position) => ({
+            id: option.id || `opt-${position}`,
+            label: option.label || option.reply || `Option ${position + 1}`,
+            description: option.description || '',
+            reply: option.reply,
+            primary: position === 0,
+          })),
+          // "Other…" is how an answer outside the offered set used to be given. The
+          // free-text box is that, done better — in place, and combinable with a choice —
+          // so the pill only appears when there is no box to type into.
+          ...(!freeText && group.allows_other
+            ? [{ id: 'other', label: 'Other…', description: backend.other_hint || 'Answer in your own words', custom: true }]
+            : []),
+        ],
+      })),
+      freeText,
+    };
+  }
+  const actions = resolvePromptActions(data).filter((action) => !(freeText && action.custom));
+  if (!actions.length) return { groups: [], freeText: null };
+  return { groups: [{ id: 'q1', question: '', actions }], freeText };
+}
+
+// What gets sent when the user answers. One question keeps sending the option's own reply,
+// unchanged, so an agent sees exactly what it saw before. Several questions have to name
+// which answer belongs to which, or the agent has to guess the order.
+function composePromptReply(groups, chosen, note) {
+  const answered = groups.filter((group) => chosen.get(group.id));
+  const trimmedNote = String(note || '').trim();
+  if (!answered.length) return trimmedNote;
+  if (groups.length === 1) {
+    const reply = chosen.get(groups[0].id).reply;
+    return trimmedNote ? `${reply}\n\n${trimmedNote}` : reply;
+  }
+  const lines = answered.map((group, index) => {
+    const action = chosen.get(group.id);
+    const question = group.question || `Question ${index + 1}`;
+    return `${index + 1}. ${question} ${action.reply}`;
+  });
+  return trimmedNote ? `${lines.join('\n')}\n\n${trimmedNote}` : lines.join('\n');
+}
+
 function appendPromptActions(content, data, context) {
   if (!data.assistant || !context.actionable) return;
-  const actions = resolvePromptActions(data);
-  if (!actions.length) return;
+  const { groups, freeText } = resolvePromptGroups(data);
+  if (!groups.length) return;
   const controls = document.createElement('div');
   controls.className = 'prompt-actions';
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Answer agent question');
   const readOnly = !context.conversation.writable;
   const busy = Boolean(context.conversation.busy);
-  for (const action of actions) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = action.primary ? 'prompt-action primary' : 'prompt-action';
-    if (action.custom) button.classList.add('prompt-action-custom');
-    // Label on top, the backend's description underneath — so the user sees what each
-    // choice means, not just a bare word.
+  // Several questions cannot each send on click: the first click would send a turn and the
+  // remaining answers would have nowhere to go. There the buttons select and one Send goes.
+  const multi = groups.length > 1;
+  if (multi) controls.classList.add('prompt-actions-multi');
+  const chosen = new Map();
+  let noteInput = null;
+  let sendButton = null;
+
+  const refreshSendState = () => {
+    if (!sendButton) return;
+    const answered = groups.filter((group) => chosen.has(group.id)).length;
+    sendButton.disabled = readOnly || busy || (!answered && !String(noteInput?.value || '').trim());
+    sendButton.querySelector('.prompt-action-label').textContent = answered < groups.length
+      ? `Send ${answered}/${groups.length}`
+      : 'Send answers';
+  };
+
+  for (const group of groups) {
+    const section = document.createElement('div');
+    section.className = 'prompt-group';
+    section.dataset.groupId = group.id;
+    if (group.question) {
+      const question = document.createElement('p');
+      question.className = 'prompt-group-question';
+      question.textContent = group.question;
+      section.appendChild(question);
+    }
+    const row = document.createElement('div');
+    row.className = 'prompt-group-options';
+    for (const action of group.actions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = action.primary && !multi ? 'prompt-action primary' : 'prompt-action';
+      if (action.custom) button.classList.add('prompt-action-custom');
+      // Label on top, the backend's description underneath — so the user sees what each
+      // choice means, not just a bare word.
+      const label = document.createElement('span');
+      label.className = 'prompt-action-label';
+      label.textContent = action.label;
+      button.appendChild(label);
+      if (action.description) {
+        const description = document.createElement('span');
+        description.className = 'prompt-action-description';
+        description.textContent = action.description;
+        button.appendChild(description);
+      }
+      button.disabled = readOnly || busy;
+      if (readOnly) button.title = 'Historical conversation is read-only';
+      button.addEventListener('click', () => {
+        rendererLog('info', 'Prompt action clicked', {
+          target: context.conversation.target, action: action.id || action.label,
+          custom: Boolean(action.custom), group: group.id, multi,
+        });
+        // "Other…" has no canned reply. It points at the free-text box when there is one,
+        // and otherwise hands focus to the composer, as it always did.
+        if (action.custom) {
+          if (noteInput) {
+            noteInput.focus();
+            return;
+          }
+          if (context.conversation.target === activeTarget && input) {
+            input.focus();
+            input.placeholder = 'Type your answer…';
+          }
+          return;
+        }
+        if (multi) {
+          chosen.set(group.id, action);
+          for (const sibling of row.querySelectorAll('.prompt-action')) sibling.classList.remove('chosen');
+          button.classList.add('chosen');
+          refreshSendState();
+          return;
+        }
+        chosen.set(group.id, action);
+        sendAgentAction(context.conversation, composePromptReply(groups, chosen, noteInput?.value), controls);
+      });
+      row.appendChild(button);
+    }
+    section.appendChild(row);
+    controls.appendChild(section);
+  }
+
+  if (freeText) {
+    const field = document.createElement('label');
+    field.className = 'prompt-free-text';
+    const caption = document.createElement('span');
+    caption.className = 'prompt-free-text-label';
+    caption.textContent = freeText.label;
+    const box = document.createElement('textarea');
+    box.className = 'prompt-free-text-input';
+    box.rows = 2;
+    box.placeholder = freeText.placeholder;
+    box.disabled = readOnly || busy;
+    // Enter sends what is typed even with no option picked: a question the buttons do not
+    // cover is still answered here rather than in the composer further down the page.
+    box.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.shiftKey) return;
+      event.preventDefault();
+      const reply = composePromptReply(groups, chosen, box.value);
+      if (reply.trim()) sendAgentAction(context.conversation, reply, controls);
+    });
+    box.addEventListener('input', refreshSendState);
+    noteInput = box;
+    field.appendChild(caption);
+    field.appendChild(box);
+    controls.appendChild(field);
+  }
+
+  if (multi) {
+    sendButton = document.createElement('button');
+    sendButton.type = 'button';
+    sendButton.className = 'prompt-action primary prompt-action-send';
     const label = document.createElement('span');
     label.className = 'prompt-action-label';
-    label.textContent = action.label;
-    button.appendChild(label);
-    if (action.description) {
-      const description = document.createElement('span');
-      description.className = 'prompt-action-description';
-      description.textContent = action.description;
-      button.appendChild(description);
-    }
-    button.disabled = readOnly || busy;
-    if (readOnly) button.title = 'Historical conversation is read-only';
-    button.addEventListener('click', () => {
-      rendererLog('info', 'Prompt action clicked', {
-        target: context.conversation.target, action: action.id || action.label, custom: Boolean(action.custom),
+    sendButton.appendChild(label);
+    sendButton.addEventListener('click', () => {
+      const reply = composePromptReply(groups, chosen, noteInput?.value);
+      if (!reply.trim()) return;
+      rendererLog('info', 'Prompt answers sent', {
+        target: context.conversation.target, answered: chosen.size, questions: groups.length,
       });
-      // "Other…" has no canned reply: hand focus to the composer so the user writes their
-      // own answer, which sends as the next turn like any typed message.
-      if (action.custom) {
-        if (context.conversation.target === activeTarget && input) {
-          input.focus();
-          input.placeholder = 'Type your answer…';
-        }
-        return;
-      }
-      sendAgentAction(context.conversation, action.reply, controls);
+      sendAgentAction(context.conversation, reply, controls);
     });
-    controls.appendChild(button);
+    controls.appendChild(sendButton);
+    refreshSendState();
   }
+
   content.appendChild(controls);
 }
 
@@ -2573,7 +2726,7 @@ async function onComposerSubmit(event) {
   const form = event.currentTarget;
   const frameEl = form.closest('.chat-frame');
   if (frameEl) focusChatFrame(Number(frameEl.dataset.frame), { skipActive: false });
-  const box = (frameEl ? frameEl.querySelector('textarea') : input);
+  const box = (frameEl ? frameEl.querySelector('.composer textarea') : input);
   if (box) input = box;
   const text = String(input?.value || '').replace(/\r\n?/g, '\n');
   if (pendingImages.some((image) => image.loading || image.error)) {
