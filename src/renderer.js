@@ -59,46 +59,6 @@ const llmForm = document.getElementById('llmForm');
 const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
-const llmOsUserSelect = document.getElementById('llmOsUserSelect');
-const llmOsUserRow = document.getElementById('llmOsUserRow');
-const llmWorkspaceLabel = document.getElementById('llmWorkspaceLabel');
-const llmOverSshToggle = document.getElementById('llmOverSshToggle');
-const sshConnectionRow = document.getElementById('sshConnectionRow');
-const sshConnectionSelect = document.getElementById('sshConnectionSelect');
-const sshConnectionForm = document.getElementById('sshConnectionForm');
-const sshHostInput = document.getElementById('sshHostInput');
-const sshPortInput = document.getElementById('sshPortInput');
-const sshUsernameInput = document.getElementById('sshUsernameInput');
-const sshAuthSelect = document.getElementById('sshAuthSelect');
-const sshKeyRow = document.getElementById('sshKeyRow');
-const sshKeySelect = document.getElementById('sshKeySelect');
-const sshPasswordRow = document.getElementById('sshPasswordRow');
-const sshPasswordInput = document.getElementById('sshPasswordInput');
-const sshPassphraseRow = document.getElementById('sshPassphraseRow');
-const sshPassphraseInput = document.getElementById('sshPassphraseInput');
-const sshHostKeySelect = document.getElementById('sshHostKeySelect');
-const sshDirectoryInput = document.getElementById('sshDirectoryInput');
-const sshNameInput = document.getElementById('sshNameInput');
-const sshKeyUploadButton = document.getElementById('sshKeyUploadButton');
-const sshKeyDeleteButton = document.getElementById('sshKeyDeleteButton');
-const sshKeyFileInput = document.getElementById('sshKeyFileInput');
-const sshTestButton = document.getElementById('sshTestButton');
-const sshDeleteButton = document.getElementById('sshDeleteButton');
-const sshTestStatus = document.getElementById('sshTestStatus');
-const agentDialog = document.getElementById('agentDialog');
-const agentForm = document.getElementById('agentForm');
-const agentIdInput = document.getElementById('agentIdInput');
-const agentCapabilityInput = document.getElementById('agentCapabilityInput');
-const agentModelSelect = document.getElementById('agentModelSelect');
-const agentDialogStatus = document.getElementById('agentDialogStatus');
-const agentCloseButton = document.getElementById('agentCloseButton');
-const agentEditDialog = document.getElementById('agentEditDialog');
-const agentEditForm = document.getElementById('agentEditForm');
-const agentEditTitle = document.getElementById('agentEditTitle');
-const agentEditRoleFile = document.getElementById('agentEditRoleFile');
-const agentEditTextarea = document.getElementById('agentEditTextarea');
-const agentEditStatus = document.getElementById('agentEditStatus');
-const agentEditCloseButton = document.getElementById('agentEditCloseButton');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
 const llmStatusText = document.getElementById('llmStatusText');
 const sessionPickerDialog = document.getElementById('sessionPickerDialog');
@@ -322,15 +282,8 @@ function isTargetOnScreen(target) {
   return visibleFrameTargets().includes(target);
 }
 
-// Nothing may save a layout before restoreChatFrames() has loaded the stored one.
-// updateConfig() activates the default channel on startup - through setActiveTarget ->
-// assignChatFrame -> persistChatFrames - and that runs before initChatFrames(), so an
-// unguarded save overwrote the saved panes with the 1x1 default and restore then read
-// back the value it had just destroyed. The multi-pane layout never survived a reload.
-let chatFramesRestored = false;
-
 function persistChatFrames() {
-  if (!framesEnabled() || !chatFramesRestored) return;
+  if (!framesEnabled()) return;
   try {
     localStorage.setItem(CHAT_FRAME_STORAGE, JSON.stringify({
       layout: frameLayoutKey(),
@@ -374,30 +327,18 @@ function bindFocusedFrameDom(frameEl) {
   if (!frameEl) return;
   transcript = frameEl.querySelector('.transcript');
   composer = frameEl.querySelector('.composer');
-  // '.composer textarea', not 'textarea': a prompt-options block in the transcript has
-  // its own free-text box, and it comes first in the pane. An unscoped lookup found
-  // that one instead — the composer's placeholder landed in it, and a submit read its
-  // value as the message being sent.
-  input = frameEl.querySelector('.composer textarea');
+  input = frameEl.querySelector('textarea');
   pendingImagesEl = frameEl.querySelector('.pending-images');
   commandPalette = frameEl.querySelector('.command-palette');
 }
 
 function attachFrameComposer(frameEl) {
   const form = frameEl.querySelector('.composer');
-  const textarea = frameEl.querySelector('.composer textarea');
+  const textarea = frameEl.querySelector('textarea');
   if (!form || form.dataset.bound === '1') return;
   form.dataset.bound = '1';
   attachImagePicker(form);
   form.addEventListener('submit', onComposerSubmit);
-  const stopButton = frameEl.querySelector('.frame-stop');
-  if (stopButton) {
-    stopButton.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      stopActiveTurn(frameEl);
-    });
-  }
   textarea.addEventListener('keydown', onComposerKeydown);
   textarea.addEventListener('input', () => updateCommandPalette());
   textarea.addEventListener('blur', () => {
@@ -425,16 +366,10 @@ function createChatFrame(index) {
       <div class="pending-images" hidden></div>
       <textarea rows="1" autocomplete="off" placeholder="Drop a chat from the list"></textarea>
       <div class="command-palette" hidden></div>
-      <button type="button" class="frame-stop" hidden title="Stop this agent" aria-label="Stop this agent">Stop</button>
       <button type="submit">Send</button>
     </form>
   `;
-  // `click`, not `pointerdown`. Focusing re-renders the pane, and on pointerdown
-  // that happened *between* the press and the release — so the element under the
-  // cursor was replaced before the browser could raise a click on it, and every
-  // button inside a pane silently did nothing. On click the button's own handler
-  // has already run by the time this bubbles up.
-  frame.addEventListener('click', () => focusChatFrame(Number(frame.dataset.frame)));
+  frame.addEventListener('pointerdown', () => focusChatFrame(Number(frame.dataset.frame)));
   frame.querySelector('.frame-refresh').addEventListener('click', (event) => {
     event.stopPropagation();
     refreshChatFrame(index);
@@ -468,7 +403,7 @@ function syncChatFrame(frameEl, index) {
   const icon = frameEl.querySelector('.frame-icon');
   const refresh = frameEl.querySelector('.frame-refresh');
   const clear = frameEl.querySelector('.frame-clear');
-  const textarea = frameEl.querySelector('.composer textarea');
+  const textarea = frameEl.querySelector('textarea');
   title.textContent = conversation?.label || (target ? target : 'Drop a chat here');
   title.title = title.textContent;
   if (icon) {
@@ -478,22 +413,8 @@ function syncChatFrame(frameEl, index) {
   }
   if (refresh) refresh.hidden = !target;
   if (clear) clear.hidden = !target;
-  const stop = frameEl.querySelector('.frame-stop');
-  if (stop) {
-    // Only while this pane's own agent is working. The composer is disabled then, so
-    // without this there is no way to interrupt a turn at all.
-    stop.hidden = !(conversation && conversation.busy);
-    stop.disabled = false;
-  }
-  const send = frameEl.querySelector('button[type="submit"]');
-  if (send) send.hidden = Boolean(conversation && conversation.busy);
   if (textarea) {
-    // Busy no longer disables the composer: a disabled control cannot hold focus,
-    // so sending a message took the cursor out of the box and the next message
-    // could not be typed without clicking back in. An agent turn can run for
-    // minutes; composing the next message during one is normal. Only sending is
-    // gated — see onComposerSubmit.
-    textarea.disabled = Boolean(conversation?.kind === 'llm' && !conversation.writable);
+    textarea.disabled = Boolean(conversation?.kind === 'llm' && (!conversation.writable || conversation.busy));
     textarea.placeholder = !conversation
       ? 'Drop a chat from the list'
       : (conversation.kind === 'llm' && !conversation.writable
@@ -556,9 +477,6 @@ function focusChatFrame(index, options = {}) {
   if (!framesEnabled()) return;
   const count = frameLayoutCount();
   if (index < 0 || index >= count) return;
-  // Focusing the pane that already has focus is not a state change, and doing the
-  // work anyway meant every click inside it rebuilt its transcript.
-  if (index === focusedFrame && frameTargets[index] === activeTarget) return;
   focusedFrame = index;
   bindFocusedFrameDom(chatFrames.children[index]);
   const target = frameTargets[index];
@@ -682,7 +600,6 @@ function buildFrameLayoutMatrix() {
 function initChatFrames() {
   if (!framesEnabled()) return;
   restoreChatFrames();
-  chatFramesRestored = true;
   buildFrameLayoutMatrix();
   ensureChatFrameDom();
   const toggle = document.getElementById('frameLayoutToggle');
@@ -1052,16 +969,12 @@ function ensureConversation(target, label = target, kind = target.startsWith('#'
 function setActiveTarget(target, options = {}) {
   if (mobileDrawer && mobileDrawer.open) closeMobileDrawer();
   const conversation = ensureConversation(target);
-  // Re-selecting the chat that is already open rebuilds its transcript for no
-  // reason, which throws away whatever the reader was in the middle of — a text
-  // selection, a hovered button, or a press that has not been released yet.
-  const unchanged = activeTarget === target;
   activeTarget = target;
   if (framesEnabled() && !options.skipFrame) assignChatFrame(focusedFrame, target, { skipActive: true });
   conversation.unread = 0;
   topChannel.textContent = conversation.label;
   topChannel.title = conversation.label;
-  input.disabled = conversation.kind === 'llm' && !conversation.writable;
+  input.disabled = conversation.kind === 'llm' && (!conversation.writable || conversation.busy);
   input.placeholder = conversation.kind === 'llm' && !conversation.writable
     ? `${conversation.provider} history is read-only`
     : (conversation.busy ? `${providerName(conversation.provider)} is working…` : (conversation.kind === 'llm' ? `Message ${providerName(conversation.provider)}` : `Message ${conversation.label}`));
@@ -1075,7 +988,7 @@ function setActiveTarget(target, options = {}) {
   }
   sendImageButton.hidden = conversation.kind === 'llm';
   renderConversations();
-  if (!unchanged) renderTranscript();
+  renderTranscript();
   renderUsers();
   if (conversation.kind === 'llm' && !conversation.hydrated && !conversation.loading) {
     conversation.loading = true;
@@ -1114,7 +1027,7 @@ function setActiveTarget(target, options = {}) {
         if (!result.busy) conversation.progress = '';
         if (target === activeTarget) {
           if (input) {
-            input.disabled = conversation.kind === 'llm' && !conversation.writable;
+            input.disabled = conversation.kind === 'llm' && (!conversation.writable || conversation.busy);
             input.placeholder = conversation.busy
               ? `${providerName(conversation.provider)} is working…`
               : `Message ${providerName(conversation.provider)}`;
@@ -1193,14 +1106,6 @@ function appendTranscriptEntry(conversation) {
   const thinking = transcript.querySelector('.thinking-entry');
   if (thinking) transcript.insertBefore(node, thinking);
   else transcript.appendChild(node);
-  // The message that *starts* a turn arrives through this fast path, and the thinking
-  // row is only ever built by a full render — so the pane showed the sent message and
-  // then nothing at all for the rest of the turn: no verb, no steps, no elapsed clock.
-  // Only the composer's placeholder and the Stop button said anything was happening.
-  if (!thinking && conversation.kind === 'llm' && conversation.busy) {
-    transcript.appendChild(renderThinkingRow(conversation));
-    startThinkingAnimation();
-  }
   transcriptRenderedCount = events.length;
   if (frameEl) frameEl.dataset.renderedCount = String(events.length);
   if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
@@ -1514,12 +1419,6 @@ async function sendAgentAction(conversation, reply, controls) {
   rendererLog('info', 'Agent action send', { target: conversation.target, provider: conversation.provider, replyChars: String(reply || '').length });
   for (const button of controls.querySelectorAll('button')) button.disabled = true;
   controls.classList.add('pending');
-  // The same echo typing a message gets. Without it a clicked option produced no
-  // visible change at all: the POST only returns {ok, pending}, and the answer and
-  // the reply both arrive later over the event socket — so whenever that socket is
-  // not delivering, clicking a button was indistinguishable from a dead button.
-  // This is the difference the bug reports were describing.
-  addOptimisticLlmEcho(conversation, reply);
   try {
     const result = await window.subjectiveChat.sendLlmMessage(conversation.target, reply);
     if (result?.unauthorized) {
@@ -1567,201 +1466,52 @@ function resolvePromptActions(data) {
   return richMessages.detectPromptActions(data.text);
 }
 
-// One message can ask several questions, each with its own choices. Everything below draws
-// that shape; a single question is just the one-group case, so there is one code path
-// rather than two that drift. An older backend, or the client-side heuristic, produces one
-// unnamed group — which renders exactly as it did before this existed.
-function resolvePromptGroups(data) {
-  const backend = data.promptOptions;
-  const freeText = backend?.free_text?.enabled
-    ? { label: backend.free_text.label || 'Add anything else (optional)', placeholder: backend.free_text.placeholder || '' }
-    : null;
-  const groups = backend && Array.isArray(backend.groups) ? backend.groups.filter((group) => group?.options?.length) : [];
-  if (groups.length) {
-    return {
-      groups: groups.map((group, index) => ({
-        id: group.id || `q${index + 1}`,
-        question: group.question || '',
-        actions: [
-          ...group.options.map((option, position) => ({
-            id: option.id || `opt-${position}`,
-            label: option.label || option.reply || `Option ${position + 1}`,
-            description: option.description || '',
-            reply: option.reply,
-            primary: position === 0,
-          })),
-          // "Other…" is how an answer outside the offered set used to be given. The
-          // free-text box is that, done better — in place, and combinable with a choice —
-          // so the pill only appears when there is no box to type into.
-          ...(!freeText && group.allows_other
-            ? [{ id: 'other', label: 'Other…', description: backend.other_hint || 'Answer in your own words', custom: true }]
-            : []),
-        ],
-      })),
-      freeText,
-    };
-  }
-  const actions = resolvePromptActions(data).filter((action) => !(freeText && action.custom));
-  if (!actions.length) return { groups: [], freeText: null };
-  return { groups: [{ id: 'q1', question: '', actions }], freeText };
-}
-
-// What gets sent when the user answers. One question keeps sending the option's own reply,
-// unchanged, so an agent sees exactly what it saw before. Several questions have to name
-// which answer belongs to which, or the agent has to guess the order.
-function composePromptReply(groups, chosen, note) {
-  const answered = groups.filter((group) => chosen.get(group.id));
-  const trimmedNote = String(note || '').trim();
-  if (!answered.length) return trimmedNote;
-  if (groups.length === 1) {
-    const reply = chosen.get(groups[0].id).reply;
-    return trimmedNote ? `${reply}\n\n${trimmedNote}` : reply;
-  }
-  const lines = answered.map((group, index) => {
-    const action = chosen.get(group.id);
-    const question = group.question || `Question ${index + 1}`;
-    return `${index + 1}. ${question} ${action.reply}`;
-  });
-  return trimmedNote ? `${lines.join('\n')}\n\n${trimmedNote}` : lines.join('\n');
-}
-
 function appendPromptActions(content, data, context) {
   if (!data.assistant || !context.actionable) return;
-  const { groups, freeText } = resolvePromptGroups(data);
-  if (!groups.length) return;
+  const actions = resolvePromptActions(data);
+  if (!actions.length) return;
   const controls = document.createElement('div');
   controls.className = 'prompt-actions';
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Answer agent question');
   const readOnly = !context.conversation.writable;
   const busy = Boolean(context.conversation.busy);
-  // Several questions cannot each send on click: the first click would send a turn and the
-  // remaining answers would have nowhere to go. There the buttons select and one Send goes.
-  const multi = groups.length > 1;
-  if (multi) controls.classList.add('prompt-actions-multi');
-  const chosen = new Map();
-  let noteInput = null;
-  let sendButton = null;
-
-  const refreshSendState = () => {
-    if (!sendButton) return;
-    const answered = groups.filter((group) => chosen.has(group.id)).length;
-    sendButton.disabled = readOnly || busy || (!answered && !String(noteInput?.value || '').trim());
-    sendButton.querySelector('.prompt-action-label').textContent = answered < groups.length
-      ? `Send ${answered}/${groups.length}`
-      : 'Send answers';
-  };
-
-  for (const group of groups) {
-    const section = document.createElement('div');
-    section.className = 'prompt-group';
-    section.dataset.groupId = group.id;
-    if (group.question) {
-      const question = document.createElement('p');
-      question.className = 'prompt-group-question';
-      question.textContent = group.question;
-      section.appendChild(question);
-    }
-    const row = document.createElement('div');
-    row.className = 'prompt-group-options';
-    for (const action of group.actions) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = action.primary && !multi ? 'prompt-action primary' : 'prompt-action';
-      if (action.custom) button.classList.add('prompt-action-custom');
-      // Label on top, the backend's description underneath — so the user sees what each
-      // choice means, not just a bare word.
-      const label = document.createElement('span');
-      label.className = 'prompt-action-label';
-      label.textContent = action.label;
-      button.appendChild(label);
-      if (action.description) {
-        const description = document.createElement('span');
-        description.className = 'prompt-action-description';
-        description.textContent = action.description;
-        button.appendChild(description);
-      }
-      button.disabled = readOnly || busy;
-      if (readOnly) button.title = 'Historical conversation is read-only';
-      button.addEventListener('click', () => {
-        rendererLog('info', 'Prompt action clicked', {
-          target: context.conversation.target, action: action.id || action.label,
-          custom: Boolean(action.custom), group: group.id, multi,
-        });
-        // "Other…" has no canned reply. It points at the free-text box when there is one,
-        // and otherwise hands focus to the composer, as it always did.
-        if (action.custom) {
-          if (noteInput) {
-            noteInput.focus();
-            return;
-          }
-          if (context.conversation.target === activeTarget && input) {
-            input.focus();
-            input.placeholder = 'Type your answer…';
-          }
-          return;
-        }
-        if (multi) {
-          chosen.set(group.id, action);
-          for (const sibling of row.querySelectorAll('.prompt-action')) sibling.classList.remove('chosen');
-          button.classList.add('chosen');
-          refreshSendState();
-          return;
-        }
-        chosen.set(group.id, action);
-        sendAgentAction(context.conversation, composePromptReply(groups, chosen, noteInput?.value), controls);
-      });
-      row.appendChild(button);
-    }
-    section.appendChild(row);
-    controls.appendChild(section);
-  }
-
-  if (freeText) {
-    const field = document.createElement('label');
-    field.className = 'prompt-free-text';
-    const caption = document.createElement('span');
-    caption.className = 'prompt-free-text-label';
-    caption.textContent = freeText.label;
-    const box = document.createElement('textarea');
-    box.className = 'prompt-free-text-input';
-    box.rows = 2;
-    box.placeholder = freeText.placeholder;
-    box.disabled = readOnly || busy;
-    // Enter sends what is typed even with no option picked: a question the buttons do not
-    // cover is still answered here rather than in the composer further down the page.
-    box.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' || event.shiftKey) return;
-      event.preventDefault();
-      const reply = composePromptReply(groups, chosen, box.value);
-      if (reply.trim()) sendAgentAction(context.conversation, reply, controls);
-    });
-    box.addEventListener('input', refreshSendState);
-    noteInput = box;
-    field.appendChild(caption);
-    field.appendChild(box);
-    controls.appendChild(field);
-  }
-
-  if (multi) {
-    sendButton = document.createElement('button');
-    sendButton.type = 'button';
-    sendButton.className = 'prompt-action primary prompt-action-send';
+  for (const action of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = action.primary ? 'prompt-action primary' : 'prompt-action';
+    if (action.custom) button.classList.add('prompt-action-custom');
+    // Label on top, the backend's description underneath — so the user sees what each
+    // choice means, not just a bare word.
     const label = document.createElement('span');
     label.className = 'prompt-action-label';
-    sendButton.appendChild(label);
-    sendButton.addEventListener('click', () => {
-      const reply = composePromptReply(groups, chosen, noteInput?.value);
-      if (!reply.trim()) return;
-      rendererLog('info', 'Prompt answers sent', {
-        target: context.conversation.target, answered: chosen.size, questions: groups.length,
+    label.textContent = action.label;
+    button.appendChild(label);
+    if (action.description) {
+      const description = document.createElement('span');
+      description.className = 'prompt-action-description';
+      description.textContent = action.description;
+      button.appendChild(description);
+    }
+    button.disabled = readOnly || busy;
+    if (readOnly) button.title = 'Historical conversation is read-only';
+    button.addEventListener('click', () => {
+      rendererLog('info', 'Prompt action clicked', {
+        target: context.conversation.target, action: action.id || action.label, custom: Boolean(action.custom),
       });
-      sendAgentAction(context.conversation, reply, controls);
+      // "Other…" has no canned reply: hand focus to the composer so the user writes their
+      // own answer, which sends as the next turn like any typed message.
+      if (action.custom) {
+        if (context.conversation.target === activeTarget && input) {
+          input.focus();
+          input.placeholder = 'Type your answer…';
+        }
+        return;
+      }
+      sendAgentAction(context.conversation, action.reply, controls);
     });
-    controls.appendChild(sendButton);
-    refreshSendState();
+    controls.appendChild(button);
   }
-
   content.appendChild(controls);
 }
 
@@ -1881,24 +1631,16 @@ function renderEntry(kind, data, context = {}) {
       ? `<img class="avatar provider-avatar" src="${escapeHtml(data.icon)}" alt="${escapeHtml(data.from)}">`
       : `<div class="avatar">${initials(data.from)}</div>`;
     const attachments = imageAttachmentMarkup(data.attachments);
-    // Terminal output goes into the same code card as a fenced block — Copy, Wrap,
-    // line count — rather than through markdown, which would reflow the runs of
-    // spaces that carry the layout.
-    const body = data.terminal
-      ? `<div class="text rich-text">${richMessages.renderTerminal(data.text)}</div>`
-      : `<div class="text rich-text">${richMessages.renderMessage(data.text)}</div>`;
     item.innerHTML = `
       ${avatar}
       <div class="bubble">
         <div class="meta"><span>${escapeHtml(data.from)}</span><time>${timeLabel(data.time)}</time></div>
-        ${body}
+        <div class="text rich-text">${richMessages.renderMessage(data.text)}</div>
         ${attachments}
       </div>
     `;
-    // Wired either way: the card's Copy and Wrap buttons live behind this.
     wireRichMessage(item.querySelector('.rich-text'), data, context);
     wireImageAttachments(item);
-    if (data.awaitingSecret) openSshSecretDialog(data.target, data.awaitingSecret);
   } else if (kind === 'command') {
     item.classList.add('command-entry');
     const avatar = data.icon
@@ -2032,79 +1774,8 @@ function conversationUserPillHtml(conversation) {
   return `<span class="conversation-user-pill user-hue-${slot}" title="${escapeHtml(username)}">${escapeHtml(username)}</span>`;
 }
 
-// Which machine a chat's agent runs on. Worth a column of its own: two chats with
-// the same agent and the same name behave completely differently depending on the
-// answer, and nothing else in the row distinguishes them.
-const LOCATION_ICONS = {
-  // Two nodes and a link — the conventional "somewhere else on the network".
-  ssh: '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-     + '<rect x="1" y="2" width="6" height="4" rx="1"/><rect x="9" y="10" width="6" height="4" rx="1"/>'
-     + '<path d="M4 6v3a1 1 0 0 0 1 1h7"/></svg>',
-  // One box, standing on its own.
-  local: '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-       + '<rect x="2" y="3" width="12" height="8" rx="1"/><path d="M6 14h4"/></svg>',
-};
-
-function conversationLocationHtml(conversation) {
-  if (conversation.kind !== 'llm') {
-    return '<span class="conversation-location is-empty" aria-hidden="true"></span>';
-  }
-  const overSsh = conversation.provider === SSH_PROVIDER || Boolean(conversation.sshConnection);
-  if (!overSsh) {
-    return `<span class="conversation-location is-local" title="Runs on this machine">`
-      + `${LOCATION_ICONS.local}</span>`;
-  }
-  let where = '';
-  if (conversation.provider === SSH_PROVIDER) {
-    // An SSH chat's target is its workspace, so that string is the machine.
-    where = String(conversation.workspace || '').trim();
-  } else {
-    // The catalog is loaded once at startup; a chat can outlive the connection it
-    // names, and saying so beats a tooltip that claims a machine that is gone.
-    const saved = savedConnection(conversation.sshConnection);
-    where = saved ? `${saved.username ? saved.username + '@' : ''}${saved.host}` : '';
-  }
-  const title = where ? `Runs over SSH on ${where}` : 'Runs over SSH — that connection no longer exists';
-  return `<span class="conversation-location is-ssh${where ? '' : ' is-broken'}" `
-    + `title="${escapeHtml(title)}">${LOCATION_ICONS.ssh}</span>`;
-}
-
-function syncConversationTitles() {
-  const active = conversations.get(activeTarget);
-  if (active) {
-    topChannel.textContent = active.label;
-    topChannel.title = active.label;
-  }
-  if (framesEnabled()) {
-    [...chatFrames.children].forEach((frameEl, index) => syncChatFrame(frameEl, index));
-  }
-}
-
-// A re-render whose row set is unchanged patches the existing rows in place instead of
-// rebuilding the table. Replacing every row on each selection change or list refresh broke
-// inline rename two ways: it discarded a field the operator was already typing into, and -
-// since the row a double-click started on was swapped out between the two clicks - the
-// browser was often left with no common target to fire the opening dblclick on at all.
-function paintConversationRow(row, conversation) {
-  row.title = conversation.sourceUser
-    ? `${conversation.sourceUser}: ${conversation.label}`
-    : conversation.label;
-  row.classList.toggle('active', conversation.target === activeTarget);
-  row.classList.toggle('in-frame', framesEnabled() && frameTargets.includes(conversation.target));
-  row.classList.toggle('busy', Boolean(conversation.busy));
-  row.draggable = Boolean(framesEnabled() && conversation.kind === 'llm');
-  // A row mid-rename has no .conversation-label to repaint - the field replaced it, and
-  // overwriting it would throw away the operator's keystrokes.
-  const label = row.querySelector('.conversation-label');
-  if (label) label.textContent = conversation.label.replace(/^#/, '');
-  const unread = row.querySelector('.conversation-unread-cell');
-  if (unread) unread.innerHTML = conversation.unread ? `<b>${conversation.unread}</b>` : '';
-}
-
 function renderConversationsNow() {
-  // Metadata-only updates (rename/list refresh) do not render transcripts. Keep
-  // every visible pane header in sync without replacing messages or drafts.
-  syncConversationTitles();
+  conversationList.replaceChildren();
   const ordered = [...conversations.values()].sort((left, right) => {
     const groupDifference = conversationGroupRank(left) - conversationGroupRank(right);
     if (groupDifference) return groupDifference;
@@ -2123,29 +1794,7 @@ function renderConversationsNow() {
       ? `${shown}${total > shown ? `/${total}` : ''}`
       : (total > shown ? `${shown}/${total}` : String(shown || ordered.length));
   }
-  // Same rows in the same order: repaint them where they stand, keeping every live DOM
-  // node (the rename field included) attached.
-  const rendered = conversationList.querySelectorAll('.conversation-row:not(.agent-row)');
-  if (
-    visible.length
-    && visible.length === rendered.length
-    && visible.every((conversation, index) => rendered[index].dataset.target === conversation.target)
-  ) {
-    visible.forEach((conversation, index) => paintConversationRow(rendered[index], conversation));
-    syncAgentRows();
-    return;
-  }
-  conversationList.replaceChildren();
   if (!visible.length) {
-    // The agents are part of this list, so they stay even when no chat matches.
-    if (agentsAvailable && agents.length) {
-      const table = document.createElement('table');
-      table.className = 'conversation-table';
-      const body = document.createElement('tbody');
-      appendAgentRows(body);
-      table.appendChild(body);
-      conversationList.appendChild(table);
-    }
     const empty = document.createElement('div');
     empty.className = 'conversation-empty';
     empty.textContent = query ? `No chats matching “${conversationSearch.value.trim()}”` : 'No conversations yet';
@@ -2158,15 +1807,13 @@ function renderConversationsNow() {
   const table = document.createElement('table');
   table.className = 'conversation-table';
   const colgroup = document.createElement('colgroup');
-  for (const name of ['col-user', 'col-location', 'col-icon', 'col-name', 'col-unread']) {
+  for (const name of ['col-user', 'col-icon', 'col-name', 'col-unread']) {
     const col = document.createElement('col');
     col.className = name;
     colgroup.appendChild(col);
   }
   table.appendChild(colgroup);
   const body = document.createElement('tbody');
-  // Agents first, as rows of this same table: one list, one set of columns, one scrollbar.
-  appendAgentRows(body);
   for (const conversation of visible) {
     const row = document.createElement('tr');
     row.className = 'conversation-row';
@@ -2191,7 +1838,6 @@ function renderConversationsNow() {
       : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
     row.innerHTML = `
       <td class="conversation-user-cell">${conversationUserPillHtml(conversation)}</td>
-      <td class="conversation-location-cell">${conversationLocationHtml(conversation)}</td>
       <td class="conversation-icon-cell">${icon}</td>
       <td class="conversation-name-cell"><span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span></td>
       <td class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</td>
@@ -2240,20 +1886,9 @@ function beginRenameConversation(target) {
   field.select();
 
   let settled = false;
-  // Put the label span back rather than leaving the field for the next render to clear:
-  // a render that finds the row set unchanged now patches rows in place and would keep
-  // the field (and the stale name inside it) on screen indefinitely.
-  const restore = () => {
-    if (!field.isConnected) return;
-    const span = document.createElement('span');
-    span.className = 'conversation-label';
-    span.textContent = conversation.label.replace(/^#/, '');
-    field.replaceWith(span);
-  };
   const cancel = () => {
     if (settled) return;
     settled = true;
-    restore();
     renderConversations();
   };
   const commit = async () => {
@@ -2261,23 +1896,15 @@ function beginRenameConversation(target) {
     settled = true;
     const name = field.value.trim();
     if (!name || name === conversation.label.replace(/^#/, '')) {
-      restore();
       renderConversations();
       return;
     }
-    try {
-      const result = await window.subjectiveChat.renameLlmConversation(target, name);
-      // Apply the confirmed HTTP result too: the WebSocket event can be missed
-      // during reconnect. Do not replace transcript state with the metadata reply.
-      if (result?.ok && result.conversation?.label) {
-        conversation.label = result.conversation.label;
-      } else if (!result?.ok) {
-        rendererLog('error', 'Failed to rename conversation', { target, error: result?.error });
-      }
-    } catch (error) {
-      rendererLog('error', 'Failed to rename conversation', { target, error: String(error) });
+    const result = await window.subjectiveChat.renameLlmConversation(target, name);
+    // On success the label is applied via the 'llm-conversation-renamed' event; either way
+    // re-render to drop the inline input and restore the row.
+    if (!result?.ok) {
+      rendererLog('error', 'Failed to rename conversation', { target, error: result?.error });
     }
-    restore();
     renderConversations();
   };
 
@@ -2442,8 +2069,7 @@ function addOptimisticLlmEcho(conversation, text, attachments = []) {
   conversation.busy = true;
   conversation.busySince = conversation.busySince || Date.now();
   if (conversation.target === activeTarget) {
-    // Placeholder only: the box stays usable so the next message can be written
-    // while this turn runs.
+    input.disabled = true;
     input.placeholder = `${providerName(conversation.provider)} is working…`;
   }
   addEvent('message', {
@@ -2473,6 +2099,7 @@ function dropOptimisticLlmEcho(conversation, text) {
   conversation.busy = false;
   conversation.busySince = 0;
   if (conversation.target === activeTarget) {
+    input.disabled = false;
     input.placeholder = `Message ${providerName(conversation.provider)}`;
     // Only reclaim the composer if the user has not started typing something else.
     if (!input.value.trim()) input.value = text;
@@ -2726,7 +2353,7 @@ async function onComposerSubmit(event) {
   const form = event.currentTarget;
   const frameEl = form.closest('.chat-frame');
   if (frameEl) focusChatFrame(Number(frameEl.dataset.frame), { skipActive: false });
-  const box = (frameEl ? frameEl.querySelector('.composer textarea') : input);
+  const box = (frameEl ? frameEl.querySelector('textarea') : input);
   if (box) input = box;
   const text = String(input?.value || '').replace(/\r\n?/g, '\n');
   if (pendingImages.some((image) => image.loading || image.error)) {
@@ -2735,23 +2362,7 @@ async function onComposerSubmit(event) {
   }
   const images = pendingImages.map((image) => image.file);
   if (!text.trim() && !images.length) return;
-  // The composer stays typable during a turn, so this is where a second send is
-  // refused. The text is deliberately left in the box: the operator wrote it, and
-  // clearing it to show a "still working" notice would throw their words away.
-  const activeConversation = conversations.get(activeTarget);
-  if (activeConversation?.kind === 'llm' && activeConversation.busy) {
-    addEvent('system', {
-      target: activeTarget,
-      text: `${providerName(activeConversation.provider)} is still working. Your message is kept in the box — send it when the turn finishes.`,
-    });
-    return;
-  }
-  if (input) {
-    input.value = '';
-    // Sending should not cost the operator their cursor: without this the next
-    // message has to start by clicking back into the box.
-    input.focus();
-  }
+  if (input) input.value = '';
   hideCommandPalette();
   clearPendingImages();
   const broadcast = Boolean(frameBroadcast?.checked) && framesEnabled();
@@ -2802,11 +2413,7 @@ async function onComposerKeydown(event) {
       return;
     }
   }
-  if (event.key === 'Enter') {
-    // Enter sends, Ctrl/Cmd+Enter and Shift+Enter make a new line. A chat composer
-    // is typed in far more often than it is used to compose a paragraph, and this
-    // is the way round every other chat works.
-    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
     (event.currentTarget.closest('form') || composer)?.requestSubmit();
   }
@@ -2888,8 +2495,7 @@ const PROVIDER_DISPLAY_NAMES = Object.freeze({
   codex: 'Codex',
   cursor: 'Cursor',
   gemini: 'Gemini',
-  grok: 'Grok',
-  ssh: 'SSH'
+  grok: 'Grok'
 });
 
 function providerName(provider) {
@@ -2912,14 +2518,6 @@ function llmMessageEvent(message, conversation) {
       mine: !assistant,
       icon: assistant ? conversation.icon : '',
       assistant,
-      // An SSH reply is terminal output, not prose. Markdown reflows it — every
-      // run of spaces collapses, so `ls` columns and any box drawing fall apart —
-      // and there is no markdown in it to render in the first place.
-      terminal: assistant && String(conversation.provider || '').toLowerCase() === 'ssh',
-      // Set when the remote is blocked on a password prompt; the composer must not
-      // be how that is answered.
-      awaitingSecret: message.awaitingSecret || '',
-      target: conversation.target,
       // The backend's structured choices for this message, when it is an assistant question.
       // appendPromptActions prefers this over parsing the prose itself.
       promptOptions: message.promptOptions || null
@@ -3064,337 +2662,14 @@ async function loadLlmConversations() {
   }
 }
 
-// --- agents -----------------------------------------------------------------------
-// The registry in workflow/agents: one row per logical role, its role file, and the model
-// currently assigned to it. Models are runtime metadata there, never part of an agent's
-// identity, so changing one re-points the agent rather than defining a new one.
-//
-// Agent rows are <tr>s in the same <table> as the chats, sharing its columns and its one
-// scroll container: agents and chats are a single list, not two stacked ones.
-let agents = [];
-let agentsAvailable = true;
-let agentsCollapsed = true; // set from storage on first render
-// Kept across renders so rebuilding the chat list cannot close a model <select> that the
-// operator has open, and so the person icon is not re-parsed 28 times a render.
-const agentRowNodes = new Map();
-let agentsHeaderRow = null;
-const AGENTS_COLLAPSED_KEY = 'subjective-chat-agents-collapsed';
-
-// Inline rather than an <img>: it inherits the row's colour through currentColor, so it
-// tracks the theme and the hover state like the rest of the list.
-const AGENT_ICON_SVG = `
-  <svg class="agent-icon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
-    <circle cx="8" cy="5" r="3" fill="currentColor"></circle>
-    <path d="M8 9.4c-3.05 0-5.4 1.9-5.4 4.3 0 .33.27.6.6.6h9.6c.33 0 .6-.27.6-.6 0-2.4-2.35-4.3-5.4-4.3Z" fill="currentColor"></path>
-  </svg>`;
-
-function readAgentsCollapsed() {
-  try {
-    return localStorage.getItem(AGENTS_COLLAPSED_KEY) !== 'false';
-  } catch (_error) {
-    return true; // private mode: collapsed, so the registry cannot bury the chats
-  }
-}
-
-function modelOptionsHtml(selected) {
-  const chosen = String(selected || '');
-  const options = llmProviders.length
-    ? llmProviders
-    : [...llmProviderSelect?.options || []].map((option) => ({ key: option.value, label: option.textContent }));
-  const rows = options.map((provider) =>
-    `<option value="${escapeHtml(provider.key)}"${provider.key === chosen ? ' selected' : ''}>${escapeHtml(provider.label)}</option>`
-  );
-  // "Not set" is a real state: a role may deliberately leave the model to the caller.
-  return `<option value=""${chosen ? '' : ' selected'}>Not set</option>${rows.join('')}`;
-}
-
-function setAgentsCollapsed(next) {
-  agentsCollapsed = Boolean(next);
-  try {
-    localStorage.setItem(AGENTS_COLLAPSED_KEY, agentsCollapsed ? 'true' : 'false');
-  } catch (_error) { /* ignore quota / private mode */ }
-  renderConversations();
-}
-
-function applyAgentsCollapsed() {
-  if (agentsHeaderRow) agentsHeaderRow.classList.toggle('is-collapsed', agentsCollapsed);
-}
-
-function ensureAgentsHeaderRow() {
-  if (agentsHeaderRow) return agentsHeaderRow;
-  const row = document.createElement('tr');
-  row.className = 'agents-header-row';
-  row.innerHTML = `
-    <td class="agents-header-cell" colspan="4">
-      <span class="agents-title">Agents</span>
-      <small id="agentsCount" class="agents-count"></small>
-      <button type="button" id="agentCreateButton" class="agents-add" title="New agent" aria-label="New agent">+</button>
-    </td>
-  `;
-  row.querySelector('#agentCreateButton').addEventListener('click', (event) => {
-    // The header toggles the group, so the + must not also collapse it.
-    event.preventDefault();
-    event.stopPropagation();
-    openAgentDialog();
-  });
-  row.addEventListener('click', () => setAgentsCollapsed(!agentsCollapsed));
-  agentsHeaderRow = row;
-  return row;
-}
-
-function buildAgentRow(agent) {
-  const row = document.createElement('tr');
-  row.className = 'conversation-row agent-row';
-  row.dataset.agent = agent.id;
-  // A registry row whose role file is missing is shown and flagged, not hidden: hiding it
-  // would make a broken registry look healthy.
-  row.classList.toggle('is-missing', agent.exists === false);
-  row.title = agent.exists === false
-    ? `${agent.id} — role file ${agent.roleFile} is missing`
-    : `${agent.id}${agent.capability ? ` — ${agent.capability}` : ''}`;
-  row.innerHTML = `
-    <td class="conversation-user-cell">
-      <select class="agent-model" aria-label="Model for ${escapeHtml(agent.id)}">${modelOptionsHtml(agent.model)}</select>
-    </td>
-    <!-- An agent row is a registry entry, not a chat, so it has no machine. The
-         cell still has to be here: it shares this table's columns. -->
-    <td class="conversation-location-cell"><span class="conversation-location is-empty" aria-hidden="true"></span></td>
-    <td class="conversation-icon-cell">${AGENT_ICON_SVG}</td>
-    <td class="conversation-name-cell"><span class="agent-name">${escapeHtml(agent.id)}</span></td>
-    <td class="conversation-unread-cell"></td>
-  `;
-  row.querySelector('.agent-model').addEventListener('click', (event) => event.stopPropagation());
-  row.querySelector('.agent-model').addEventListener('change', (event) => {
-    event.stopPropagation();
-    setAgentModel(agent.id, event.target.value);
-  });
-  row.addEventListener('click', () => startAgentChat(agent.id));
-  row.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-    window.subjectiveChat.showAgentContextMenu?.(agent.id, event.clientX, event.clientY);
-  });
-  return row;
-}
-
-function renderAgents() {
-  if (!agentsAvailable) return;
-  agentsCollapsed = readAgentsCollapsed();
-  const header = ensureAgentsHeaderRow();
-  const count = header.querySelector('#agentsCount');
-  if (count) count.textContent = agents.length ? String(agents.length) : '';
-  const seen = new Set();
-  for (const agent of agents) {
-    seen.add(agent.id);
-    const existing = agentRowNodes.get(agent.id);
-    // Rebuild only what changed, so an open <select> elsewhere in the group survives.
-    if (!existing || existing.dataset.model !== String(agent.model || '')) {
-      const row = buildAgentRow(agent);
-      row.dataset.model = String(agent.model || '');
-      agentRowNodes.set(agent.id, row);
-    }
-  }
-  for (const id of [...agentRowNodes.keys()]) {
-    if (!seen.has(id)) agentRowNodes.delete(id);
-  }
-  applyAgentsCollapsed();
-  renderConversations();
-}
-
-// Reconcile the agent rows inside the table that is already on screen. Rebuilding the
-// whole tbody because the agent list changed would replace every chat row too, and a row
-// swapped out from under a click becomes a stale element.
-function syncAgentRows() {
-  const body = conversationList.querySelector('table.conversation-table tbody');
-  if (!body) return;
-  for (const row of agentRowNodes.values()) row.remove();
-  if (!agentsAvailable || !agents.length) {
-    agentsHeaderRow?.remove();
-    return;
-  }
-  const header = ensureAgentsHeaderRow();
-  applyAgentsCollapsed();
-  if (header.parentNode !== body || body.firstChild !== header) {
-    body.insertBefore(header, body.firstChild);
-  }
-  if (agentsCollapsed) return;
-  const firstChat = header.nextSibling;
-  for (const agent of agents) {
-    const row = agentRowNodes.get(agent.id);
-    if (row) body.insertBefore(row, firstChat);
-  }
-}
-
-function appendAgentRows(body) {
-  if (!agentsAvailable || !agents.length) return;
-  body.appendChild(ensureAgentsHeaderRow());
-  applyAgentsCollapsed();
-  // Collapsed means not in the table at all, rather than present-but-hidden. Agent rows
-  // carry .conversation-row so they match the chat rows' styling, and those rules set
-  // `display` — including a mobile grid override — which beats [hidden]. Leaving them out
-  // is unambiguous and cannot be re-shown by a stylesheet.
-  if (agentsCollapsed) return;
-  for (const agent of agents) {
-    const row = agentRowNodes.get(agent.id);
-    if (row) body.appendChild(row);
-  }
-}
-
-async function loadAgents() {
-  if (!window.subjectiveChat.listAgents) {
-    // A backend with no registry to serve: no agent rows at all, rather than an empty group.
-    agentsAvailable = false;
-    agents = [];
-    agentRowNodes.clear();
-    agentsHeaderRow = null;
-    renderConversations();
-    return;
-  }
-  let payload = null;
-  try {
-    payload = await window.subjectiveChat.listAgents();
-  } catch (error) {
-    rendererLog('error', 'Failed to load agents', { error: String(error) });
-  }
-  agents = Array.isArray(payload?.agents) ? payload.agents : [];
-  renderAgents();
-}
-
-async function setAgentModel(id, model) {
-  if (!window.subjectiveChat.setAgentModel) return;
-  try {
-    const result = await window.subjectiveChat.setAgentModel(id, model);
-    if (!result?.ok) {
-      rendererLog('error', 'Failed to set agent model', { id, error: result?.error });
-      await loadAgents(); // put the picker back to what is actually on disk
-      return;
-    }
-    const agent = agents.find((item) => item.id === id);
-    if (agent) agent.model = result.model || '';
-  } catch (error) {
-    rendererLog('error', 'Failed to set agent model', { id, error: String(error) });
-    await loadAgents();
-  }
-}
-
-async function startAgentChat(id) {
-  const agent = agents.find((item) => item.id === id);
-  if (!agent || !window.subjectiveChat.createLlmConversation) return;
-  // An agent with no model assigned cannot pick one for you — say so rather than
-  // silently starting the chat on whatever the default happens to be.
-  if (!agent.model) {
-    addEvent('system', { target: activeTarget, text: `${id} has no model set. Choose one next to it first.` });
-    return;
-  }
-  const result = await window.subjectiveChat.createLlmConversation({
-    name: id,
-    provider: agent.model,
-    workspace: ''
-  });
-  if (!result?.ok) {
-    rendererLog('error', 'Failed to start agent chat', { id, error: result?.error });
-    addEvent('system', { target: activeTarget, text: result?.error || `Could not start ${id}.` });
-    return;
-  }
-  const conversation = upsertLlmConversation(result.conversation);
-  setActiveTarget(conversation.target);
-}
-
-function openAgentDialog() {
-  if (!agentDialog) return;
-  if (agentDialogStatus) agentDialogStatus.textContent = '';
-  if (agentIdInput) agentIdInput.value = '';
-  if (agentCapabilityInput) agentCapabilityInput.value = '';
-  if (agentModelSelect) agentModelSelect.innerHTML = modelOptionsHtml('');
-  agentDialog.showModal ? agentDialog.showModal() : agentDialog.setAttribute('open', '');
-  if (agentIdInput) agentIdInput.focus();
-}
-
-// Right-click an agent row -> "Edit agent…" -> load its role .md and let the operator edit
-// the file directly. Unlike openAgentDialog (a few fields for a brand-new agent), this is
-// the agent's actual prose, so the source of truth is the file's full text, not a form.
-async function beginEditAgent(id) {
-  if (!agentEditDialog || !window.subjectiveChat.getAgentRole) return;
-  if (agentEditStatus) agentEditStatus.textContent = 'Loading…';
-  if (agentEditTitle) agentEditTitle.textContent = id;
-  if (agentEditRoleFile) agentEditRoleFile.textContent = `roles/${id}.md`;
-  if (agentEditTextarea) agentEditTextarea.value = '';
-  agentEditForm?.setAttribute('data-agent-id', id);
-  agentEditDialog.showModal ? agentEditDialog.showModal() : agentEditDialog.setAttribute('open', '');
-  const result = await window.subjectiveChat.getAgentRole(id);
-  if (!result?.ok) {
-    if (agentEditStatus) agentEditStatus.textContent = result?.error || `Could not load ${id}.`;
-    return;
-  }
-  if (agentEditTextarea) agentEditTextarea.value = result.text || '';
-  if (agentEditStatus) agentEditStatus.textContent = '';
-  agentEditTextarea?.focus();
-}
-
-async function stopActiveTurn(frameEl) {
-  if (!window.subjectiveChat.cancelLlmMessage) return;
-  const index = Number(frameEl?.dataset?.frame ?? focusedFrame);
-  const target = (framesEnabled() ? frameTargets[index] : activeTarget) || activeTarget;
-  const conversation = target ? conversations.get(target) : null;
-  if (!conversation || !conversation.busy) return;
-  const button = frameEl?.querySelector('.frame-stop');
-  if (button) button.disabled = true; // one press per turn; re-enabled by the next render
-  try {
-    const result = await window.subjectiveChat.cancelLlmMessage(target);
-    if (!result?.ok) {
-      rendererLog('error', 'Failed to stop turn', { target, error: result?.error });
-      if (button) button.disabled = false;
-    }
-    // The busy flag is cleared by the broadcast the backend sends, not here, so every
-    // connected tab agrees on whether the agent is still running.
-  } catch (error) {
-    rendererLog('error', 'Failed to stop turn', { target, error: String(error) });
-    if (button) button.disabled = false;
-  }
-}
-
 function selectedLlmProvider() {
   return String(llmProviderSelect?.value || 'codex');
 }
 
-// Filled from the backend by loadLlmProviders(). The <option>s in index.html are only a
-// pre-load fallback: which agents exist differs between the FastAPI backend and the
-// desktop build, and hard-coding them in both index.html files is how Grok ended up
-// creatable but unofferable while Cursor was offered where it cannot run.
-let llmProviders = [];
-
 function llmProviderLabel(provider) {
-  const key = String(provider || '');
-  const known = llmProviders.find((item) => item.key === key);
-  if (known) return known.label;
-  // Pre-load, or a history-only provider (Gemini, ChatGPT) that has no writable
-  // datasource and so never appears in the picker but still labels its imported chats.
-  return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Codex';
-}
-
-async function loadLlmProviders() {
-  if (!window.subjectiveChat.listLlmProviders) return;
-  let payload = null;
-  try {
-    payload = await window.subjectiveChat.listLlmProviders();
-  } catch (error) {
-    rendererLog('error', 'Failed to load agent list', { error: String(error) });
-  }
-  const listed = Array.isArray(payload?.providers) ? payload.providers : [];
-  if (!listed.length) return; // keep whatever index.html shipped rather than empty the picker
-  llmProviders = listed;
-  if (!llmProviderSelect) return;
-  const previous = llmProviderSelect.value;
-  llmProviderSelect.replaceChildren();
-  for (const provider of listed) {
-    const option = document.createElement('option');
-    option.value = provider.key;
-    // An agent whose datasource module is missing can still run through its exported
-    // bundle, so it stays selectable - just flagged, rather than silently absent.
-    option.textContent = provider.available === false ? `${provider.label} (unavailable)` : provider.label;
-    llmProviderSelect.appendChild(option);
-  }
-  const wanted = listed.some((item) => item.key === previous) ? previous : (payload?.default || listed[0].key);
-  llmProviderSelect.value = wanted;
+  if (provider === 'claude') return 'Claude';
+  if (provider === 'cursor') return 'Cursor';
+  return 'Codex';
 }
 
 let pendingSessionChoice = null;
@@ -3600,297 +2875,24 @@ if (suLoginDialog) {
   suLoginDialog.addEventListener('close', () => { suLoginUsername = null; });
 }
 
-// An SSH chat is a shell on another machine, not a CLI on this one. Three fields in
-// this dialog mean something different for it, so the dialog changes shape rather
-// than asking for answers that do not apply.
-const SSH_PROVIDER = 'ssh';
-
-// Saved connections, ~/.ssh keys and ~/.ssh/config aliases, as the server last sent
-// them. Never contains a password: the server reports only whether one is stored.
-let sshCatalog = { connections: [], keys: [], configHosts: [] };
-
-// True when the chat being created should run its agent on another machine: either
-// the SSH datasource itself, or an LLM with the toggle on.
-function usingSsh(provider) {
-  return provider === SSH_PROVIDER || Boolean(llmOverSshToggle?.checked);
-}
-
-function applyProviderShape(provider) {
-  const ssh = usingSsh(provider);
-  // The toggle is meaningless for the SSH datasource, which is nothing but SSH.
-  const toggleRow = llmOverSshToggle?.closest('label');
-  if (toggleRow) toggleRow.hidden = provider === SSH_PROVIDER;
-  // "Run as" picks whose *local* CLI login answers, which is meaningless once the
-  // agent runs on a different computer — that machine has its own accounts.
-  if (llmOsUserRow) llmOsUserRow.hidden = ssh;
-  // For the SSH datasource the workspace box *is* the target and is replaced by the
-  // picker. For an LLM over SSH it stays: it is the directory the agent works in,
-  // now a path on the remote machine.
-  const workspaceRow = llmWorkspaceInput?.closest('label');
-  const bareSsh = provider === SSH_PROVIDER;
-  if (workspaceRow) workspaceRow.hidden = bareSsh;
-  if (llmWorkspaceInput) {
-    llmWorkspaceInput.required = !bareSsh;
-    if (ssh && !bareSsh) llmWorkspaceInput.placeholder = 'a path on the remote machine';
-  }
-  if (llmWorkspaceLabel && !bareSsh) {
-    llmWorkspaceLabel.textContent = ssh ? 'Remote workspace' : 'Workspace';
-  }
-  if (sshConnectionRow) sshConnectionRow.hidden = !ssh;
-  if (!ssh && sshConnectionForm) sshConnectionForm.hidden = true;
-  if (llmWorkspaceInput && !ssh && !llmWorkspaceInput.value) llmWorkspaceInput.value = '/subjective';
-  if (ssh) applyConnectionChoice();
-}
-
-function selectedSshChoice() {
-  return sshConnectionSelect ? sshConnectionSelect.value : '';
-}
-
-function savedConnection(id) {
-  return sshCatalog.connections.find((item) => item.id === id) || null;
-}
-
-async function refreshSshCatalog() {
-  if (!window.subjectiveChat.listSshConnections || !sshConnectionSelect) return;
-  let payload = null;
-  try {
-    payload = await window.subjectiveChat.listSshConnections();
-  } catch (error) {
-    rendererLog('error', 'Failed to load SSH connections', { error: String(error) });
-    return;
-  }
-  sshCatalog = {
-    connections: Array.isArray(payload?.connections) ? payload.connections : [],
-    keys: Array.isArray(payload?.keys) ? payload.keys : [],
-    configHosts: Array.isArray(payload?.configHosts) ? payload.configHosts : [],
-  };
-
-  const previous = sshConnectionSelect.value;
-  sshConnectionSelect.replaceChildren();
-  const add = (value, label, parent) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    (parent || sshConnectionSelect).appendChild(option);
-    return option;
-  };
-  const group = (label) => {
-    const element = document.createElement('optgroup');
-    element.label = label;
-    sshConnectionSelect.appendChild(element);
-    return element;
-  };
-
-  if (sshCatalog.connections.length) {
-    const saved = group('Saved');
-    for (const item of sshCatalog.connections) {
-      const account = item.username ? `${item.username}@` : '';
-      add(`saved:${item.id}`, `${item.name} — ${account}${item.host}`, saved);
-    }
-  }
-  if (sshCatalog.configHosts.length) {
-    // Already saved, in the place ssh itself reads. Offered, never copied here.
-    const fromConfig = group('From ~/.ssh/config');
-    for (const item of sshCatalog.configHosts) add(item.host, item.host, fromConfig);
-  }
-  add('__new__', 'New connection…');
-  sshConnectionSelect.value =
-    [...sshConnectionSelect.options].some((option) => option.value === previous)
-      ? previous
-      : (sshCatalog.connections.length ? `saved:${sshCatalog.connections[0].id}` : '__new__');
-
-  // Keys are offered by path; their contents never leave the server.
-  if (sshKeySelect) {
-    const previousKey = sshKeySelect.value;
-    sshKeySelect.replaceChildren();
-    if (!sshCatalog.keys.length) {
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'No keys yet — use Upload…';
-      sshKeySelect.appendChild(option);
-    }
-    for (const key of sshCatalog.keys) {
-      const option = document.createElement('option');
-      option.value = key.path;
-      const where = key.source === 'uploaded' ? 'uploaded' : "server's ~/.ssh";
-      option.textContent = key.tooOpen
-        ? `${key.name} — too readable, ssh will refuse it`
-        : `${key.name} · ${where}`;
-      sshKeySelect.appendChild(option);
-    }
-    if ([...sshKeySelect.options].some((option) => option.value === previousKey)) {
-      sshKeySelect.value = previousKey;
-    }
-  }
-  applyKeyShape();
-  applyConnectionChoice();
-}
-
-function selectedKey() {
-  const path = sshKeySelect ? sshKeySelect.value : '';
-  return sshCatalog.keys.find((key) => key.path === path) || null;
-}
-
-function applyKeyShape() {
-  // Only an uploaded key can be removed from here. One in the server's own ~/.ssh
-  // belongs to the machine, and deleting it from a chat dialog would be a surprise.
-  const key = selectedKey();
-  if (sshKeyDeleteButton) sshKeyDeleteButton.hidden = !(key && key.source === 'uploaded');
-}
-
-function applyAuthShape() {
-  const method = sshAuthSelect ? sshAuthSelect.value : 'agent';
-  if (sshKeyRow) sshKeyRow.hidden = method !== 'private_key_path';
-  if (sshPasswordRow) sshPasswordRow.hidden = method !== 'password';
-  // A passphrase only means anything for a key file; an agent already holds one.
-  if (sshPassphraseRow) sshPassphraseRow.hidden = method !== 'private_key_path';
-}
-
-function applyConnectionChoice() {
-  if (!sshConnectionForm) return;
-  const choice = selectedSshChoice();
-  const saved = choice.startsWith('saved:') ? savedConnection(choice.slice(6)) : null;
-  // The form is for creating or editing. A ~/.ssh/config alias has nothing to edit
-  // here — its settings live in that file — so the form stays shut for one.
-  sshConnectionForm.hidden = !(choice === '__new__' || saved);
-  if (sshTestStatus) sshTestStatus.textContent = '';
-  if (sshDeleteButton) sshDeleteButton.hidden = !saved;
-
-  if (saved) {
-    sshHostInput.value = saved.host || '';
-    sshPortInput.value = saved.port || '';
-    sshUsernameInput.value = saved.username || '';
-    sshAuthSelect.value = saved.auth_method || 'agent';
-    if (sshKeySelect && saved.private_key_path) sshKeySelect.value = saved.private_key_path;
-    sshDirectoryInput.value = saved.working_directory || '';
-    sshNameInput.value = saved.name || '';
-    if (sshHostKeySelect) {
-      // A connection saved before the policy existed carries the boolean it replaced.
-      sshHostKeySelect.value = saved.host_key_policy
-        || (saved.strict_host_key_checking === false ? 'off'
-          : saved.strict_host_key_checking === true ? 'strict' : 'accept-new');
-    }
-    // Stored secrets are never sent to the browser. An empty box with this
-    // placeholder means "one is saved"; typing replaces it, clearing it removes it.
-    sshPasswordInput.value = '';
-    sshPasswordInput.placeholder = saved.hasPassword ? '•••••••• saved' : '';
-    sshPassphraseInput.value = '';
-    sshPassphraseInput.placeholder = saved.hasKeyPassphrase
-      ? '•••••••• saved'
-      : 'only if the key is encrypted';
-  } else if (choice === '__new__') {
-    for (const input of [sshHostInput, sshPortInput, sshUsernameInput, sshDirectoryInput,
-                         sshNameInput, sshPasswordInput, sshPassphraseInput]) {
-      if (input) input.value = '';
-    }
-    if (sshAuthSelect) sshAuthSelect.value = 'agent';
-    if (sshHostKeySelect) sshHostKeySelect.value = 'accept-new';
-    if (sshPasswordInput) sshPasswordInput.placeholder = '';
-    if (sshPassphraseInput) sshPassphraseInput.placeholder = 'only if the key is encrypted';
-  }
-  applyAuthShape();
-}
-
-function sshFormValues() {
-  const values = {
-    host: sshHostInput.value.trim(),
-    username: sshUsernameInput.value.trim(),
-    auth_method: sshAuthSelect.value,
-    working_directory: sshDirectoryInput.value.trim(),
-    name: sshNameInput.value.trim(),
-    host_key_policy: sshHostKeySelect ? sshHostKeySelect.value : 'accept-new',
-  };
-  if (sshPortInput.value.trim()) values.port = sshPortInput.value.trim();
-  if (values.auth_method === 'private_key_path') {
-    values.private_key_path = sshKeySelect ? sshKeySelect.value : '';
-    // Only send a secret the operator actually typed: an untouched box means
-    // "leave whatever is stored alone", not "clear it".
-    if (sshPassphraseInput.value) values.key_passphrase = sshPassphraseInput.value;
-  }
-  if (values.auth_method === 'password' && sshPasswordInput.value) {
-    values.password = sshPasswordInput.value;
-  }
-  return values;
-}
-
 async function refreshLlmStatus() {
   const provider = selectedLlmProvider();
   const label = llmProviderLabel(provider);
-  applyProviderShape(provider);
-  if (provider !== SSH_PROVIDER && usingSsh(provider)) {
-    // Nothing local to probe: the login that matters is on the other machine, and
-    // the connection's own Test button is what checks it.
-    llmStatusText.textContent = `${label} will run on the machine you pick below. `
-      + 'Use Test connection to check it is reachable.';
-    llmStatusText.dataset.ready = 'true';
-    return;
-  }
-  if (provider === SSH_PROVIDER) {
-    // Nothing to probe until a target exists: the status of "some machine" is not a
-    // question, and asking the backend would only report the host as missing.
-    llmStatusText.textContent = 'Name a machine above. Credentials come from this '
-      + "server's ~/.ssh — a Host alias needs nothing else.";
-    llmStatusText.dataset.ready = 'true';
-    return;
-  }
   llmStatusText.textContent = `Checking ${label} datasource…`;
   llmStatusText.dataset.ready = 'false';
   const status = await window.subjectiveChat.getLlmStatus(provider);
-  if (selectedLlmProvider() !== provider) return; // the operator moved on while we asked
-  // The machine can change under us too: ticking "run this over SSH" while the probe
-  // is in flight rewrites the status, and this answer — about *this* box's CLI login —
-  // would then land on top of it and describe a login the chat will never use.
-  if (usingSsh(provider)) return;
+  if (selectedLlmProvider() !== provider) return;
   llmStatusText.textContent = status.ok
     ? `Ready · ${status.cli_version || `${label} CLI`} · existing login`
     : `${status.status || 'Unavailable'} · ${status.error || `${label} CLI login required`}`;
   llmStatusText.dataset.ready = status.ok ? 'true' : 'false';
 }
 
-async function refreshLlmOsUsers() {
-  // Each agent keeps its credentials in a home directory, so which accounts can answer
-  // differs per agent: the Codex logins on this box are not the Claude ones. Re-asked
-  // whenever the agent changes rather than listed once.
-  if (!llmOsUserSelect || !window.subjectiveChat.listProviderSessions) return;
-  const provider = selectedLlmProvider();
-  if (provider === SSH_PROVIDER) return; // no local login is involved
-  let listed = null;
-  try {
-    listed = await window.subjectiveChat.listProviderSessions(provider);
-  } catch (error) {
-    rendererLog('error', 'Failed to list agent logins', { provider, error: String(error) });
-  }
-  if (selectedLlmProvider() !== provider) return; // the operator moved on while we asked
-  const users = Array.isArray(listed?.users) ? listed.users : [];
-  const previous = llmOsUserSelect.value;
-  llmOsUserSelect.replaceChildren();
-  const current = listed?.currentUser || '';
-  for (const user of users) {
-    const option = document.createElement('option');
-    // The service account's own chats carry no osUser — that flag means "route through
-    // someone else's session", and setting it for ourselves would demand a connection.
-    option.value = user.current ? '' : user.username;
-    const state = user.ready ? '' : (user.unknown ? ' · login unknown' : ' · not logged in');
-    option.textContent = `${user.username}${user.current ? ' (this machine)' : ''}${state}`;
-    llmOsUserSelect.appendChild(option);
-  }
-  if (!users.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = current ? `${current} (this machine)` : "This machine's account";
-    llmOsUserSelect.appendChild(option);
-  }
-  const stillThere = [...llmOsUserSelect.options].some((option) => option.value === previous);
-  llmOsUserSelect.value = stillThere ? previous : '';
-}
-
 async function openLlmDialog() {
   if (!llmDialog) return;
   llmDialog.showModal ? llmDialog.showModal() : llmDialog.setAttribute('open', '');
-  applyProviderShape(selectedLlmProvider());
   llmNameInput.focus();
-  await Promise.all([refreshLlmStatus(), refreshLlmOsUsers(), refreshSshCatalog()]);
-  applyProviderShape(selectedLlmProvider());
+  await refreshLlmStatus();
 }
 
 async function importLlmChatsFromZip(file) {
@@ -3924,222 +2926,7 @@ if (importLlmButton && importLlmFileInput) {
 }
 
 if (createLlmButton) createLlmButton.addEventListener('click', openLlmDialog);
-if (agentCloseButton) agentCloseButton.addEventListener('click', () => agentDialog.close());
-if (agentForm) {
-  agentForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const id = String(agentIdInput?.value || '').trim().toLowerCase();
-    const result = await window.subjectiveChat.createAgent({
-      id,
-      capability: String(agentCapabilityInput?.value || '').trim(),
-      model: String(agentModelSelect?.value || '')
-    });
-    if (!result?.ok) {
-      if (agentDialogStatus) agentDialogStatus.textContent = result?.error || 'Could not create the agent.';
-      return;
-    }
-    agentDialog.close();
-    // Re-read rather than trusting the local copy: the registry is a file two processes
-    // can edit, and the row order is the file's, not ours.
-    await loadAgents();
-  });
-}
-if (agentEditCloseButton) agentEditCloseButton.addEventListener('click', () => agentEditDialog.close());
-if (agentEditForm) {
-  agentEditForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const id = agentEditForm.getAttribute('data-agent-id') || '';
-    if (!id || !window.subjectiveChat.saveAgentRole) return;
-    const result = await window.subjectiveChat.saveAgentRole(id, agentEditTextarea?.value || '');
-    if (!result?.ok) {
-      if (agentEditStatus) agentEditStatus.textContent = result?.error || 'Could not save the agent.';
-      return;
-    }
-    agentEditDialog.close();
-    await loadAgents();
-  });
-}
-async function resolveSshWorkspace() {
-  const choice = selectedSshChoice();
-  const fail = (message, focus) => {
-    llmStatusText.textContent = message;
-    llmStatusText.dataset.ready = 'false';
-    if (focus) focus.focus();
-    return '';
-  };
-
-  // A ~/.ssh/config alias is already a complete connection; store it as-is.
-  if (choice && choice !== '__new__' && !choice.startsWith('saved:')) return choice;
-
-  const values = sshFormValues();
-  if (!values.host) return fail('Name the machine this chat connects to.', sshHostInput);
-
-  const existing = choice.startsWith('saved:') ? choice.slice(6) : '';
-  if (existing) {
-    const updated = await window.subjectiveChat.updateSshConnection({ id: existing, ...values });
-    if (!updated?.ok) return fail(updated?.error || 'Could not save the connection.', sshHostInput);
-    return `saved:${existing}`;
-  }
-  // Naming it is what makes it reusable; without a name this chat gets the target
-  // written out longhand and nothing is stored.
-  if (!values.name) {
-    const account = values.username ? `${values.username}@` : '';
-    const path = values.working_directory ? `:${values.working_directory}` : '';
-    if (values.auth_method !== 'agent') {
-      return fail('Give this connection a name so its key or password can be saved.', sshNameInput);
-    }
-    return `${account}${values.host}${path}`;
-  }
-  const created = await window.subjectiveChat.saveSshConnection(values);
-  if (!created?.ok) return fail(created?.error || 'Could not save the connection.', sshHostInput);
-  await refreshSshCatalog();
-  sshConnectionSelect.value = `saved:${created.connection.id}`;
-  applyConnectionChoice();
-  return `saved:${created.connection.id}`;
-}
-
-// --- answering a password prompt ---------------------------------------------------
-
-const sshSecretDialog = document.getElementById('sshSecretDialog');
-const sshSecretForm = document.getElementById('sshSecretForm');
-const sshSecretInput = document.getElementById('sshSecretInput');
-const sshSecretPrompt = document.getElementById('sshSecretPrompt');
-let sshSecretTarget = '';
-
-function openSshSecretDialog(target, prompt) {
-  if (!sshSecretDialog || sshSecretDialog.open) return;
-  sshSecretTarget = target || activeTarget;
-  if (sshSecretPrompt) sshSecretPrompt.textContent = prompt;
-  if (sshSecretInput) sshSecretInput.value = '';
-  sshSecretDialog.showModal ? sshSecretDialog.showModal() : sshSecretDialog.setAttribute('open', '');
-  if (sshSecretInput) sshSecretInput.focus();
-}
-
-function closeSshSecretDialog() {
-  // Clear before closing, so the value does not sit in the DOM until next time.
-  if (sshSecretInput) sshSecretInput.value = '';
-  sshSecretTarget = '';
-  if (sshSecretDialog?.open) sshSecretDialog.close();
-}
-
-if (sshSecretForm) sshSecretForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const secret = sshSecretInput.value;
-  const target = sshSecretTarget;
-  closeSshSecretDialog();
-  if (!secret || !target) return;
-  try {
-    const result = await window.subjectiveChat.sendSshSecret(target, secret);
-    if (!result?.ok) addEvent('system', { target, text: result?.error || 'Could not send that input.' });
-  } catch (error) {
-    addEvent('system', { target, text: `Could not send that input: ${error.message}` });
-  }
-});
-document.getElementById('sshSecretCloseButton')?.addEventListener('click', closeSshSecretDialog);
-document.getElementById('sshSecretCancelButton')?.addEventListener('click', closeSshSecretDialog);
-
-// Loaded at startup, not just when the dialog opens: the chat list's SSH markers
-// name the machine each chat runs on, and that name comes from here.
-refreshSshCatalog().then(() => renderConversations()).catch(() => {});
-
-if (llmOverSshToggle) llmOverSshToggle.addEventListener('change', () => {
-  applyProviderShape(selectedLlmProvider());
-  refreshLlmStatus();
-});
-if (sshConnectionSelect) sshConnectionSelect.addEventListener('change', applyConnectionChoice);
-if (sshAuthSelect) sshAuthSelect.addEventListener('change', applyAuthShape);
-if (sshKeySelect) sshKeySelect.addEventListener('change', applyKeyShape);
-
-if (sshKeyUploadButton) sshKeyUploadButton.addEventListener('click', () => sshKeyFileInput.click());
-
-if (sshKeyFileInput) sshKeyFileInput.addEventListener('change', async () => {
-  const file = sshKeyFileInput.files && sshKeyFileInput.files[0];
-  // Clear it immediately: re-picking the same file fires no change event otherwise,
-  // so a failed upload could not be retried with the same key.
-  sshKeyFileInput.value = '';
-  if (!file) return;
-  sshTestStatus.textContent = `Uploading ${file.name}…`;
-  sshTestStatus.dataset.ok = '';
-  try {
-    const content = await file.text();
-    const result = await window.subjectiveChat.uploadSshKey(file.name, content);
-    if (!result?.ok) {
-      sshTestStatus.textContent = result?.error || 'Could not store that key.';
-      sshTestStatus.dataset.ok = 'false';
-      return;
-    }
-    await refreshSshCatalog();
-    // Selecting it is the point of having uploaded it.
-    if (sshAuthSelect) sshAuthSelect.value = 'private_key_path';
-    if (sshKeySelect) sshKeySelect.value = result.key.path;
-    applyAuthShape();
-    applyKeyShape();
-    sshTestStatus.textContent = `${result.key.name} added.`;
-    sshTestStatus.dataset.ok = 'true';
-  } catch (error) {
-    sshTestStatus.textContent = String(error);
-    sshTestStatus.dataset.ok = 'false';
-  }
-});
-
-if (sshKeyDeleteButton) sshKeyDeleteButton.addEventListener('click', async () => {
-  const key = selectedKey();
-  if (!key || key.source !== 'uploaded') return;
-  if (!window.confirm(`Delete the uploaded key “${key.name}” from the server?`)) return;
-  const result = await window.subjectiveChat.deleteSshKey(key.path);
-  if (!result?.ok) {
-    sshTestStatus.textContent = result?.error || 'Could not delete that key.';
-    sshTestStatus.dataset.ok = 'false';
-    return;
-  }
-  await refreshSshCatalog();
-  sshTestStatus.textContent = `${key.name} deleted.`;
-  sshTestStatus.dataset.ok = '';
-});
-
-if (sshTestButton) sshTestButton.addEventListener('click', async () => {
-  // The failures worth catching — a wrong account, an unreadable key, a changed
-  // host key — are otherwise only discoverable by starting a chat and watching it
-  // fail, which leaves a dead conversation behind.
-  const choice = selectedSshChoice();
-  const payload = choice.startsWith('saved:') && !sshHostInput.value.trim()
-    ? { id: choice.slice(6) }
-    : sshFormValues();
-  if (!payload.id && !payload.host) {
-    sshTestStatus.textContent = 'Name a host first.';
-    return;
-  }
-  sshTestButton.disabled = true;
-  sshTestStatus.textContent = 'Connecting…';
-  try {
-    const result = await window.subjectiveChat.testSshConnection(payload);
-    sshTestStatus.textContent = result?.ok
-      ? 'Connected.'
-      : `${result?.status || 'Failed'} — ${result?.error || 'could not connect'}`;
-    sshTestStatus.dataset.ok = result?.ok ? 'true' : 'false';
-  } catch (error) {
-    sshTestStatus.textContent = String(error);
-    sshTestStatus.dataset.ok = 'false';
-  } finally {
-    sshTestButton.disabled = false;
-  }
-});
-
-if (sshDeleteButton) sshDeleteButton.addEventListener('click', async () => {
-  const choice = selectedSshChoice();
-  if (!choice.startsWith('saved:')) return;
-  const saved = savedConnection(choice.slice(6));
-  if (!window.confirm(`Delete the saved connection “${saved?.name || choice}”?`)) return;
-  await window.subjectiveChat.deleteSshConnection(choice.slice(6));
-  await refreshSshCatalog();
-});
-
-if (llmProviderSelect) {
-  llmProviderSelect.addEventListener('change', () => {
-    refreshLlmStatus();
-    refreshLlmOsUsers();
-  });
-}
+if (llmProviderSelect) llmProviderSelect.addEventListener('change', refreshLlmStatus);
 if (llmCloseButton) llmCloseButton.addEventListener('click', () => llmDialog.close());
 if (llmDialog) llmDialog.addEventListener('click', (event) => {
   if (event.target === llmDialog) llmDialog.close();
@@ -4147,37 +2934,10 @@ if (llmDialog) llmDialog.addEventListener('click', (event) => {
 if (llmForm) llmForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const provider = selectedLlmProvider();
-  let workspace = llmWorkspaceInput.value.trim();
-  let sshConnection = '';
-  if (provider === SSH_PROVIDER) {
-    // The chat stores one string. For SSH it is either `saved:<id>`, which carries
-    // the key and options with it, or a plain target for a ~/.ssh/config alias.
-    workspace = await resolveSshWorkspace();
-    if (!workspace) return;
-  } else if (usingSsh(provider)) {
-    // An agent over SSH keeps its workspace as the remote directory and names the
-    // machine separately — the two answer different questions.
-    const reference = await resolveSshWorkspace();
-    if (!reference) return;
-    if (!reference.startsWith('saved:')) {
-      llmStatusText.textContent = 'Give this connection a name so the chat can refer to it.';
-      llmStatusText.dataset.ready = 'false';
-      sshNameInput.focus();
-      return;
-    }
-    sshConnection = reference.slice('saved:'.length);
-  }
   const result = await window.subjectiveChat.createLlmConversation({
     name: llmNameInput.value,
-    workspace,
-    provider,
-    sshConnection,
-    // Never both. "Run as" asks the backend to su into a local account first, which
-    // is meaningless once the agent runs on another computer — and the backend
-    // checks it before anything else, so sending one would make an SSH chat fail
-    // with "reconnect as <user>" and never reach SSH at all. Hiding the row was not
-    // enough: a hidden <select> still has a value.
-    osUser: usingSsh(provider) ? '' : (llmOsUserSelect ? llmOsUserSelect.value : '')
+    workspace: llmWorkspaceInput.value,
+    provider
   });
   if (!result?.ok) {
     llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;
@@ -4305,9 +3065,6 @@ window.subjectiveChat.onEvent((event) => {
     case 'conversation-rename-request':
       beginRenameConversation(event.target);
       break;
-    case 'agent-edit-request':
-      beginEditAgent(event.id);
-      break;
     case 'llm-conversation-renamed': {
       const conversation = conversations.get(event.target);
       if (conversation) {
@@ -4398,8 +3155,7 @@ window.subjectiveChat.onEvent((event) => {
         });
         if (isTargetOnScreen(event.target)) {
           if (event.target === activeTarget && input) {
-            // Busy leaves the composer typable; see syncChatFrame.
-            input.disabled = false;
+            input.disabled = event.busy;
             input.placeholder = event.busy ? `${providerName(conversation.provider)} is working…` : `Message ${providerName(conversation.provider)}`;
           }
           renderTranscript();
@@ -4449,7 +3205,6 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
     renderVisibleFrameTranscripts();
   }
   syncMobileLayout();
-  loadLlmProviders().then(loadAgents);
   const savedAccent = localStorage.getItem('subjective-chat-accent') || 'gold';
   document.body.dataset.accent = savedAccent;
   if (accentGrid) {

@@ -149,30 +149,6 @@
         </div>
       </form>
     </dialog>
-    <dialog id="agentDialog" class="settings-dialog">
-      <form id="agentForm" class="settings-form">
-        <div class="settings-head">
-          <strong>New agent</strong>
-          <button type="button" id="agentCloseButton" class="plain-icon" aria-label="Close">×</button>
-        </div>
-        <label>
-          <span>Agent ID</span>
-          <input id="agentIdInput" autocomplete="off" placeholder="triage_agent" pattern="[a-z][a-z0-9_]{1,62}" required>
-        </label>
-        <label>
-          <span>Primary capability</span>
-          <input id="agentCapabilityInput" autocomplete="off" placeholder="incident triage" required>
-        </label>
-        <label>
-          <span>Model</span>
-          <select id="agentModelSelect"></select>
-        </label>
-        <p id="agentDialogStatus" class="settings-status"></p>
-        <div class="settings-actions">
-          <button type="submit" class="primary-button">Create agent</button>
-        </div>
-      </form>
-    </dialog>
     <dialog id="llmDialog" class="settings-dialog">
       <form id="llmForm" class="settings-form">
         <div class="settings-head">
@@ -188,12 +164,6 @@
             <option value="codex">Codex</option>
             <option value="claude">Claude</option>
             <option value="cursor">Cursor</option>
-          </select>
-        </label>
-        <label>
-          <span>Run as</span>
-          <select id="llmOsUserSelect">
-            <option value="">This machine's account</option>
           </select>
         </label>
         <label>

@@ -320,31 +320,6 @@
     return { ok: true };
   }
 
-  // No round trip to build this one: unlike the conversation menu (whose "Continue as…"
-  // submenu depends on live OS-user session state from the backend), an agent's menu is the
-  // same single static action regardless of which agent it is.
-  function showAgentContextMenu(agentId, x, y) {
-    closeContextMenu();
-
-    const menu = document.createElement('div');
-    menu.className = 'web-context-menu';
-    menu.style.left = `${x}px`;
-    menu.style.top = `${y}px`;
-
-    menu.appendChild(menuRow({ label: 'Edit agent…', onClick: () => emitLocal({ type: 'agent-edit-request', id: agentId }) }));
-
-    document.body.appendChild(menu);
-    openMenu = menu;
-    const rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = `${Math.max(0, window.innerWidth - rect.width - 8)}px`;
-    if (rect.bottom > window.innerHeight) menu.style.top = `${Math.max(0, window.innerHeight - rect.height - 8)}px`;
-    setTimeout(() => {
-      document.addEventListener('click', closeContextMenu, true);
-      document.addEventListener('keydown', onMenuKeydown, true);
-    }, 0);
-    return { ok: true };
-  }
-
   // --- image send via <input type=file> instead of a native file dialog -----------------
 
   function fileToBytes(file) {
@@ -391,32 +366,6 @@
     // A zip of another workstation's exported chat JSON files — no agent or sync setup
     // needed on that machine, just its export folder zipped up.
     importLlmChats: (file) => postFile('/api/llm/import-chats', file, { longRunning: true }),
-    // Which agents this backend can actually create a chat with. The picker used to
-    // hard-code them and drifted from the backend it talks to.
-    listLlmProviders: () => get('/api/llm/providers'),
-    // Saved SSH connections, plus the keys and ~/.ssh/config aliases the server
-    // already has. Never carries a stored password — only whether one is set.
-    listSshConnections: () => get('/api/ssh/connections'),
-    saveSshConnection: (connection) => post('/api/ssh/connections', connection),
-    updateSshConnection: (connection) => post('/api/ssh/connections/update', connection),
-    deleteSshConnection: (id) => post('/api/ssh/connections/delete', { id }),
-    testSshConnection: (connection) => post('/api/ssh/connections/test', connection),
-    // The key text is read in the browser and posted; it is never echoed back by
-    // any later call, which only ever returns paths and names.
-    uploadSshKey: (name, content) => post('/api/ssh/keys', { name, content }),
-    deleteSshKey: (path) => post('/api/ssh/keys/delete', { path }),
-    // Answers a password prompt in a live SSH chat. Deliberately not sendLlmMessage:
-    // that records what was sent.
-    sendSshSecret: (target, secret) => post('/api/llm/ssh-secret', { target, secret }),
-    // The agent registry in workflow/agents.
-    listAgents: () => get('/api/agents'),
-    createAgent: (payload) => post('/api/agents', payload),
-    setAgentModel: (id, model) => post('/api/agents/model', { id, model }),
-    getAgentRole: (id) => get(`/api/agents/role?agent=${encodeURIComponent(id)}`),
-    saveAgentRole: (id, text) => post('/api/agents/role', { id, text }),
-    showAgentContextMenu,
-    // Stop a turn that is already running.
-    cancelLlmMessage: (target) => post('/api/llm/cancel-message', { target }),
     getLlmStatus: (provider) => get(`/api/llm/status?provider=${encodeURIComponent(provider || '')}`),
     listProviderSessions: (provider) => get(`/api/llm/sessions?provider=${encodeURIComponent(provider || '')}`),
     // The only request that routinely runs for minutes: one agent turn.

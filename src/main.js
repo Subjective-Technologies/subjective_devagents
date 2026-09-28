@@ -6,8 +6,7 @@ const tls = require('tls');
 const os = require('os');
 const dotenv = require('dotenv');
 const { fileURLToPath, pathToFileURL } = require('url');
-const { LlmService, providerLabel, WRITABLE_PROVIDERS, DEFAULT_PROVIDER } = require('./llmService');
-const agentsRegistry = require('./agentsRegistry');
+const { LlmService, providerLabel } = require('./llmService');
 const { listSystemUsers, isValidUsername } = require('./systemUsers');
 const { SuSessionManager } = require('./suSessionManager');
 const terminalWindow = require('./terminalWindow');
@@ -1438,33 +1437,6 @@ app.whenReady().then(() => {
       log('error', 'Manual history refresh crashed', { message: error.message, stack: error.stack });
       return { ok: false, error: error.message };
     }
-  });
-
-  // The desktop build answers from its own llmService, not the FastAPI one: the two
-  // support different agent sets, and the picker must offer only what will actually run.
-  ipcMain.handle('agents:list', async () => agentsRegistry.listAgents());
-  ipcMain.handle('agents:create', async (_event, payload) => agentsRegistry.createAgent(payload || {}));
-  ipcMain.handle('agents:set-model', async (_event, payload) =>
-    agentsRegistry.setAgentModel(String(payload?.id || ''), String(payload?.model || '')));
-
-  ipcMain.handle('llm:providers', async () => ({
-    ok: true,
-    default: DEFAULT_PROVIDER,
-    providers: Object.entries(WRITABLE_PROVIDERS).map(([key, value]) => ({
-      key,
-      label: value.label,
-      available: true
-    }))
-  }));
-
-  ipcMain.handle('llm:cancel-message', async (_event, payload) => {
-    const target = String(payload?.target || '');
-    const result = llmService.cancelMessage(target);
-    if (result.ok && result.running) {
-      emit('llm-busy', { target, busy: false });
-      emit('system', { target, text: 'Stopped.' });
-    }
-    return result;
   });
 
   ipcMain.handle('llm:status', async (_event, payload) => {

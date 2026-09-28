@@ -18,22 +18,20 @@
     <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
     <!-- connect-src must name the API origin explicitly: 'self' is the page's origin, so a
          cross-origin fetch to the API is blocked by CSP before it is ever sent. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080 https://cloudflareinsights.com; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com https://static.cloudflareinsights.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
     <meta name="referrer" content="no-referrer">
-    <link rel="stylesheet" href="/auth.css?v=DEVAGENTS_DEPLOY_VERSION">
+    <link rel="stylesheet" href="/auth.css?v=20260911auth1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
     <link rel="icon" type="image/svg+xml" href="/assets/subjective-logo.svg">
-    <script src="/fit-app.js?v=DEVAGENTS_DEPLOY_VERSION"></script>
+    <script src="/fit-app.js?v=20260906k"></script>
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
-         server); index.html is never cached, so a new version here atomically swaps the
-         whole set. The value is stamped per deploy by the server, replacing hand-kept
-         release tags that had not changed since 2026-09-11 — every renderer change in
-         between shipped to the origin and was then served from cache, so nobody saw it. -->
-    <link rel="stylesheet" href="/styles.css?v=DEVAGENTS_DEPLOY_VERSION">
+         server); index.html is never cached, so bumping the version here atomically swaps
+         the whole set. Keep in sync with WEB_UI_RELEASE in src/webServer.js. -->
+    <link rel="stylesheet" href="/styles.css?v=20260911b">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
-    <link rel="stylesheet" href="/contextMenu.css?v=DEVAGENTS_DEPLOY_VERSION">
-    <link rel="stylesheet" href="/layout.css?v=DEVAGENTS_DEPLOY_VERSION">
+    <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
+    <link rel="stylesheet" href="/layout.css?v=20260911a">
   </head>
   <body data-accent="gold">
     <section id="ownerAuthPanel" class="owner-auth-panel" aria-labelledby="ownerAuthTitle">
@@ -228,49 +226,6 @@
         </div>
       </form>
     </dialog>
-    <dialog id="agentDialog" class="settings-dialog">
-      <form id="agentForm" class="settings-form">
-        <div class="settings-head">
-          <strong>New agent</strong>
-          <button type="button" id="agentCloseButton" class="plain-icon" aria-label="Close">×</button>
-        </div>
-        <label>
-          <span>Agent ID</span>
-          <input id="agentIdInput" autocomplete="off" placeholder="triage_agent" pattern="[a-z][a-z0-9_]{1,62}" required>
-        </label>
-        <label>
-          <span>Primary capability</span>
-          <input id="agentCapabilityInput" autocomplete="off" placeholder="incident triage" required>
-        </label>
-        <label>
-          <span>Model</span>
-          <select id="agentModelSelect"></select>
-        </label>
-        <p id="agentDialogStatus" class="settings-status"></p>
-        <div class="settings-actions">
-          <button type="submit" class="primary-button">Create agent</button>
-        </div>
-      </form>
-    </dialog>
-    <dialog id="agentEditDialog" class="settings-dialog agent-edit-dialog">
-      <form id="agentEditForm" class="settings-form">
-        <div class="settings-head">
-          <div>
-            <h3>Edit <span id="agentEditTitle"></span></h3>
-            <p>Editing <code id="agentEditRoleFile"></code> directly. Saved changes take effect on that agent's next turn.</p>
-          </div>
-          <button type="button" id="agentEditCloseButton" class="plain-icon" aria-label="Close">×</button>
-        </div>
-        <label>
-          <span>Role definition (Markdown)</span>
-          <textarea id="agentEditTextarea" class="agent-edit-textarea" spellcheck="false" required></textarea>
-        </label>
-        <p id="agentEditStatus" class="settings-status"></p>
-        <div class="settings-actions">
-          <button type="submit" class="primary-button">Save</button>
-        </div>
-      </form>
-    </dialog>
     <dialog id="llmDialog" class="settings-dialog">
       <form id="llmForm" class="settings-form">
         <div class="settings-head">
@@ -286,21 +241,6 @@
             <option value="codex">Codex</option>
             <option value="claude">Claude</option>
             <option value="cursor">Cursor</option>
-            <option value="grok">Grok</option>
-            <option value="ssh">SSH</option>
-          </select>
-        </label>
-        <!-- Any agent can run its CLI on another machine instead of this one. The
-             connection picker below is shared with SSH chats: same saved
-             connections, same keys, same "New connection…". -->
-        <label class="llm-ssh-toggle">
-          <input type="checkbox" id="llmOverSshToggle">
-          <span>Run this agent over SSH, on another machine</span>
-        </label>
-        <label id="llmOsUserRow">
-          <span>Run as</span>
-          <select id="llmOsUserSelect">
-            <option value="">This machine's account</option>
           </select>
         </label>
         <label>
@@ -308,94 +248,12 @@
           <input id="llmNameInput" autocomplete="off" placeholder="Implement authentication" required>
         </label>
         <label>
-          <span id="llmWorkspaceLabel">Workspace</span>
+          <span>Workspace</span>
           <input id="llmWorkspaceInput" autocomplete="off" value="/subjective" required>
         </label>
-        <!-- SSH only. A machine needs a host, an account and a credential, which no
-             single workspace string can carry; this is the saved-connection list any
-             SSH client has, plus the operator's own ~/.ssh entries. -->
-        <label id="sshConnectionRow" hidden>
-          <span>Connection</span>
-          <select id="sshConnectionSelect"></select>
-        </label>
-        <fieldset id="sshConnectionForm" class="ssh-connection-form" hidden>
-          <legend>Connection details</legend>
-          <div class="ssh-grid">
-            <label><span>Host</span>
-              <input id="sshHostInput" autocomplete="off" placeholder="server.example.com"></label>
-            <label><span>Port</span>
-              <input id="sshPortInput" autocomplete="off" inputmode="numeric" placeholder="22"></label>
-            <label><span>Username</span>
-              <input id="sshUsernameInput" autocomplete="off" placeholder="deploy"></label>
-            <label><span>Authentication</span>
-              <select id="sshAuthSelect">
-                <option value="agent">SSH agent / default keys</option>
-                <option value="private_key_path">Private key</option>
-                <option value="password">Password</option>
-              </select>
-            </label>
-            <label id="sshKeyRow" hidden><span>Key</span>
-              <span class="ssh-key-picker">
-                <select id="sshKeySelect"></select>
-                <!-- The server's ~/.ssh is the server's, not this laptop's, so on a
-                     deployed instance the only way to reach a new machine is to send
-                     the key. Read in the browser and posted; never sent back. -->
-                <button type="button" id="sshKeyUploadButton" class="plain-button">Upload…</button>
-                <button type="button" id="sshKeyDeleteButton" class="plain-button" hidden>Remove</button>
-                <input type="file" id="sshKeyFileInput" hidden>
-              </span></label>
-            <label id="sshPasswordRow" hidden><span>Password</span>
-              <input id="sshPasswordInput" type="password" autocomplete="new-password"></label>
-            <label id="sshPassphraseRow" hidden><span>Key passphrase</span>
-              <input id="sshPassphraseInput" type="password" autocomplete="new-password"
-                     placeholder="only if the key is encrypted"></label>
-            <label><span>Host key</span>
-              <select id="sshHostKeySelect">
-                <option value="accept-new">Trust on first use, refuse if it changes</option>
-                <option value="strict">Strict — must already be in known_hosts</option>
-                <option value="off">Do not check</option>
-              </select>
-            </label>
-            <label><span>Directory</span>
-              <input id="sshDirectoryInput" autocomplete="off" placeholder="/srv/app  (optional)"></label>
-            <label class="ssh-wide"><span>Save as</span>
-              <input id="sshNameInput" autocomplete="off" placeholder="Agents box  (blank keeps this chat only)"></label>
-          </div>
-          <p class="ssh-note">A saved password or passphrase is stored on this server, readable
-            only by it. Agent and key authentication store no secret at all.</p>
-          <div class="ssh-actions">
-            <button type="button" id="sshTestButton" class="plain-button">Test connection</button>
-            <button type="button" id="sshDeleteButton" class="plain-button" hidden>Delete</button>
-            <span id="sshTestStatus" class="ssh-test-status"></span>
-          </div>
-        </fieldset>
         <div id="llmStatusText" class="llm-status">Checking Codex datasource…</div>
         <div class="settings-actions">
           <button type="submit" class="primary-button">Create channel</button>
-        </div>
-      </form>
-    </dialog>
-    <!-- A remote program asking for a password. Collected here rather than in the
-         composer so it is not echoed, not kept in the message history, and not
-         written into the transcript. -->
-    <dialog id="sshSecretDialog" class="settings-dialog ssh-secret-dialog">
-      <form id="sshSecretForm" class="settings-form">
-        <div class="settings-head">
-          <div>
-            <h3>The remote machine is asking for a password</h3>
-            <p><code id="sshSecretPrompt"></code></p>
-          </div>
-          <button type="button" id="sshSecretCloseButton" class="plain-icon" aria-label="Close">×</button>
-        </div>
-        <label>
-          <span>Password</span>
-          <input id="sshSecretInput" type="password" autocomplete="off" required>
-        </label>
-        <p class="ssh-note">Sent straight to that terminal. It is not shown in the chat,
-          not saved with the connection, and not written to any log.</p>
-        <div class="settings-actions">
-          <button type="button" id="sshSecretCancelButton" class="plain-button">Cancel</button>
-          <button type="submit" class="primary-button">Send</button>
         </div>
       </form>
     </dialog>
@@ -431,7 +289,7 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/firebaseAuth.js?v=DEVAGENTS_DEPLOY_VERSION"></script>
-    <script src="/bootstrap.js?v=DEVAGENTS_DEPLOY_VERSION"></script>
+    <script src="/firebaseAuth.js?v=20260911auth1"></script>
+    <script src="/bootstrap.js?v=20260911auth1"></script>
   </body>
 </html>
