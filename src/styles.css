@@ -1104,6 +1104,92 @@ img.provider-avatar[src$="cursor.svg"] {
 .image-modal img { display: block; max-width: 95vw; max-height: 90vh; object-fit: contain; }
 .image-modal-close { position: absolute; z-index: 1; right: 8px; top: 8px; border: 0; border-radius: 50%; width: 32px; height: 32px; background: rgba(0, 0, 0, .65); color: white; font-size: 24px; cursor: pointer; }
 
+.taggy-modal {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--text);
+  width: min(480px, 92vw);
+  max-height: 85vh;
+}
+.taggy-modal::backdrop { background: rgba(0, 0, 0, .6); }
+.taggy-modal-form { margin: 0; display: flex; flex-direction: column; max-height: 85vh; }
+.taggy-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.taggy-modal-header h2 { margin: 0; font-size: 15px; }
+.taggy-modal-close { border: 0; background: transparent; color: var(--text); font-size: 20px; line-height: 1; cursor: pointer; }
+.taggy-modal-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.taggy-new-task { display: flex; flex-direction: column; gap: 6px; }
+.taggy-new-task label { font-size: 12px; color: var(--text-dim, #9aa5b8); }
+.taggy-new-task textarea {
+  resize: vertical;
+  min-height: 56px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.taggy-new-task-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.taggy-status { font-size: 12px; color: var(--text-dim, #9aa5b8); flex: 1 1 auto; }
+.taggy-create-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #07090d;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.taggy-create-btn:disabled { opacity: .6; cursor: default; }
+.taggy-existing-tasks { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.taggy-search {
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.taggy-task-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 40vh; }
+.taggy-empty { color: var(--text-dim, #9aa5b8); font-size: 13px; margin: 4px 0; }
+.taggy-error { color: var(--accent-bad, #f2635f); }
+.taggy-task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.taggy-task-row:hover, .taggy-task-row:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
+.taggy-task-thumb { width: 36px; height: 36px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; }
+.taggy-task-thumb-empty { width: 36px; height: 36px; flex: 0 0 auto; }
+.taggy-task-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.taggy-task-number { font-size: 11px; color: var(--text-dim, #9aa5b8); }
+.taggy-task-text { font-size: 13px; overflow-wrap: anywhere; }
+.taggy-task-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.taggy-task-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
 .entry.mine {
   align-self: flex-end;
   flex-direction: row-reverse;
@@ -1956,18 +2042,18 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .composer.has-image-picker {
-  grid-template-columns: 44px minmax(0, 1fr) 86px;
-  grid-template-areas: "attach input send";
+  grid-template-columns: 44px 44px minmax(0, 1fr) 86px;
+  grid-template-areas: "attach taggy input send";
 }
 
 .composer.has-image-picker:has(.pending-images:not([hidden])) {
   grid-template-areas:
-    "pending pending pending"
-    "attach input send";
+    "pending pending pending pending"
+    "attach taggy input send";
 }
 
-.composer > .composer-attach {
-  grid-area: attach;
+.composer > .composer-attach,
+.composer > .composer-taggy {
   width: 44px;
   height: 44px;
   padding: 0;
@@ -1975,13 +2061,36 @@ img.provider-avatar[src$="cursor.svg"] {
   border-radius: 8px;
   background: var(--card);
   color: var(--text);
-  font-size: 26px;
-  line-height: 1;
   cursor: pointer;
 }
 
+.composer > .composer-attach {
+  grid-area: attach;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.composer > .composer-taggy {
+  grid-area: taggy;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.composer > .composer-taggy svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .composer > .composer-attach:hover,
-.composer > .composer-attach:focus-visible {
+.composer > .composer-attach:focus-visible,
+.composer > .composer-taggy:hover,
+.composer > .composer-taggy:focus-visible {
   border-color: var(--accent);
   background: var(--accent-soft);
 }

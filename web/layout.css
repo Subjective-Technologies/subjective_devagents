@@ -1,5 +1,5 @@
 /* Web / dashboard iframe layout.
-   Desktop Electron keeps Conversations in the left sidebar (src/index.html).
+   Desktop Electron keeps Collaboration in the left sidebar (src/index.html).
    This file only loads in the browser build. Inside the dashboard the iframe is
    often <1040px, so styles.css hid Users and collapsed the grid — transcript
    sat in a squeezed middle between two sidebars. Override that here. */
@@ -407,8 +407,8 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .composer.has-image-picker {
-    grid-template-columns: 48px minmax(0, 1fr) 64px !important;
-    grid-template-areas: "attach input send" !important;
+    grid-template-columns: 48px 48px minmax(0, 1fr) 64px !important;
+    grid-template-areas: "attach taggy input send" !important;
   }
 
   .composer:has(.pending-images:not([hidden])) {
@@ -417,8 +417,8 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .composer.has-image-picker:has(.pending-images:not([hidden])) {
-    grid-template-columns: 48px minmax(0, 1fr) 64px !important;
-    grid-template-areas: "pending pending pending" "attach input send" !important;
+    grid-template-columns: 48px 48px minmax(0, 1fr) 64px !important;
+    grid-template-areas: "pending pending pending pending" "attach taggy input send" !important;
   }
 
   .pending-images {
@@ -477,8 +477,8 @@ body.chats-collapsed .right-rail .user-list {
     margin: 0 !important;
   }
 
-  .composer > .composer-attach {
-    grid-area: attach !important;
+  .composer > .composer-attach,
+  .composer > .composer-taggy {
     align-self: stretch !important;
     width: 48px !important;
     height: auto !important;
@@ -486,6 +486,9 @@ body.chats-collapsed .right-rail .user-list {
     border-radius: 10px !important;
     margin: 0 !important;
   }
+
+  .composer > .composer-attach { grid-area: attach !important; }
+  .composer > .composer-taggy { grid-area: taggy !important; }
 
   .command-palette {
     left: 12px !important;

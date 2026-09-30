@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://taggy.subjectivetechnologies.com; img-src 'self' file: data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subjective Chat</title>
     <link rel="stylesheet" href="./styles.css">
@@ -21,7 +21,7 @@
 
         <section class="panel" id="conversationsPanel">
           <div class="panel-head">
-            <span class="panel-title">Conversations</span>
+            <span class="panel-title">Collaboration</span>
             <button type="button" id="createLlmButton" class="panel-add" title="New agent conversation" aria-label="New agent conversation">+</button>
           </div>
           <div id="conversationBrowser" class="conversation-browser">
@@ -195,6 +195,7 @@
     <script src="../assets/vendor/markdown-it.min.js"></script>
     <script src="../assets/vendor/highlight.min.js"></script>
     <script src="./messageRenderer.js"></script>
+    <script src="./taggyClient.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

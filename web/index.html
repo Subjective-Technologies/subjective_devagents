@@ -18,20 +18,22 @@
     <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
     <!-- connect-src must name the API origin explicitly: 'self' is the page's origin, so a
          cross-origin fetch to the API is blocked by CSP before it is ever sent. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://subjectivetechnologies-login.firebaseapp.com https://devagents-api.subjectivetechnologies.com:8080 https://cloudflareinsights.com https://taggy.subjectivetechnologies.com; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com https://static.cloudflareinsights.com; frame-src https://subjectivetechnologies-login.firebaseapp.com; object-src 'none'; base-uri 'none';">
     <meta name="referrer" content="no-referrer">
-    <link rel="stylesheet" href="/auth.css?v=20260911auth1">
+    <link rel="stylesheet" href="/auth.css?v=DEVAGENTS_DEPLOY_VERSION">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Subjective Chat</title>
     <link rel="icon" type="image/svg+xml" href="/assets/subjective-logo.svg">
-    <script src="/fit-app.js?v=20260906k"></script>
+    <script src="/fit-app.js?v=DEVAGENTS_DEPLOY_VERSION"></script>
     <!-- ?v= busts Cloudflare's edge cache (agents.subjectivetechnologies.com fronts this
-         server); index.html is never cached, so bumping the version here atomically swaps
-         the whole set. Keep in sync with WEB_UI_RELEASE in src/webServer.js. -->
-    <link rel="stylesheet" href="/styles.css?v=20260911b">
+         server); index.html is never cached, so a new version here atomically swaps the
+         whole set. The value is stamped per deploy by the server, replacing hand-kept
+         release tags that had not changed since 2026-09-11 — every renderer change in
+         between shipped to the origin and was then served from cache, so nobody saw it. -->
+    <link rel="stylesheet" href="/styles.css?v=DEVAGENTS_DEPLOY_VERSION">
     <link rel="stylesheet" href="/assets/vendor/highlight-atom-one-dark.min.css">
-    <link rel="stylesheet" href="/contextMenu.css?v=20260905a">
-    <link rel="stylesheet" href="/layout.css?v=20260911a">
+    <link rel="stylesheet" href="/contextMenu.css?v=DEVAGENTS_DEPLOY_VERSION">
+    <link rel="stylesheet" href="/layout.css?v=DEVAGENTS_DEPLOY_VERSION">
   </head>
   <body data-accent="gold">
     <section id="ownerAuthPanel" class="owner-auth-panel" aria-labelledby="ownerAuthTitle">
@@ -289,7 +291,7 @@
     </dialog>
     <script src="/assets/vendor/markdown-it.min.js"></script>
     <script src="/assets/vendor/highlight.min.js"></script>
-    <script src="/firebaseAuth.js?v=20260911auth1"></script>
-    <script src="/bootstrap.js?v=20260911auth1"></script>
+    <script src="/firebaseAuth.js?v=DEVAGENTS_DEPLOY_VERSION"></script>
+    <script src="/bootstrap.js?v=DEVAGENTS_DEPLOY_VERSION"></script>
   </body>
 </html>

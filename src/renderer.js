@@ -1712,6 +1712,144 @@ function wireImageAttachments(item) {
   }
 }
 
+// A price-tag outline, matching the stroke-only style of LOCATION_ICONS below.
+const TAGGY_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+  + '<path d="M8.5 1.5H14a.5.5 0 0 1 .5.5v5.5a1 1 0 0 1-.3.7l-6 6a1 1 0 0 1-1.4 0'
+  + 'l-5.5-5.5a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 .7-.3z"/><circle cx="11" cy="5" r="1.2"/></svg>';
+
+let taggyModal;
+let taggyModalState = { tags: [], tasks: [] };
+
+function taggyTagName(id) {
+  return taggyModalState.tags.find((tag) => tag.id === id)?.name || '';
+}
+
+function renderTaggyTaskList(list, query) {
+  const needle = String(query || '').trim().toLocaleLowerCase();
+  const tasks = taggyModalState.tasks
+    .filter((task) => !needle || String(task.text || '').toLocaleLowerCase().includes(needle))
+    .slice(0, 200);
+  list.replaceChildren();
+  if (!tasks.length) {
+    const empty = document.createElement('p');
+    empty.className = 'taggy-empty';
+    empty.textContent = taggyModalState.tasks.length ? 'No tasks match.' : 'No tasks yet — create one above.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const task of tasks) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'taggy-task-row';
+    row.setAttribute('role', 'option');
+    const tags = (task.tagIds || []).map(taggyTagName).filter(Boolean);
+    row.innerHTML = (task.thumbUri
+      ? `<img class="taggy-task-thumb" src="${task.thumbUri}" alt="">`
+      : '<span class="taggy-task-thumb taggy-task-thumb-empty" aria-hidden="true"></span>')
+      + `<span class="taggy-task-main">`
+      + (task.number ? `<span class="taggy-task-number">${escapeHtml(task.number)}</span>` : '')
+      + `<span class="taggy-task-text">${escapeHtml(task.text)}</span>`
+      + (tags.length ? `<span class="taggy-task-tags">${tags.map((tag) => `<span class="taggy-task-tag">${escapeHtml(tag)}</span>`).join('')}</span>` : '')
+      + `</span>`;
+    row.addEventListener('click', () => useTaggyTask(task));
+    list.appendChild(row);
+  }
+}
+
+async function useTaggyTask(task) {
+  const status = taggyModal?.querySelector('.taggy-status');
+  if (status) status.textContent = 'Loading task…';
+  try {
+    const { images } = await window.taggyClient.listTaskImages(task.id);
+    const files = await Promise.all(images.map((image, index) =>
+      window.taggyClient.dataUriToFile(image.dataUri, `taggy-${task.id}-${index + 1}.png`)));
+    clearPendingImages();
+    if (files.length) await addPendingImages(files);
+    if (input) { input.value = task.text || ''; input.focus(); }
+    taggyModal?.close();
+  } catch (error) {
+    if (status) status.textContent = `Could not load that task: ${error.message}`;
+  }
+}
+
+async function createTaggyTaskFromComposer(newTaskText, status, createBtn) {
+  const text = String(newTaskText.value || '').trim();
+  if (!text) { status.textContent = 'Write the task text first.'; return; }
+  createBtn.disabled = true;
+  status.textContent = 'Saving…';
+  try {
+    const task = await window.taggyClient.createTask(text);
+    const imagesToSave = pendingImages.filter((image) => !image.loading && !image.error).map((image) => image.file);
+    for (const file of imagesToSave) {
+      await window.taggyClient.addTaskImage(task.id, file);
+    }
+    await useTaggyTask(task);
+  } catch (error) {
+    status.textContent = `Could not save task: ${error.message}`;
+  } finally {
+    createBtn.disabled = false;
+  }
+}
+
+function ensureTaggyModal() {
+  if (taggyModal) return taggyModal;
+  taggyModal = document.createElement('dialog');
+  taggyModal.className = 'taggy-modal';
+  taggyModal.innerHTML = '<form method="dialog" class="taggy-modal-form">'
+    + '<header class="taggy-modal-header"><h2>Taggy</h2>'
+    + '<button type="submit" class="taggy-modal-close" aria-label="Close">&times;</button></header>'
+    + '<div class="taggy-modal-body">'
+    + '<section class="taggy-new-task">'
+    + '<label for="taggyNewTaskText">New task</label>'
+    + '<textarea id="taggyNewTaskText" rows="3" placeholder="What needs doing?"></textarea>'
+    + '<div class="taggy-new-task-actions">'
+    + '<span class="taggy-status" role="status" aria-live="polite"></span>'
+    + '<button type="button" class="taggy-create-btn">Save as new task</button>'
+    + '</div></section>'
+    + '<section class="taggy-existing-tasks">'
+    + '<input type="search" class="taggy-search" placeholder="Search tasks…">'
+    + '<div class="taggy-task-list" role="listbox" aria-label="Taggy tasks"></div>'
+    + '</section></div></form>';
+  document.body.appendChild(taggyModal);
+  const search = taggyModal.querySelector('.taggy-search');
+  const list = taggyModal.querySelector('.taggy-task-list');
+  const status = taggyModal.querySelector('.taggy-status');
+  const createBtn = taggyModal.querySelector('.taggy-create-btn');
+  const newTaskText = taggyModal.querySelector('#taggyNewTaskText');
+  search.addEventListener('input', () => renderTaggyTaskList(list, search.value));
+  createBtn.addEventListener('click', () => createTaggyTaskFromComposer(newTaskText, status, createBtn));
+  return taggyModal;
+}
+
+async function openTaggyModal() {
+  if (!window.taggyClient) return;
+  const modal = ensureTaggyModal();
+  const newTaskText = modal.querySelector('#taggyNewTaskText');
+  const status = modal.querySelector('.taggy-status');
+  const list = modal.querySelector('.taggy-task-list');
+  const search = modal.querySelector('.taggy-search');
+  newTaskText.value = String(input?.value || '');
+  search.value = '';
+  status.textContent = '';
+  list.replaceChildren();
+  const loading = document.createElement('p');
+  loading.className = 'taggy-empty';
+  loading.textContent = 'Loading tasks…';
+  list.appendChild(loading);
+  if (modal.showModal) modal.showModal();
+  else modal.setAttribute('open', '');
+  try {
+    taggyModalState = await window.taggyClient.getState();
+    renderTaggyTaskList(list, search.value);
+  } catch (error) {
+    list.replaceChildren();
+    const errorEl = document.createElement('p');
+    errorEl.className = 'taggy-empty taggy-error';
+    errorEl.textContent = `Could not load Taggy tasks: ${error.message}`;
+    list.appendChild(errorEl);
+  }
+}
+
 let imageModal;
 function openImageModal(src, alt) {
   if (!imageModal) {
@@ -2297,6 +2435,20 @@ function attachImagePicker(form) {
   form.classList.add('has-image-picker');
   form.insertBefore(button, form.querySelector('textarea'));
   form.appendChild(picker);
+
+  const taggyButton = document.createElement('button');
+  taggyButton.type = 'button';
+  taggyButton.className = 'composer-taggy';
+  taggyButton.title = 'Taggy tasks';
+  taggyButton.setAttribute('aria-label', 'Pick or create a Taggy task');
+  taggyButton.innerHTML = TAGGY_ICON_SVG;
+  taggyButton.addEventListener('click', () => {
+    const frame = form.closest('.chat-frame');
+    if (frame) focusChatFrame(Number(frame.dataset.frame));
+    if (form.querySelector('textarea')?.disabled) return;
+    openTaggyModal();
+  });
+  form.insertBefore(taggyButton, form.querySelector('textarea'));
 }
 
 function removePendingImage(id) {

@@ -6,11 +6,11 @@
   "scripts": {
     "start": "electron .",
     "web": "node src/webServer.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/messageRenderer.js && node --check src/renderer.js && node --check src/mobile-bridge.js && node --check src/llmService.js && node --check src/systemUsers.js && node --check src/suSessionManager.js && node --check src/terminalWindow.js && node --check src/terminalPreload.js && node --check src/chatCore.js && node --check src/webServer.js && node --check web/webBridge.js && node --check web/terminalWebBridge.js",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/messageRenderer.js && node --check src/renderer.js && node --check src/taggyClient.js && node --check src/mobile-bridge.js && node --check src/llmService.js && node --check src/systemUsers.js && node --check src/suSessionManager.js && node --check src/terminalWindow.js && node --check src/terminalPreload.js && node --check src/chatCore.js && node --check src/webServer.js && node --check web/webBridge.js && node --check web/terminalWebBridge.js",
     "test": "node --test tests/*.test.js && python3 -m unittest discover -s tests -p '*_test.py'",
     "postinstall": "electron-rebuild -f -w node-pty",
     "vendor:xterm": "mkdir -p assets/vendor && cp node_modules/@xterm/xterm/lib/xterm.js assets/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css assets/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js assets/vendor/xterm-addon-fit.js && cp node_modules/@xterm/xterm/LICENSE assets/vendor/xterm.LICENSE",
-    "mobile:prepare": "mkdir -p mobile-www/assets && cp mobile/index.html mobile-www/index.html && cp src/styles.css src/messageRenderer.js src/renderer.js src/mobile-bridge.js mobile-www/ && cp -R assets/. mobile-www/assets/",
+    "mobile:prepare": "mkdir -p mobile-www/assets && cp mobile/index.html mobile-www/index.html && cp src/styles.css src/messageRenderer.js src/renderer.js src/taggyClient.js src/mobile-bridge.js mobile-www/ && cp -R assets/. mobile-www/assets/",
     "mobile:sync": "npm run mobile:prepare && npx cap sync android",
     "mobile:apk": "npm run mobile:sync && cd android && GRADLE_USER_HOME=../.gradle ./gradlew assembleDebug"
   },

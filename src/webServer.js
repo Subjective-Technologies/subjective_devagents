@@ -119,6 +119,7 @@ function createApp(core, options = {}) {
     '/styles.css': path.join(srcDir, 'styles.css'),
     '/terminal.css': path.join(srcDir, 'terminal.css'),
     '/messageRenderer.js': path.join(srcDir, 'messageRenderer.js'),
+    '/taggyClient.js': path.join(srcDir, 'taggyClient.js'),
     '/renderer.js': path.join(srcDir, 'renderer.js'),
     '/terminal-renderer.js': path.join(srcDir, 'terminal-renderer.js')
   };
