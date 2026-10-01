@@ -23,7 +23,7 @@
     "dotenv": "^16.4.7",
     "electron": "^41.10.4",
     "highlight.js": "^11.11.2",
-    "markdown-it": "^15.0.0",
+    "markdown-it": "^15.0.1",
     "node-pty": "^1.1.0",
     "ws": "^8.21.3"
   },
