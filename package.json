@@ -21,7 +21,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "dotenv": "^16.4.7",
-    "electron": "^41.10.6",
+    "electron": "^42.5.2",
     "highlight.js": "^11.11.2",
     "markdown-it": "^15.0.1",
     "node-pty": "^1.1.0",
