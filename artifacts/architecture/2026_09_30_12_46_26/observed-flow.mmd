@@ -1,0 +1,11 @@
+flowchart LR
+  Editor[TeamMapEditor] --> DesignChat[Team Design chat client]
+  DesignChat --> Proxy[Next /team-design-api proxy]
+  Proxy -. configured destination; deployed revision unverified .-> Pinned[UML2Code root-pinned Team Design endpoint]
+  Widget[Dashboard ChatWidget] --> Orchestrator[Browser channelAgents]
+  Widget --> DevAgents[DevAgents message adapter]
+  Widget --> AgentMessages[Chat API agent-messages]
+  AgentMessages --> SQLite[(Chat SQLite)]
+  SQLite --> Litestream[Litestream when credentials present]
+  Litestream --> R2[(R2 replica)]
+  Membership[Saved design membership endpoint] --> Plans[Team channel plans and team_key]

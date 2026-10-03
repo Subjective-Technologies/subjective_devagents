@@ -60,6 +60,7 @@ const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
+const llmModelSelect = document.getElementById('llmModelSelect');
 const llmStatusText = document.getElementById('llmStatusText');
 const sessionPickerDialog = document.getElementById('sessionPickerDialog');
 const sessionPickerTitle = document.getElementById('sessionPickerTitle');
@@ -3086,11 +3087,17 @@ if (llmDialog) llmDialog.addEventListener('click', (event) => {
 if (llmForm) llmForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const provider = selectedLlmProvider();
-  const result = await window.subjectiveChat.createLlmConversation({
+  // Use identity_id if available from the model selector, otherwise fall back to provider
+  const identityId = window.llmModelSelector?.getSelectedIdentityId?.();
+  const payload = {
     name: llmNameInput.value,
     workspace: llmWorkspaceInput.value,
     provider
-  });
+  };
+  if (identityId) {
+    payload.identity_id = identityId;
+  }
+  const result = await window.subjectiveChat.createLlmConversation(payload);
   if (!result?.ok) {
     llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;
     llmStatusText.dataset.ready = 'false';

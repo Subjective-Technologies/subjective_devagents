@@ -490,6 +490,11 @@ body.chats-collapsed .right-rail .user-list {
   .composer > .composer-attach { grid-area: attach !important; }
   .composer > .composer-taggy { grid-area: taggy !important; }
 
+  /* Hide the messaging widget (composer) on mobile */
+  .composer {
+    display: none !important;
+  }
+
   .command-palette {
     left: 12px !important;
     right: 80px !important;

@@ -1,0 +1,9 @@
+{
+  "xml_parse": "passed",
+  "unique_ids": 47,
+  "resolved_dependency_references": 28,
+  "evidence_sources": 32,
+  "source_paths": "passed",
+  "uml_schema_or_editor_import": "not tested",
+  "scope": "static source inspection only"
+}

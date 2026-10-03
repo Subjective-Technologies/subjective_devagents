@@ -2737,6 +2737,7 @@ body.topbar-collapsed .topbar-collapse-toggle::before {
   }
 
   .composer {
+    display: none;
     flex: 0 0 auto;
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     grid-template-columns: minmax(0, 1fr) 64px;
