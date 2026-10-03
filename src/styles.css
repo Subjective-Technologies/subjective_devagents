@@ -1126,7 +1126,8 @@ img.provider-avatar[src$="cursor.svg"] {
 .taggy-modal-close { border: 0; background: transparent; color: var(--text); font-size: 20px; line-height: 1; cursor: pointer; }
 .taggy-modal-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .taggy-new-task { display: flex; flex-direction: column; gap: 6px; }
-.taggy-new-task label { font-size: 12px; color: var(--text-dim, #9aa5b8); }
+.taggy-new-task label,
+.taggy-existing-tasks label { font-size: 12px; color: var(--text-dim, #9aa5b8); }
 .taggy-new-task textarea {
   resize: vertical;
   min-height: 56px;
@@ -1137,8 +1138,9 @@ img.provider-avatar[src$="cursor.svg"] {
   padding: 8px 10px;
   font-size: 13px;
 }
+.taggy-modal-hint { margin: 0; font-size: 11px; line-height: 1.4; color: var(--text-dim, #9aa5b8); }
 .taggy-new-task-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.taggy-status { font-size: 12px; color: var(--text-dim, #9aa5b8); flex: 1 1 auto; }
+.taggy-status { min-height: 1em; font-size: 12px; color: var(--text-dim, #9aa5b8); flex: 1 1 auto; }
 .taggy-create-btn {
   flex: 0 0 auto;
   border: 1px solid var(--border);
@@ -2042,14 +2044,14 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .composer.has-image-picker {
-  grid-template-columns: 44px 44px minmax(0, 1fr) 86px;
-  grid-template-areas: "attach taggy input send";
+  grid-template-columns: 44px 44px 44px minmax(0, 1fr) 86px;
+  grid-template-areas: "attach taggy-create taggy-import input send";
 }
 
 .composer.has-image-picker:has(.pending-images:not([hidden])) {
   grid-template-areas:
-    "pending pending pending pending"
-    "attach taggy input send";
+    "pending pending pending pending pending"
+    "attach taggy-create taggy-import input send";
 }
 
 .composer > .composer-attach,
@@ -2071,14 +2073,16 @@ img.provider-avatar[src$="cursor.svg"] {
 }
 
 .composer > .composer-taggy {
-  grid-area: taggy;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
+.composer > .composer-taggy-create { grid-area: taggy-create; }
+.composer > .composer-taggy-import { grid-area: taggy-import; }
+
 .composer > .composer-taggy svg {
-  width: 18px;
+  width: 22px;
   height: 18px;
   fill: none;
   stroke: currentColor;
