@@ -106,6 +106,30 @@ test('failed LLM send restores the entire draft', async () => {
   assert.equal(ctx.input.value, prompt);
 });
 
+test('Taggy task names become safe IRC channel names', () => {
+  const context = vm.createContext({});
+  const source = renderer.match(/^function taggyTaskChannelName\([^]*?^}/m);
+  assert.ok(source, 'Missing Taggy channel-name helper');
+  vm.runInContext(source[0], context);
+  assert.equal(context.taggyTaskChannelName('create_chat_from_task'), '#create_chat_from_task');
+  assert.equal(context.taggyTaskChannelName('  Create chat from task!  '), '#Create_chat_from_task');
+  assert.equal(context.taggyTaskChannelName('#release / mobile'), '#release_mobile');
+  assert.equal(context.taggyTaskChannelName(' !!! '), '');
+});
+
+test('creating a Taggy task creates and joins its channel', () => {
+  assert.match(renderer, /const channel = await ensureTaggyTaskChannel\(task\)/);
+  assert.match(renderer, /executeCommand\(`\/raw JOIN \$\{channel\}`/);
+  assert.match(renderer, /ensureConversation\(channel, channel, 'channel'/);
+});
+
+test('Taggy channels refresh when tasks are created outside chat', () => {
+  assert.match(renderer, /const TAGGY_TASK_SYNC_MS = 10 \* 1000/);
+  assert.match(renderer, /setInterval\(\(\) => loadTaggyTaskChannels\(\), TAGGY_TASK_SYNC_MS\)/);
+  assert.match(renderer, /addEventListener\('focus', \(\) => loadTaggyTaskChannels\(\)\)/);
+  assert.match(renderer, /visibilitychange[^]*loadTaggyTaskChannels\(\)/);
+});
+
 test('Taggy task search matches text, task number, and tag names', () => {
   const context = vm.createContext({
     taggyModalState: {

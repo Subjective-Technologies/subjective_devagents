@@ -1246,6 +1246,7 @@ function scheduleRender() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
+  loadTaggyTaskChannels();
   if (!renderFrame) return;
   window.clearTimeout(renderFrame);
   window.cancelAnimationFrame(renderFrame);
@@ -1721,6 +1722,73 @@ const TAGGY_IMPORT_ICON_SVG = `<svg viewBox="0 0 20 16" aria-hidden="true" focus
 let taggyCreateModal;
 let taggyImportModal;
 let taggyModalState = { tags: [], tasks: [] };
+const joinedTaskChannels = new Set();
+const TAGGY_TASK_SYNC_MS = 10 * 1000;
+let taggyTaskSyncPromise = null;
+
+function taggyTaskChannelName(taskText) {
+  const slug = String(taskText || '')
+    .trim()
+    .replace(/^#+/, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_.-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_\-.]+|[_\-.]+$/g, '')
+    .slice(0, 49);
+  return slug ? `#${slug}` : '';
+}
+
+async function ensureTaggyTaskChannel(task, options = {}) {
+  const channel = taggyTaskChannelName(task?.text);
+  if (!channel) {
+    rendererLog('error', 'Taggy task has no usable IRC channel name', { taskId: task?.id || '' });
+    return '';
+  }
+
+  ensureConversation(channel, channel, 'channel', {
+    taskId: task?.id,
+    taskNumber: task?.number || '',
+    taskChannel: true
+  });
+
+  if (options.join !== false && !joinedTaskChannels.has(channel.toLowerCase())) {
+    const result = await window.subjectiveChat.executeCommand(`/raw JOIN ${channel}`, channel);
+    if (result?.ok) {
+      joinedTaskChannels.add(channel.toLowerCase());
+      rendererLog('info', 'Joined IRC channel for Taggy task', { taskId: task?.id, channel });
+    } else {
+      rendererLog('error', 'Could not join IRC channel for Taggy task', { taskId: task?.id, channel });
+    }
+  }
+  return channel;
+}
+
+async function syncTaggyTaskChannels(tasks, options = {}) {
+  for (const task of tasks || []) await ensureTaggyTaskChannel(task, options);
+}
+
+async function loadTaggyTaskChannels(options = {}) {
+  if (!window.taggyClient) return;
+  if (taggyTaskSyncPromise) return taggyTaskSyncPromise;
+  taggyTaskSyncPromise = (async () => {
+    try {
+      const state = await window.taggyClient.getState();
+      taggyModalState = state;
+      await syncTaggyTaskChannels(state.tasks, options);
+    } catch (error) {
+      rendererLog('error', 'Failed to load Taggy task channels', { message: error.message });
+    } finally {
+      taggyTaskSyncPromise = null;
+    }
+  })();
+  return taggyTaskSyncPromise;
+}
+
+function startTaggyTaskChannelSync() {
+  if (!window.taggyClient) return;
+  window.setInterval(() => loadTaggyTaskChannels(), TAGGY_TASK_SYNC_MS);
+  window.addEventListener('focus', () => loadTaggyTaskChannels());
+}
 
 function taggyTagName(id) {
   return taggyModalState.tags.find((tag) => tag.id === id)?.name || '';
@@ -1790,7 +1858,8 @@ async function createTaggyTaskFromComposer(newTaskText, status, createBtn) {
     const task = await window.taggyClient.createTask(text);
     const imagesToSave = pendingImages.filter((image) => !image.loading && !image.error).map((image) => image.file);
     for (const file of imagesToSave) await window.taggyClient.addTaskImage(task.id, file);
-    rendererLog('info', 'Taggy task created from composer', { taskId: task.id, imageCount: imagesToSave.length });
+    const channel = await ensureTaggyTaskChannel(task);
+    rendererLog('info', 'Taggy task created from composer', { taskId: task.id, channel, imageCount: imagesToSave.length });
     await useTaggyTask(task, taggyCreateModal);
   } catch (error) {
     status.textContent = `Could not create task: ${error.message}`;
@@ -1870,6 +1939,7 @@ async function openTaggyImportModal() {
   search.focus();
   try {
     taggyModalState = await window.taggyClient.getState();
+    await syncTaggyTaskChannels(taggyModalState.tasks);
     status.textContent = `${taggyModalState.tasks.length} task${taggyModalState.tasks.length === 1 ? '' : 's'}`;
     renderTaggyTaskList(list, search.value);
   } catch (error) {
@@ -1996,7 +2066,7 @@ function renderConversationsNow() {
     row.classList.toggle('active', conversation.target === activeTarget);
     row.classList.toggle('in-frame', framesEnabled() && frameTargets.includes(conversation.target));
     row.classList.toggle('busy', Boolean(conversation.busy));
-    if (framesEnabled() && conversation.kind === 'llm') {
+    if (framesEnabled()) {
       row.draggable = true;
       row.addEventListener('dragstart', (event) => {
         event.dataTransfer.setData('application/x-subjective-chat', conversation.target);
@@ -3240,6 +3310,7 @@ window.subjectiveChat.onEvent((event) => {
     }
     case 'status':
       setStatus(event.state, event.text);
+      if (event.state === 'connected') loadTaggyTaskChannels();
       break;
     case 'config':
       updateConfig(event);
@@ -3396,6 +3467,8 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
   const restored = framesEnabled() ? (frameTargets[focusedFrame] || visibleFrameTargets()[0]) : '';
   if (restored) setActiveTarget(restored, { skipFrame: true });
   else setActiveTarget(config.channel);
+  await loadTaggyTaskChannels();
+  startTaggyTaskChannelSync();
   await loadLlmConversations();
   if (framesEnabled()) {
     for (const target of visibleFrameTargets()) {
