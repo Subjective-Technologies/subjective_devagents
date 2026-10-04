@@ -323,6 +323,7 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: normal;
 }
 
 .conversation-user-pill {
