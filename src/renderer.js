@@ -360,7 +360,7 @@ function createChatFrame(index) {
       <img class="frame-icon provider-icon" alt="" hidden>
       <strong class="frame-title">Drop a chat here</strong>
       <button type="button" class="frame-refresh" hidden title="Refresh chat" aria-label="Refresh chat">↻</button>
-      <button type="button" class="frame-clear" hidden title="Clear pane" aria-label="Clear pane">×</button>
+      <button type="button" class="frame-clear" hidden title="Clear messages" aria-label="Clear messages">×</button>
     </header>
     <div class="transcript" aria-live="polite"></div>
     <form class="composer">
@@ -377,7 +377,10 @@ function createChatFrame(index) {
   });
   frame.querySelector('.frame-clear').addEventListener('click', (event) => {
     event.stopPropagation();
-    assignChatFrame(index, '');
+    const target = frameTargets[index];
+    if (target) {
+      clearConversationMessages(target);
+    }
   });
   frame.addEventListener('dragover', (event) => {
     if (![...event.dataTransfer.types].includes('application/x-subjective-chat')) return;
@@ -2177,6 +2180,23 @@ async function confirmDeleteConversation(target) {
     rendererLog('error', 'Failed to delete conversation', { target, error: result?.error });
     window.alert(result?.error || 'Could not delete this conversation.');
   }
+}
+
+function clearConversationMessages(target) {
+  const conversation = conversations.get(target);
+  if (!conversation) return;
+  // Clear all messages/events from the conversation
+  conversation.events = [];
+  conversation.unread = 0;
+  conversation.updatedAt = Date.now();
+  // Re-render all visible transcripts showing this conversation
+  if (framesEnabled()) {
+    renderVisibleFrameTranscripts();
+  } else if (activeTarget === target) {
+    renderTranscript();
+  }
+  renderConversations();
+  rendererLog('info', 'Cleared conversation messages', { target, label: conversation.label });
 }
 
 if (conversationSearch) {
