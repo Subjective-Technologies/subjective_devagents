@@ -70,7 +70,7 @@ function resolveDeployVersion() {
 }
 
 const DEPLOY_VERSION = resolveDeployVersion();
-const DEPLOY_STAMP_COMMENT = `<!-- devagents-deploy ${DEPLOY_VERSION} served=${new Date().toISOString()} -->`;
+const DEPLOY_STAMP_COMMENT = `<!-- devagents-deploy version=${DEPLOY_VERSION} served=${new Date().toISOString()} -->`;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -147,11 +147,14 @@ function createApp(core, options = {}) {
 
   function stampHtml(html) {
     // Replace the static placeholder so View Source / curl shows the live
-    // release+git SHA. Also stamp <html> for quick DevTools inspection.
+    // release+git SHA. Always inject a machine-readable comment as well: the
+    // shipped index.html already contains DEVAGENTS_DEPLOY_VERSION, so the
+    // previous else-if never ran in production.
     let out = String(html);
     if (out.includes('DEVAGENTS_DEPLOY_VERSION')) {
       out = out.split('DEVAGENTS_DEPLOY_VERSION').join(DEPLOY_VERSION);
-    } else if (out.includes('<!doctype html>') || out.includes('<!DOCTYPE html>')) {
+    }
+    if (!/<!-- devagents-deploy version=\S+/.test(out) && /<!doctype html>/i.test(out)) {
       out = out.replace(/<!doctype html>/i, `$&\n${DEPLOY_STAMP_COMMENT}`);
     }
     out = out.replace(/<html\b([^>]*)>/i, (_m, attrs) => {

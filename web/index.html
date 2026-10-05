@@ -3,8 +3,12 @@
   DEVAGENTS_DEPLOY_VERSION
   Static placeholder replaced at serve time by the backend with
   release+gitSHA (and -dirty if the working tree has local edits).
-  Check: View Source, document.documentElement.dataset.devagentsVersion,
-  response header X-DevAgents-Version, or GET /api/version
+  The live page also gets a one-line machine-readable deploy comment right after
+  <!doctype html>, which a curl of / can grep without auth.
+  Check: curl -sS URL | grep devagents-deploy
+         document.documentElement.dataset.devagentsVersion
+         response header X-DevAgents-Version
+         GET /api/version (authenticated)
 -->
 <html lang="en" data-devagents-version="DEVAGENTS_DEPLOY_VERSION" data-devagents-instance="DEVAGENTS_INSTANCE_ID">
   <head>
