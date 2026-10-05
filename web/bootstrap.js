@@ -4,7 +4,7 @@
     await window.devagentsAuth.ready;
     const scripts = document.body.dataset.page === 'terminal'
       ? ['/terminalWebBridge.js?v=DEVAGENTS_DEPLOY_VERSION', '/terminal-renderer.js?v=DEVAGENTS_DEPLOY_VERSION']
-      : ['/webBridge.js?v=DEVAGENTS_DEPLOY_VERSION', '/messageRenderer.js?v=DEVAGENTS_DEPLOY_VERSION', '/taggyClient.js?v=DEVAGENTS_DEPLOY_VERSION', '/renderer.js?v=DEVAGENTS_DEPLOY_VERSION'];
+      : ['/webBridge.js?v=DEVAGENTS_DEPLOY_VERSION', '/messageRenderer.js?v=DEVAGENTS_DEPLOY_VERSION', '/taggyClient.js?v=DEVAGENTS_DEPLOY_VERSION', '/llmModelSelector.js?v=DEVAGENTS_DEPLOY_VERSION', '/renderer.js?v=DEVAGENTS_DEPLOY_VERSION'];
     for (const source of scripts) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');

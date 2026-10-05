@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('subjectiveChat', {
   refreshLlmHistory: () => ipcRenderer.invoke('llm:refresh-history'),
   getLlmStatus: (provider) => ipcRenderer.invoke('llm:status', { provider }),
   listProviderSessions: (provider) => ipcRenderer.invoke('llm:sessions', { provider }),
+  getLanguageModelIdentities: () => ipcRenderer.invoke('llm:get-identities'),
   sendLlmMessage: (target, text, files = []) => ipcRenderer.invoke('llm:send-message', { target, text, files }),
   listSystemUsers: () => ipcRenderer.invoke('system:list-users'),
   getSwitchUserStatus: (username) => ipcRenderer.invoke('switchuser:status', { username }),

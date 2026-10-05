@@ -60,6 +60,7 @@ const llmCloseButton = document.getElementById('llmCloseButton');
 const llmNameInput = document.getElementById('llmNameInput');
 const llmWorkspaceInput = document.getElementById('llmWorkspaceInput');
 const llmProviderSelect = document.getElementById('llmProviderSelect');
+const llmModelSelect = document.getElementById('llmModelSelect');
 const llmStatusText = document.getElementById('llmStatusText');
 const sessionPickerDialog = document.getElementById('sessionPickerDialog');
 const sessionPickerTitle = document.getElementById('sessionPickerTitle');
@@ -1245,6 +1246,7 @@ function scheduleRender() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
+  loadTaggyTaskChannels();
   if (!renderFrame) return;
   window.clearTimeout(renderFrame);
   window.cancelAnimationFrame(renderFrame);
@@ -1712,28 +1714,101 @@ function wireImageAttachments(item) {
   }
 }
 
-// A price-tag outline, matching the stroke-only style of LOCATION_ICONS below.
-const TAGGY_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
-  + '<path d="M8.5 1.5H14a.5.5 0 0 1 .5.5v5.5a1 1 0 0 1-.3.7l-6 6a1 1 0 0 1-1.4 0'
-  + 'l-5.5-5.5a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 .7-.3z"/><circle cx="11" cy="5" r="1.2"/></svg>';
+// Taggy's price-tag mark, with an action glyph for each composer action.
+const TAGGY_TAG_PATH = '<path d="M8.5 1.5H14a.5.5 0 0 1 .5.5v5.5a1 1 0 0 1-.3.7l-6 6a1 1 0 0 1-1.4 0l-5.5-5.5a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 .7-.3z"/><circle cx="11" cy="5" r="1.2"/>';
+const TAGGY_CREATE_ICON_SVG = `<svg viewBox="0 0 20 16" aria-hidden="true" focusable="false">${TAGGY_TAG_PATH}<path class="taggy-action-glyph" d="M16.5 9v6m-3-3h6"/></svg>`;
+const TAGGY_IMPORT_ICON_SVG = `<svg viewBox="0 0 20 16" aria-hidden="true" focusable="false">${TAGGY_TAG_PATH}<path class="taggy-action-glyph" d="M16.5 8.5v5m-2-2 2 2 2-2M13.5 15h6"/></svg>`;
 
-let taggyModal;
+let taggyCreateModal;
+let taggyImportModal;
 let taggyModalState = { tags: [], tasks: [] };
+const joinedTaskChannels = new Set();
+const TAGGY_TASK_SYNC_MS = 10 * 1000;
+let taggyTaskSyncPromise = null;
+
+function taggyTaskChannelName(taskText) {
+  const slug = String(taskText || '')
+    .trim()
+    .replace(/^#+/, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_.-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_\-.]+|[_\-.]+$/g, '')
+    .slice(0, 49);
+  return slug ? `#${slug}` : '';
+}
+
+async function ensureTaggyTaskChannel(task, options = {}) {
+  const channel = taggyTaskChannelName(task?.text);
+  if (!channel) {
+    rendererLog('error', 'Taggy task has no usable IRC channel name', { taskId: task?.id || '' });
+    return '';
+  }
+
+  ensureConversation(channel, channel, 'channel', {
+    taskId: task?.id,
+    taskNumber: task?.number || '',
+    taskChannel: true
+  });
+
+  if (options.join !== false && !joinedTaskChannels.has(channel.toLowerCase())) {
+    const result = await window.subjectiveChat.executeCommand(`/raw JOIN ${channel}`, channel);
+    if (result?.ok) {
+      joinedTaskChannels.add(channel.toLowerCase());
+      rendererLog('info', 'Joined IRC channel for Taggy task', { taskId: task?.id, channel });
+    } else {
+      rendererLog('error', 'Could not join IRC channel for Taggy task', { taskId: task?.id, channel });
+    }
+  }
+  return channel;
+}
+
+async function syncTaggyTaskChannels(tasks, options = {}) {
+  for (const task of tasks || []) await ensureTaggyTaskChannel(task, options);
+}
+
+async function loadTaggyTaskChannels(options = {}) {
+  if (!window.taggyClient) return;
+  if (taggyTaskSyncPromise) return taggyTaskSyncPromise;
+  taggyTaskSyncPromise = (async () => {
+    try {
+      const state = await window.taggyClient.getState();
+      taggyModalState = state;
+      await syncTaggyTaskChannels(state.tasks, options);
+    } catch (error) {
+      rendererLog('error', 'Failed to load Taggy task channels', { message: error.message });
+    } finally {
+      taggyTaskSyncPromise = null;
+    }
+  })();
+  return taggyTaskSyncPromise;
+}
+
+function startTaggyTaskChannelSync() {
+  if (!window.taggyClient) return;
+  window.setInterval(() => loadTaggyTaskChannels(), TAGGY_TASK_SYNC_MS);
+  window.addEventListener('focus', () => loadTaggyTaskChannels());
+}
 
 function taggyTagName(id) {
   return taggyModalState.tags.find((tag) => tag.id === id)?.name || '';
 }
 
-function renderTaggyTaskList(list, query) {
+function taggyTaskMatches(task, query) {
   const needle = String(query || '').trim().toLocaleLowerCase();
-  const tasks = taggyModalState.tasks
-    .filter((task) => !needle || String(task.text || '').toLocaleLowerCase().includes(needle))
-    .slice(0, 200);
+  if (!needle) return true;
+  const tags = (task.tagIds || []).map(taggyTagName);
+  return [task.number, task.text, ...tags]
+    .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+}
+
+function renderTaggyTaskList(list, query) {
+  const tasks = taggyModalState.tasks.filter((task) => taggyTaskMatches(task, query)).slice(0, 200);
   list.replaceChildren();
   if (!tasks.length) {
     const empty = document.createElement('p');
     empty.className = 'taggy-empty';
-    empty.textContent = taggyModalState.tasks.length ? 'No tasks match.' : 'No tasks yet — create one above.';
+    empty.textContent = taggyModalState.tasks.length ? 'No tasks match.' : 'No tasks yet.';
     list.appendChild(empty);
     return;
   }
@@ -1746,29 +1821,31 @@ function renderTaggyTaskList(list, query) {
     row.innerHTML = (task.thumbUri
       ? `<img class="taggy-task-thumb" src="${task.thumbUri}" alt="">`
       : '<span class="taggy-task-thumb taggy-task-thumb-empty" aria-hidden="true"></span>')
-      + `<span class="taggy-task-main">`
+      + '<span class="taggy-task-main">'
       + (task.number ? `<span class="taggy-task-number">${escapeHtml(task.number)}</span>` : '')
       + `<span class="taggy-task-text">${escapeHtml(task.text)}</span>`
       + (tags.length ? `<span class="taggy-task-tags">${tags.map((tag) => `<span class="taggy-task-tag">${escapeHtml(tag)}</span>`).join('')}</span>` : '')
-      + `</span>`;
-    row.addEventListener('click', () => useTaggyTask(task));
+      + '</span>';
+    row.addEventListener('click', () => useTaggyTask(task, taggyImportModal));
     list.appendChild(row);
   }
 }
 
-async function useTaggyTask(task) {
-  const status = taggyModal?.querySelector('.taggy-status');
-  if (status) status.textContent = 'Loading task…';
+async function useTaggyTask(task, modal) {
+  const status = modal?.querySelector('.taggy-status');
+  if (status) status.textContent = 'Adding task to chat…';
   try {
-    const { images } = await window.taggyClient.listTaskImages(task.id);
+    const { images = [] } = await window.taggyClient.listTaskImages(task.id);
     const files = await Promise.all(images.map((image, index) =>
       window.taggyClient.dataUriToFile(image.dataUri, `taggy-${task.id}-${index + 1}.png`)));
     clearPendingImages();
     if (files.length) await addPendingImages(files);
     if (input) { input.value = task.text || ''; input.focus(); }
-    taggyModal?.close();
+    modal?.close();
+    rendererLog('info', 'Taggy task added to composer', { taskId: task.id, imageCount: files.length });
   } catch (error) {
     if (status) status.textContent = `Could not load that task: ${error.message}`;
+    rendererLog('error', 'Failed to add Taggy task to composer', { taskId: task.id, message: error.message });
   }
 }
 
@@ -1776,77 +1853,102 @@ async function createTaggyTaskFromComposer(newTaskText, status, createBtn) {
   const text = String(newTaskText.value || '').trim();
   if (!text) { status.textContent = 'Write the task text first.'; return; }
   createBtn.disabled = true;
-  status.textContent = 'Saving…';
+  status.textContent = 'Creating task…';
   try {
     const task = await window.taggyClient.createTask(text);
     const imagesToSave = pendingImages.filter((image) => !image.loading && !image.error).map((image) => image.file);
-    for (const file of imagesToSave) {
-      await window.taggyClient.addTaskImage(task.id, file);
-    }
-    await useTaggyTask(task);
+    for (const file of imagesToSave) await window.taggyClient.addTaskImage(task.id, file);
+    const channel = await ensureTaggyTaskChannel(task);
+    rendererLog('info', 'Taggy task created from composer', { taskId: task.id, channel, imageCount: imagesToSave.length });
+    await useTaggyTask(task, taggyCreateModal);
   } catch (error) {
-    status.textContent = `Could not save task: ${error.message}`;
+    status.textContent = `Could not create task: ${error.message}`;
+    rendererLog('error', 'Failed to create Taggy task from composer', { message: error.message });
   } finally {
     createBtn.disabled = false;
   }
 }
 
-function ensureTaggyModal() {
-  if (taggyModal) return taggyModal;
-  taggyModal = document.createElement('dialog');
-  taggyModal.className = 'taggy-modal';
-  taggyModal.innerHTML = '<form method="dialog" class="taggy-modal-form">'
-    + '<header class="taggy-modal-header"><h2>Taggy</h2>'
-    + '<button type="submit" class="taggy-modal-close" aria-label="Close">&times;</button></header>'
-    + '<div class="taggy-modal-body">'
-    + '<section class="taggy-new-task">'
-    + '<label for="taggyNewTaskText">New task</label>'
-    + '<textarea id="taggyNewTaskText" rows="3" placeholder="What needs doing?"></textarea>'
-    + '<div class="taggy-new-task-actions">'
-    + '<span class="taggy-status" role="status" aria-live="polite"></span>'
-    + '<button type="button" class="taggy-create-btn">Save as new task</button>'
-    + '</div></section>'
-    + '<section class="taggy-existing-tasks">'
-    + '<input type="search" class="taggy-search" placeholder="Search tasks…">'
-    + '<div class="taggy-task-list" role="listbox" aria-label="Taggy tasks"></div>'
-    + '</section></div></form>';
-  document.body.appendChild(taggyModal);
-  const search = taggyModal.querySelector('.taggy-search');
-  const list = taggyModal.querySelector('.taggy-task-list');
-  const status = taggyModal.querySelector('.taggy-status');
-  const createBtn = taggyModal.querySelector('.taggy-create-btn');
-  const newTaskText = taggyModal.querySelector('#taggyNewTaskText');
-  search.addEventListener('input', () => renderTaggyTaskList(list, search.value));
-  createBtn.addEventListener('click', () => createTaggyTaskFromComposer(newTaskText, status, createBtn));
-  return taggyModal;
+function showDialog(modal) {
+  if (modal.showModal) modal.showModal();
+  else modal.setAttribute('open', '');
 }
 
-async function openTaggyModal() {
+function ensureTaggyCreateModal() {
+  if (taggyCreateModal) return taggyCreateModal;
+  taggyCreateModal = document.createElement('dialog');
+  taggyCreateModal.className = 'taggy-modal taggy-create-modal';
+  taggyCreateModal.innerHTML = '<form method="dialog" class="taggy-modal-form">'
+    + '<header class="taggy-modal-header"><h2>Create Taggy task</h2>'
+    + '<button type="submit" class="taggy-modal-close" aria-label="Close">&times;</button></header>'
+    + '<div class="taggy-modal-body"><section class="taggy-new-task">'
+    + '<label for="taggyNewTaskText">Task</label>'
+    + '<textarea id="taggyNewTaskText" rows="5" placeholder="What needs doing?"></textarea>'
+    + '<p class="taggy-modal-hint">Any images already attached to this chat draft will be added to the new task.</p>'
+    + '<div class="taggy-new-task-actions">'
+    + '<span class="taggy-status" role="status" aria-live="polite"></span>'
+    + '<button type="button" class="taggy-create-btn">Create and add to chat</button>'
+    + '</div></section></div></form>';
+  document.body.appendChild(taggyCreateModal);
+  const status = taggyCreateModal.querySelector('.taggy-status');
+  const createBtn = taggyCreateModal.querySelector('.taggy-create-btn');
+  const newTaskText = taggyCreateModal.querySelector('#taggyNewTaskText');
+  createBtn.addEventListener('click', () => createTaggyTaskFromComposer(newTaskText, status, createBtn));
+  return taggyCreateModal;
+}
+
+function openTaggyCreateModal() {
   if (!window.taggyClient) return;
-  const modal = ensureTaggyModal();
-  const newTaskText = modal.querySelector('#taggyNewTaskText');
+  const modal = ensureTaggyCreateModal();
+  modal.querySelector('#taggyNewTaskText').value = String(input?.value || '');
+  modal.querySelector('.taggy-status').textContent = '';
+  showDialog(modal);
+  modal.querySelector('#taggyNewTaskText').focus();
+}
+
+function ensureTaggyImportModal() {
+  if (taggyImportModal) return taggyImportModal;
+  taggyImportModal = document.createElement('dialog');
+  taggyImportModal.className = 'taggy-modal taggy-import-modal';
+  taggyImportModal.innerHTML = '<form method="dialog" class="taggy-modal-form">'
+    + '<header class="taggy-modal-header"><h2>Import Taggy task</h2>'
+    + '<button type="submit" class="taggy-modal-close" aria-label="Close">&times;</button></header>'
+    + '<div class="taggy-modal-body"><section class="taggy-existing-tasks">'
+    + '<label for="taggyTaskSearch">Find a task</label>'
+    + '<input id="taggyTaskSearch" type="search" class="taggy-search" placeholder="Search task text, number, or tag…">'
+    + '<span class="taggy-status" role="status" aria-live="polite"></span>'
+    + '<div class="taggy-task-list" role="listbox" aria-label="Taggy tasks"></div>'
+    + '</section></div></form>';
+  document.body.appendChild(taggyImportModal);
+  const search = taggyImportModal.querySelector('.taggy-search');
+  const list = taggyImportModal.querySelector('.taggy-task-list');
+  search.addEventListener('input', () => renderTaggyTaskList(list, search.value));
+  return taggyImportModal;
+}
+
+async function openTaggyImportModal() {
+  if (!window.taggyClient) return;
+  const modal = ensureTaggyImportModal();
   const status = modal.querySelector('.taggy-status');
   const list = modal.querySelector('.taggy-task-list');
   const search = modal.querySelector('.taggy-search');
-  newTaskText.value = String(input?.value || '');
   search.value = '';
-  status.textContent = '';
+  status.textContent = 'Loading tasks…';
   list.replaceChildren();
-  const loading = document.createElement('p');
-  loading.className = 'taggy-empty';
-  loading.textContent = 'Loading tasks…';
-  list.appendChild(loading);
-  if (modal.showModal) modal.showModal();
-  else modal.setAttribute('open', '');
+  showDialog(modal);
+  search.focus();
   try {
     taggyModalState = await window.taggyClient.getState();
+    await syncTaggyTaskChannels(taggyModalState.tasks);
+    status.textContent = `${taggyModalState.tasks.length} task${taggyModalState.tasks.length === 1 ? '' : 's'}`;
     renderTaggyTaskList(list, search.value);
   } catch (error) {
-    list.replaceChildren();
+    status.textContent = '';
     const errorEl = document.createElement('p');
     errorEl.className = 'taggy-empty taggy-error';
     errorEl.textContent = `Could not load Taggy tasks: ${error.message}`;
     list.appendChild(errorEl);
+    rendererLog('error', 'Failed to load Taggy tasks', { message: error.message });
   }
 }
 
@@ -1964,7 +2066,7 @@ function renderConversationsNow() {
     row.classList.toggle('active', conversation.target === activeTarget);
     row.classList.toggle('in-frame', framesEnabled() && frameTargets.includes(conversation.target));
     row.classList.toggle('busy', Boolean(conversation.busy));
-    if (framesEnabled() && conversation.kind === 'llm') {
+    if (framesEnabled()) {
       row.draggable = true;
       row.addEventListener('dragstart', (event) => {
         event.dataTransfer.setData('application/x-subjective-chat', conversation.target);
@@ -2436,19 +2538,32 @@ function attachImagePicker(form) {
   form.insertBefore(button, form.querySelector('textarea'));
   form.appendChild(picker);
 
-  const taggyButton = document.createElement('button');
-  taggyButton.type = 'button';
-  taggyButton.className = 'composer-taggy';
-  taggyButton.title = 'Taggy tasks';
-  taggyButton.setAttribute('aria-label', 'Pick or create a Taggy task');
-  taggyButton.innerHTML = TAGGY_ICON_SVG;
-  taggyButton.addEventListener('click', () => {
+  const focusComposerFrame = () => {
     const frame = form.closest('.chat-frame');
     if (frame) focusChatFrame(Number(frame.dataset.frame));
-    if (form.querySelector('textarea')?.disabled) return;
-    openTaggyModal();
+    return !form.querySelector('textarea')?.disabled;
+  };
+  const createTaggyButton = document.createElement('button');
+  createTaggyButton.type = 'button';
+  createTaggyButton.className = 'composer-taggy composer-taggy-create';
+  createTaggyButton.title = 'Create Taggy task';
+  createTaggyButton.setAttribute('aria-label', 'Create a new Taggy task');
+  createTaggyButton.innerHTML = TAGGY_CREATE_ICON_SVG;
+  createTaggyButton.addEventListener('click', () => {
+    if (focusComposerFrame()) openTaggyCreateModal();
   });
-  form.insertBefore(taggyButton, form.querySelector('textarea'));
+  form.insertBefore(createTaggyButton, form.querySelector('textarea'));
+
+  const importTaggyButton = document.createElement('button');
+  importTaggyButton.type = 'button';
+  importTaggyButton.className = 'composer-taggy composer-taggy-import';
+  importTaggyButton.title = 'Import Taggy task';
+  importTaggyButton.setAttribute('aria-label', 'Import an existing Taggy task');
+  importTaggyButton.innerHTML = TAGGY_IMPORT_ICON_SVG;
+  importTaggyButton.addEventListener('click', () => {
+    if (focusComposerFrame()) openTaggyImportModal();
+  });
+  form.insertBefore(importTaggyButton, form.querySelector('textarea'));
 }
 
 function removePendingImage(id) {
@@ -3086,11 +3201,17 @@ if (llmDialog) llmDialog.addEventListener('click', (event) => {
 if (llmForm) llmForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const provider = selectedLlmProvider();
-  const result = await window.subjectiveChat.createLlmConversation({
+  // Use identity_id if available from the model selector, otherwise fall back to provider
+  const identityId = window.llmModelSelector?.getSelectedIdentityId?.();
+  const payload = {
     name: llmNameInput.value,
     workspace: llmWorkspaceInput.value,
     provider
-  });
+  };
+  if (identityId) {
+    payload.identity_id = identityId;
+  }
+  const result = await window.subjectiveChat.createLlmConversation(payload);
   if (!result?.ok) {
     llmStatusText.textContent = result?.error || `Could not create ${llmProviderLabel(provider)} conversation.`;
     llmStatusText.dataset.ready = 'false';
@@ -3189,6 +3310,7 @@ window.subjectiveChat.onEvent((event) => {
     }
     case 'status':
       setStatus(event.state, event.text);
+      if (event.state === 'connected') loadTaggyTaskChannels();
       break;
     case 'config':
       updateConfig(event);
@@ -3345,6 +3467,8 @@ window.subjectiveChat.getConfig().then(async (appConfig) => {
   const restored = framesEnabled() ? (frameTargets[focusedFrame] || visibleFrameTargets()[0]) : '';
   if (restored) setActiveTarget(restored, { skipFrame: true });
   else setActiveTarget(config.channel);
+  await loadTaggyTaskChannels();
+  startTaggyTaskChannelSync();
   await loadLlmConversations();
   if (framesEnabled()) {
     for (const target of visibleFrameTargets()) {

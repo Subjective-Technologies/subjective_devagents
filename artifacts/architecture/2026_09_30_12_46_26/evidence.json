@@ -1,0 +1,284 @@
+{
+  "timestamp_utc": "2026_09_30_12_46_26",
+  "root_head": "08bba9fd2c8748ee3b152f30a375bdea27cbf851",
+  "baseline_root": "bcb6361c",
+  "baseline_asis": "/subjective/docs/architecture/as-is/2026_09_23_15_31_00__architecture__v0.3.0__as-is.xmi",
+  "canonical_pointer": "/subjective/docs/architecture/xmi/SubjectiveAppsV4.xmi",
+  "newest_timestamped_canonical": "/subjective/docs/architecture/xmi/2026_09_23_15_33_05__architecture__v4.2.0__canonical.xmi",
+  "scope": "Recent identity, collaboration, team-design and UML2Code source changes; not exhaustive whole repository or production audit",
+  "changed_submodule_count": 20,
+  "changed_submodules": [
+    {
+      "path": "clients/desktop/subjective_desktop_native",
+      "baseline_gitlink": "9a779cc",
+      "root_head_gitlink": "ebd242a",
+      "checkout_head": "ebd242a97c58914aea42b98988b4c8997548a8b9",
+      "working_tree_status": ""
+    },
+    {
+      "path": "clients/desktop/subjective_desktop_native_multiuser",
+      "baseline_gitlink": "1ed1b6f",
+      "root_head_gitlink": "8b03793",
+      "checkout_head": "8b03793f3bece491a0efba9c8d44af32c7c81cac",
+      "working_tree_status": ""
+    },
+    {
+      "path": "clients/desktop/subjective_devagents",
+      "baseline_gitlink": "b3231c6",
+      "root_head_gitlink": "e283378",
+      "checkout_head": "e283378d6d9d3723ae79a7c6a5c1fa38bcdc6b82",
+      "working_tree_status": ""
+    },
+    {
+      "path": "clients/tools/com_subjective_user_input",
+      "baseline_gitlink": "039049f",
+      "root_head_gitlink": "5876514",
+      "checkout_head": "58765147b092ae7d6ef2de4e3dc7b20657fc8b5e",
+      "working_tree_status": ""
+    },
+    {
+      "path": "clients/tools/subjective_taggy_web",
+      "baseline_gitlink": "1680ebf",
+      "root_head_gitlink": "14c5ad0",
+      "checkout_head": "14c5ad023a909e6e3084c342748821e061add16d",
+      "working_tree_status": ""
+    },
+    {
+      "path": "clients/tools/subjective_uml_web",
+      "baseline_gitlink": "7c12f99",
+      "root_head_gitlink": "cb9d02f",
+      "checkout_head": "cb9d02f57c2504fed722faa68f717cead04356de",
+      "working_tree_status": ""
+    },
+    {
+      "path": "clients/web/subjective_web_dashboard",
+      "baseline_gitlink": "bbf58e3",
+      "root_head_gitlink": "3e458fe",
+      "checkout_head": "3e458fe8bdea1571b03a8a2cc6ad2c8acced642b",
+      "working_tree_status": "M src/pages/CollaborationPage.tsx\n M src/styles/chat.css"
+    },
+    {
+      "path": "clients/web/subjective_web_pipelines",
+      "baseline_gitlink": "b5995f5",
+      "root_head_gitlink": "c4dde23",
+      "checkout_head": "c4dde239f3614327a22dac255d6b07df20ff882f",
+      "working_tree_status": ""
+    },
+    {
+      "path": "docs",
+      "baseline_gitlink": "8f66493",
+      "root_head_gitlink": "abf9a25",
+      "checkout_head": "abf9a2559c8f0d387ffa08d1ef988f2b0d489e07",
+      "working_tree_status": ""
+    },
+    {
+      "path": "infra/subjective_docker",
+      "baseline_gitlink": "2acc713",
+      "root_head_gitlink": "3502006",
+      "checkout_head": "3502006c9a07f3c272dc5649ebddb17570fb6ba4",
+      "working_tree_status": ""
+    },
+    {
+      "path": "libs/dependencies/subjective-abstract-data-source-package",
+      "baseline_gitlink": "3ffafee",
+      "root_head_gitlink": "3952b38",
+      "checkout_head": "3952b389630396a4a4ca4aeeea7fde4ea463baca",
+      "working_tree_status": ""
+    },
+    {
+      "path": "services/subjective_api_chat",
+      "baseline_gitlink": "ee546c0",
+      "root_head_gitlink": "8f5d062",
+      "checkout_head": "8f5d062bc075e02310f2fbe4a0bb1cd23748616f",
+      "working_tree_status": ""
+    },
+    {
+      "path": "services/subjective_company_fastapi",
+      "baseline_gitlink": "8b5285f",
+      "root_head_gitlink": "57ee074",
+      "checkout_head": "57ee074afd2391b1547241703e7fb515bd597f0d",
+      "working_tree_status": ""
+    },
+    {
+      "path": "services/subjective_devagents_fastapi",
+      "baseline_gitlink": "b695b3b",
+      "root_head_gitlink": "71588ed",
+      "checkout_head": "71588ed63fc0cf9b24307f4f6c26d713f7ca4b8a",
+      "working_tree_status": ""
+    },
+    {
+      "path": "services/subjective_uml2code",
+      "baseline_gitlink": "bdab2fe",
+      "root_head_gitlink": "42b15e5",
+      "checkout_head": "b7e83c6d88c9f56fa537a6bcd31707b2b4190a49",
+      "working_tree_status": "M src/subjective_uml2code/app.py\n M src/subjective_uml2code/r2_export.py\n?? src/subjective_uml2code/code_sync.py\n?? src/subjective_uml2code/xmi_diff.py"
+    },
+    {
+      "path": "services/subjective_user_service",
+      "baseline_gitlink": "f837315",
+      "root_head_gitlink": "8144130",
+      "checkout_head": "8144130d3b75f77cb15ab3ddbc88f6907b76e6a5",
+      "working_tree_status": ""
+    },
+    {
+      "path": "testing/subjective_integration_testing",
+      "baseline_gitlink": "77c92e2",
+      "root_head_gitlink": "7866a85",
+      "checkout_head": "7866a856a50ec5e60b44b4f7c450972b11821968",
+      "working_tree_status": ""
+    },
+    {
+      "path": "tools/subjective_book_creator",
+      "baseline_gitlink": "8ececd9",
+      "root_head_gitlink": "24b6d14",
+      "checkout_head": "24b6d144b0feb510ef956aef375f145a88d860f3",
+      "working_tree_status": ""
+    },
+    {
+      "path": "websites/subjectivetechnologies_com",
+      "baseline_gitlink": "5d00a38",
+      "root_head_gitlink": "f251d3f",
+      "checkout_head": "f251d3f92134f9981bb9a0fe5a605be32e3da506",
+      "working_tree_status": ""
+    },
+    {
+      "path": "worktwins/worktwins_app",
+      "baseline_gitlink": "7bdd4f3",
+      "root_head_gitlink": "45a9d31",
+      "checkout_head": "45a9d3178ba5ebc42c7f43f04ed950661b84e48e",
+      "working_tree_status": ""
+    }
+  ],
+  "evidence": {
+    "services/subjective_user_service/schema/migrations/2026_09_23_unified_user_identity_user_kind.sql": {
+      "sha256": "3eb14dccb9306bd5df5c3cda999b5cf3254dfa551cb83263b1a3f4d451c664c2",
+      "source": "working tree"
+    },
+    "services/subjective_user_service/src/subjective_user_service/routers/domain/ai_users.py": {
+      "sha256": "dd3935c09858c11e15c1ce58216c5e0b5d76fe7f8ab3ef69eade3bfad54179a2",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/src/subjective_chat_api/schema.sql": {
+      "sha256": "6ec7039522ac893fca85618faa33deaa863e489baaef94631fc1ef40160c1cd5",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/src/subjective_chat_api/main.py": {
+      "sha256": "35cc9fc393d7254f8c07041811b9bc996bd418fab83ff37c3c1d2ba129ce82a9",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/src/subjective_chat_api/repository.py": {
+      "sha256": "a1668075ee1ab603e1a1c8a863514002d3f0f22b09fd6ca402e346ba1d1b0d8d",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/src/lib/chat/channelAgents.ts": {
+      "sha256": "04565774d45e3124bbe072114706aaab275353e98720a15e0f28c1693dc8debf",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/src/components/chat/ChatWidget.tsx": {
+      "sha256": "c5c9b488831f54e13f6d9650ec452849fbc806773521f0942ffe997139b3c6ee",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/src/lib/devagentsChat.ts": {
+      "sha256": "a4d06eb035ee6999646db5381b970965f206bd72ede0d974b29341d25b529678",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/src/components/chat/teamChannels.ts": {
+      "sha256": "20fd7e3d9fdb9a725a3efa6090e5856867e903cf4f7edb1bfc26e21cd85c1792",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/functions/api/worktwins/[[path]].js": {
+      "sha256": "f7dfbb9a62b5ed604ff72fd0d5decb419e1aeeda83a97607b50e784ce139e957",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_pipelines/src/components/TeamMapEditor.tsx": {
+      "sha256": "56fe99dfb065384108036ff163d2282aec4c14f8a126e8e92f46a61c4efc5f6e",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_pipelines/src/lib/team-design-chat.ts": {
+      "sha256": "a26c5888ee4f025df5bae1f09631f826959ba703f12cfc0516e4b4f67b118847",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_pipelines/next.config.ts": {
+      "sha256": "e7e3c20946e368986f33b75725910037bacc57816f2d8cbe56905d5aea21a992",
+      "source": "working tree"
+    },
+    "services/subjective_uml2code/src/subjective_uml2code/team_design_chat.py@42b15e5": {
+      "sha256": "d6611e63560a84dc08ef6acdb4e893f57f223b2863fab28607d107c7b54a8de2",
+      "source": "git object (text, trailing newline stripped)"
+    },
+    "services/subjective_uml2code/src/subjective_uml2code/app.py": {
+      "sha256": "6388cdf811c4fad7294ca21d9da0f002ba8e002b5ab462d63000b1288be02c12",
+      "source": "working tree"
+    },
+    "services/subjective_uml2code/src/subjective_uml2code/xmi_diff.py": {
+      "sha256": "60366a9bb21aa7615c3ae7c729650da4bd0d4f8c730b3ef15d6788bb98c579e7",
+      "source": "working tree"
+    },
+    "services/subjective_uml2code/src/subjective_uml2code/code_sync.py": {
+      "sha256": "caec62d2e35be748716b2dfbe8532750965f48e75e5cc481e54922764ed1b194",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/deploy/cloudflare/worker/index.ts": {
+      "sha256": "3151393fe9369bb3300b6d4c2ddf3dd34279a3399e848ad09cf34f7bcafad717",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/deploy/cloudflare/entrypoint.sh": {
+      "sha256": "9d046b61bd56a4283df2d32be817fddf3a78dc4276237eb6853feabaec6f08d3",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/deploy/cloudflare/litestream.yml": {
+      "sha256": "a21a62aa4be4026128358afbaa801ab250dc9697794eabb47b2aaa32061a45ee",
+      "source": "working tree"
+    },
+    "libs/subjective_control_lib/src/subjective_control/config.py": {
+      "sha256": "837a1893700a50829d4d339a3251a05f0abcbf80d079ada62cad69f502a16314",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/src/lib/chat/chatClient.ts": {
+      "sha256": "91864f1d10c144a3fcd8c6a024ca46d73c4db0dcaa3a9ff412dcebe5bb93c6a7",
+      "source": "working tree"
+    },
+    "docs/architecture/as-is/2026_09_23_15_31_00__architecture__v0.3.0__as-is.xmi": {
+      "sha256": "36ff4bf95f7887f40228a7c224d65fe8756891491bf9163a3796ca3adddb0465",
+      "source": "working tree"
+    },
+    "docs/architecture/xmi/2026_09_23_15_33_05__architecture__v4.2.0__canonical.xmi": {
+      "sha256": "7c97f80e738c3020bfad897d5eb1301937b1bb16c3e704fd4d19fc27868e69bc",
+      "source": "working tree"
+    },
+    "docs/architecture/xmi/SubjectiveAppsV4.xmi": {
+      "sha256": "e422b92bea19bd36f9c36adccc857d9710065f535454af12589973c7378f4686",
+      "source": "working tree"
+    },
+    "docs/architecture/CURRENT_ARCHITECTURE": {
+      "sha256": "8d9d9ef395557f0f5874809420ad32846032600c946a2b4cef5d4bf28c2bbad6",
+      "source": "working tree"
+    },
+    ".gitmodules": {
+      "sha256": "da037fab46baf417810f5595fe2f44c761f9abf4e522f7124c03ab9f18e950cc",
+      "source": "working tree"
+    },
+    "workflow/WORKSPACE.md": {
+      "sha256": "5666a9b1aa653761a1bd19422060cdea580e040debdde69bf31d3977dd2a0d3f",
+      "source": "working tree"
+    },
+    "workflow/agents/roles/devops_agent.md": {
+      "sha256": "5a182002758e8b2a0a6432da4cdb80034a9c1a37811b2abab6a38449f5077585",
+      "source": "working tree"
+    },
+    "services/subjective_api_chat/deploy/cloudflare/wrangler.jsonc": {
+      "sha256": "0233d24f3745998a6c32e3d17facea95f0ccb0dde26078ca1477af76115a7e7f",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_dashboard/.github/workflows/deploy.yml": {
+      "sha256": "a31b35b632a733e9ed5b08c6d6cdbfea3ca356f4d741f1609d8e80d583e51087",
+      "source": "working tree"
+    },
+    "clients/web/subjective_web_pipelines/.github/workflows/deploy.yml": {
+      "sha256": "d8cbb4b70e349e37ca5f4cadbe151a4fcc438a4d5cabca2058363b8f947d96b9",
+      "source": "working tree"
+    }
+  },
+  "publication": "staged only; docs and workflow/messages outside writable roots",
+  "secret_values_read": false
+}

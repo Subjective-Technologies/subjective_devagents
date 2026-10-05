@@ -407,8 +407,8 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .composer.has-image-picker {
-    grid-template-columns: 48px 48px minmax(0, 1fr) 64px !important;
-    grid-template-areas: "attach taggy input send" !important;
+    grid-template-columns: 48px 48px 48px minmax(0, 1fr) 64px !important;
+    grid-template-areas: "attach taggy-create taggy-import input send" !important;
   }
 
   .composer:has(.pending-images:not([hidden])) {
@@ -417,8 +417,8 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .composer.has-image-picker:has(.pending-images:not([hidden])) {
-    grid-template-columns: 48px 48px minmax(0, 1fr) 64px !important;
-    grid-template-areas: "pending pending pending pending" "attach taggy input send" !important;
+    grid-template-columns: 48px 48px 48px minmax(0, 1fr) 64px !important;
+    grid-template-areas: "pending pending pending pending pending" "attach taggy-create taggy-import input send" !important;
   }
 
   .pending-images {
@@ -488,7 +488,13 @@ body.chats-collapsed .right-rail .user-list {
   }
 
   .composer > .composer-attach { grid-area: attach !important; }
-  .composer > .composer-taggy { grid-area: taggy !important; }
+  .composer > .composer-taggy-create { grid-area: taggy-create !important; }
+  .composer > .composer-taggy-import { grid-area: taggy-import !important; }
+
+  /* Hide the messaging widget (composer) on mobile */
+  .composer {
+    display: none !important;
+  }
 
   .command-palette {
     left: 12px !important;

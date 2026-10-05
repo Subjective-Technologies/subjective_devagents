@@ -1448,6 +1448,40 @@ app.whenReady().then(() => {
     return llmService.listProviderSessions(payload?.provider);
   });
 
+  ipcMain.handle('llm:get-identities', async () => {
+    // Return available language model identities
+    // For now, return a default structure based on configured CLIs
+    // This can be enhanced later to query actual CLI capabilities
+    const identities = [];
+    const providers = ['codex', 'claude', 'cursor', 'grok'];
+    const models = {
+      codex: ['codex-default'],
+      claude: ['claude-sonnet-4-5', 'claude-opus', 'claude-haiku'],
+      cursor: ['cursor-default'],
+      grok: ['grok-beta']
+    };
+    
+    for (const provider of providers) {
+      for (const model of models[provider] || []) {
+        identities.push({
+          id: `${provider}-${model}`,
+          provider,
+          model,
+          strategy: 'cli',
+          remote: false,
+          capabilities: {
+            text: true,
+            attachments: provider === 'claude',
+            interactive_approvals: false,
+            native_resume: true
+          }
+        });
+      }
+    }
+    
+    return { identities };
+  });
+
   ipcMain.handle('llm:send-message', async (_event, payload) => {
     const target = String(payload?.target || '');
     const text = String(payload?.text || '').trim();

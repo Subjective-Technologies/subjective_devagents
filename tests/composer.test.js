@@ -106,6 +106,58 @@ test('failed LLM send restores the entire draft', async () => {
   assert.equal(ctx.input.value, prompt);
 });
 
+test('Taggy task names become safe IRC channel names', () => {
+  const context = vm.createContext({});
+  const source = renderer.match(/^function taggyTaskChannelName\([^]*?^}/m);
+  assert.ok(source, 'Missing Taggy channel-name helper');
+  vm.runInContext(source[0], context);
+  assert.equal(context.taggyTaskChannelName('create_chat_from_task'), '#create_chat_from_task');
+  assert.equal(context.taggyTaskChannelName('  Create chat from task!  '), '#Create_chat_from_task');
+  assert.equal(context.taggyTaskChannelName('#release / mobile'), '#release_mobile');
+  assert.equal(context.taggyTaskChannelName(' !!! '), '');
+});
+
+test('creating a Taggy task creates and joins its channel', () => {
+  assert.match(renderer, /const channel = await ensureTaggyTaskChannel\(task\)/);
+  assert.match(renderer, /executeCommand\(`\/raw JOIN \$\{channel\}`/);
+  assert.match(renderer, /ensureConversation\(channel, channel, 'channel'/);
+});
+
+test('Taggy channels refresh when tasks are created outside chat', () => {
+  assert.match(renderer, /const TAGGY_TASK_SYNC_MS = 10 \* 1000/);
+  assert.match(renderer, /setInterval\(\(\) => loadTaggyTaskChannels\(\), TAGGY_TASK_SYNC_MS\)/);
+  assert.match(renderer, /addEventListener\('focus', \(\) => loadTaggyTaskChannels\(\)\)/);
+  assert.match(renderer, /visibilitychange[^]*loadTaggyTaskChannels\(\)/);
+});
+
+test('Taggy task search matches text, task number, and tag names', () => {
+  const context = vm.createContext({
+    taggyModalState: {
+      tags: [{ id: 7, name: 'Architecture' }],
+      tasks: [{ id: 42, number: 'TAG-42', text: 'Review API contract', tagIds: [7] }]
+    }
+  });
+  for (const name of ['taggyTagName', 'taggyTaskMatches']) {
+    const source = renderer.match(new RegExp(`^function ${name}\\([^]*?^}`, 'm'));
+    assert.ok(source, `Missing Taggy helper: ${name}`);
+    vm.runInContext(source[0], context);
+  }
+  const task = context.taggyModalState.tasks[0];
+  assert.equal(context.taggyTaskMatches(task, 'api contract'), true);
+  assert.equal(context.taggyTaskMatches(task, 'tag-42'), true);
+  assert.equal(context.taggyTaskMatches(task, 'architecture'), true);
+  assert.equal(context.taggyTaskMatches(task, 'unrelated'), false);
+});
+
+test('composer exposes separate Taggy create and import controls', () => {
+  assert.match(renderer, /className = 'composer-taggy composer-taggy-create'/);
+  assert.match(renderer, /aria-label', 'Create a new Taggy task'/);
+  assert.match(renderer, /className = 'composer-taggy composer-taggy-import'/);
+  assert.match(renderer, /aria-label', 'Import an existing Taggy task'/);
+  assert.match(renderer, /openTaggyCreateModal\(\)/);
+  assert.match(renderer, /openTaggyImportModal\(\)/);
+});
+
 test('Enter allows newlines; Ctrl/Cmd+Enter submits', async () => {
   const ctx = composerHarness();
   for (const modifiers of [{}, { ctrlKey: true }, { metaKey: true }]) {

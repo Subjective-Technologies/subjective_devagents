@@ -21,14 +21,19 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "dotenv": "^16.4.7",
-    "electron": "^41.4.0",
+    "electron": "^42.5.2",
     "highlight.js": "^11.11.2",
-    "markdown-it": "^15.0.0",
+    "markdown-it": "^15.0.1",
     "node-pty": "^1.1.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
     "jsdom": "^29.1.1"
+  },
+  "overrides": {
+    "undici": "7.29.1",
+    "@xmldom/xmldom@0": "^0.8.15",
+    "brace-expansion@5": "^5.0.12"
   }
 }

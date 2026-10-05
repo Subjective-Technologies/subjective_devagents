@@ -1,0 +1,14 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.25.1
+# ignores vulnerabilities until expiry date; change duration by modifying expiry date
+ignore:
+  SNYK-JS-ELECTRON-20335498:
+    - '*':
+        reason: >-
+          False positive: the advisory lists 42.5.2 as fixed and we run electron
+          42.11.10, but its range '<45.0.0-alpha.10' has no lower bound and
+          flags every stable release (latest stable is 44.5.1). Snyk advisory
+          data error, verified 2026-10-01.
+        expires: 2026-12-30T00:00:00.000Z
+        created: 2026-10-02T00:49:00.854Z
+patch: {}
