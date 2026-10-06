@@ -97,6 +97,63 @@ let commandMatches = [];
 let commandMatchIndex = 0;
 let mobileMounted = false;
 
+// TAGGY-3452: LLM processing state persistence
+const LLM_PROCESSING_STATE_STORAGE = 'subjective-llm-processing-state';
+
+function persistLlmProcessingState(target, state) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LLM_PROCESSING_STATE_STORAGE) || '{}');
+    if (state && state.busy) {
+      all[target] = {
+        busy: true,
+        progress: state.progress || '',
+        busySince: state.busySince || Date.now(),
+        thoughts: state.thoughts || [],
+        timestamp: Date.now()
+      };
+    } else {
+      delete all[target];
+    }
+    localStorage.setItem(LLM_PROCESSING_STATE_STORAGE, JSON.stringify(all));
+  } catch (error) {
+    rendererLog('error', 'Failed to persist LLM processing state', { target, error: error.message });
+  }
+}
+
+function restoreLlmProcessingState(target) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LLM_PROCESSING_STATE_STORAGE) || '{}');
+    const state = all[target];
+    if (!state || !state.busy) return null;
+    // Ignore stale states older than 30 minutes
+    const age = Date.now() - (state.timestamp || 0);
+    if (age > 30 * 60 * 1000) {
+      delete all[target];
+      localStorage.setItem(LLM_PROCESSING_STATE_STORAGE, JSON.stringify(all));
+      return null;
+    }
+    return {
+      busy: true,
+      progress: state.progress || '',
+      busySince: state.busySince || Date.now(),
+      thoughts: Array.isArray(state.thoughts) ? state.thoughts : []
+    };
+  } catch (error) {
+    rendererLog('error', 'Failed to restore LLM processing state', { target, error: error.message });
+    return null;
+  }
+}
+
+function clearLlmProcessingState(target) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LLM_PROCESSING_STATE_STORAGE) || '{}');
+    delete all[target];
+    localStorage.setItem(LLM_PROCESSING_STATE_STORAGE, JSON.stringify(all));
+  } catch (error) {
+    rendererLog('error', 'Failed to clear LLM processing state', { target, error: error.message });
+  }
+}
+
 const commandSpecs = [
   { name: 'server', usage: '/server host [port] [channel] [nick] [realname] [tls]', description: 'Change server, port, channel, and identity.' },
   { name: 'nick', usage: '/nick newnick', description: 'Change your nickname.' },
@@ -233,6 +290,7 @@ let chatFrameCols = 1;
 let frameTargets = [''];
 let focusedFrame = 0;
 let frameLayoutMenuOpen = false;
+let chatFramesRestored = false;
 
 function framesEnabled() {
   return Boolean(chatFrames);
@@ -284,7 +342,7 @@ function isTargetOnScreen(target) {
 }
 
 function persistChatFrames() {
-  if (!framesEnabled()) return;
+  if (!framesEnabled() || !chatFramesRestored) return;
   try {
     localStorage.setItem(CHAT_FRAME_STORAGE, JSON.stringify({
       layout: frameLayoutKey(),
@@ -321,6 +379,8 @@ function restoreChatFrames() {
     chatFrameCols = 1;
     frameTargets = [''];
     focusedFrame = 0;
+  } finally {
+    chatFramesRestored = true;
   }
 }
 
@@ -2182,10 +2242,27 @@ async function confirmDeleteConversation(target) {
   }
 }
 
-function clearConversationMessages(target) {
+async function clearConversationMessages(target) {
   const conversation = conversations.get(target);
-  if (!conversation) return;
-  // Clear all messages/events from the conversation
+  if (!conversation || conversation.clearing) return;
+  if (conversation.kind === 'llm') {
+    conversation.clearing = true;
+    try {
+      if (!window.subjectiveChat.clearLlmConversation) {
+        throw new Error('This server does not support clearing saved history.');
+      }
+      const result = await window.subjectiveChat.clearLlmConversation(target);
+      if (!result?.ok) throw new Error(result?.error || 'Could not clear conversation history.');
+      upsertLlmConversation(result.conversation);
+    } catch (error) {
+      rendererLog('error', 'Clear conversation failed', { target, error: error.message });
+      window.alert(error.message);
+      return;
+    } finally {
+      conversation.clearing = false;
+    }
+  }
+  // Keep every pane assigned. Persisted chats only reach here after server success.
   conversation.events = [];
   conversation.unread = 0;
   conversation.updatedAt = Date.now();
@@ -2887,6 +2964,22 @@ function upsertLlmConversation(payload) {
     conversation.hydrated = true;
   }
   if (typeof payload.busy === 'boolean') conversation.busy = payload.busy;
+  // TAGGY-3452: Restore persisted processing state on page reload
+  // If backend says not busy but we have persisted state, restore the "thinking" UI
+  if (!conversation.busy && !existing) {
+    const persistedState = restoreLlmProcessingState(payload.target);
+    if (persistedState) {
+      conversation.busy = persistedState.busy;
+      conversation.busySince = persistedState.busySince;
+      conversation.progress = persistedState.progress;
+      conversation.thoughts = persistedState.thoughts;
+      rendererLog('info', 'Restored LLM processing state from localStorage', {
+        target: payload.target,
+        progress: persistedState.progress,
+        thoughtCount: persistedState.thoughts.length
+      });
+    }
+  }
   if (isTargetOnScreen(conversation.target) && (replaceEvents || !existing)) {
     renderTranscript();
     renderUsers();
@@ -3430,6 +3523,10 @@ window.subjectiveChat.onEvent((event) => {
           conversation.thoughts.push(event.text);
           if (conversation.thoughts.length > 100) conversation.thoughts.shift();
         }
+        // TAGGY-3452: Persist progress updates
+        if (conversation.busy) {
+          persistLlmProcessingState(event.target, conversation);
+        }
         updateThinkingSteps(event.target, conversation);
       }
       break;
@@ -3447,6 +3544,8 @@ window.subjectiveChat.onEvent((event) => {
           provider: conversation.provider,
           label: conversation.label
         });
+        // TAGGY-3452: Persist processing state to survive page reload
+        persistLlmProcessingState(event.target, conversation);
         if (isTargetOnScreen(event.target)) {
           if (event.target === activeTarget && input) {
             input.disabled = event.busy;
