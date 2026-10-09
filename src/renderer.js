@@ -1978,14 +1978,27 @@ function ensureTaggyImportModal() {
     + '<button type="submit" class="taggy-modal-close" aria-label="Close">&times;</button></header>'
     + '<div class="taggy-modal-body"><section class="taggy-existing-tasks">'
     + '<label for="taggyTaskSearch">Find a task</label>'
+    + '<div class="taggy-search-wrapper">'
     + '<input id="taggyTaskSearch" type="search" class="taggy-search" placeholder="Search task text, number, or tag…">'
+    + '<button type="button" class="taggy-search-clear" aria-label="Clear search" hidden>&times;</button>'
+    + '</div>'
     + '<span class="taggy-status" role="status" aria-live="polite"></span>'
     + '<div class="taggy-task-list" role="listbox" aria-label="Taggy tasks"></div>'
     + '</section></div></form>';
   document.body.appendChild(taggyImportModal);
   const search = taggyImportModal.querySelector('.taggy-search');
+  const clearButton = taggyImportModal.querySelector('.taggy-search-clear');
   const list = taggyImportModal.querySelector('.taggy-task-list');
-  search.addEventListener('input', () => renderTaggyTaskList(list, search.value));
+  search.addEventListener('input', () => {
+    clearButton.hidden = !search.value;
+    renderTaggyTaskList(list, search.value);
+  });
+  clearButton.addEventListener('click', () => {
+    search.value = '';
+    clearButton.hidden = true;
+    renderTaggyTaskList(list, '');
+    search.focus();
+  });
   return taggyImportModal;
 }
 
