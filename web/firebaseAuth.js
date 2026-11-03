@@ -9,15 +9,11 @@
   const googleButton = document.getElementById('ownerGoogleSignIn');
   const form = document.getElementById('ownerEmailSignIn');
   const signOutButton = document.getElementById('ownerSignOut');
-  const OWNER_EMAIL = 'subjectivetechnologies@gmail.com';
-  const OWNER_UID = 'WO55hP1UlbRziVhokDMJyQoqVyl2';
-  const DASHBOARD = 'https://dashboard.subjectivetechnologies.com/dashboard/st-backend/my-agents';
-  const parentOrigins = new Set(['https://dashboard.subjectivetechnologies.com', 'https://dashboard.worktwins.com']);
   let parentOrigin = '';
-  try {
-    const origin = new URL(document.referrer).origin;
-    if (window.parent !== window && parentOrigins.has(origin)) parentOrigin = origin;
-  } catch (_error) { /* Standalone page. */ }
+  let dashboardUrl = '';
+  let ownerEmail = '';
+  let ownerUid = '';
+  let parentOrigins = new Set();
   let parentToken = '';
   let parentExpiry = 0;
   let parentPending = null;
@@ -178,11 +174,19 @@
     if (!response.ok) throw new Error('Auth configuration unavailable');
     const config = await response.json();
     mode = config.mode;
+    ownerEmail = String(config.ownerEmail || '').trim().toLowerCase();
+    ownerUid = String(config.ownerUid || '').trim();
+    dashboardUrl = String(config.dashboardUrl || '').trim();
+    parentOrigins = new Set(Array.isArray(config.parentOrigins) ? config.parentOrigins : []);
+    try {
+      const origin = new URL(document.referrer).origin;
+      if (window.parent !== window && parentOrigins.has(origin)) parentOrigin = origin;
+    } catch (_error) { /* Standalone page. */ }
     if (mode === 'development' && config.required === false) { unlock(); return; }
     if (parentOrigin) {
       googleButton.textContent = 'Open dashboard sign-in';
       googleButton.disabled = false;
-      googleButton.addEventListener('click', () => window.open(DASHBOARD, '_top'));
+      googleButton.addEventListener('click', () => { if (dashboardUrl) window.open(dashboardUrl, '_top'); });
       form.closest('details').hidden = true;
       lock('Waiting for dashboard sign-in…');
       requestParentToken().catch(() => lock('Dashboard sign-in unavailable. Open dashboard sign-in, then return to My Agents.'));
@@ -194,22 +198,29 @@
       import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js'),
     ]);
     sdk = authSdk;
+    const firebase = config.firebase || {};
+    if (!firebase.apiKey || !firebase.authDomain || !firebase.projectId || !firebase.appId) {
+      lock('Sign-in is not configured on this server.');
+      return;
+    }
     const app = appSdk.initializeApp({
-      apiKey: 'AIzaSyCZSmCqimB7GMjjdSukuX3J-IHVnvANrXs',
-      authDomain: 'subjectivetechnologies-login.firebaseapp.com',
-      projectId: 'subjectivetechnologies-login',
-      appId: '1:363070822103:web:74de388dcf6c5819670292',
+      apiKey: firebase.apiKey,
+      authDomain: firebase.authDomain,
+      projectId: firebase.projectId,
+      appId: firebase.appId,
     });
     firebaseAuth = sdk.getAuth(app);
     const provider = new sdk.GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account', login_hint: OWNER_EMAIL });
+    provider.setCustomParameters(ownerEmail
+      ? { prompt: 'select_account', login_hint: ownerEmail }
+      : { prompt: 'select_account' });
     googleButton.disabled = false;
     for (const field of form.elements) field.disabled = false;
     googleButton.addEventListener('click', async () => {
       googleButton.disabled = true;
       try { await sdk.signInWithPopup(firebaseAuth, provider); }
       catch (error) {
-        if (error?.code === 'auth/unauthorized-domain') { window.location.assign(DASHBOARD); return; }
+        if (error?.code === 'auth/unauthorized-domain' && dashboardUrl) { window.location.assign(dashboardUrl); return; }
         lock(errorText(error));
       }
       finally { googleButton.disabled = false; }
@@ -231,7 +242,9 @@
         lock('Sign in with the owner account to open your chats.');
         return;
       }
-      if (!(user.uid === OWNER_UID || (user.email?.toLowerCase() === OWNER_EMAIL && user.emailVerified))) {
+      const uidOk = Boolean(ownerUid) && user.uid === ownerUid;
+      const emailOk = Boolean(ownerEmail) && user.email?.toLowerCase() === ownerEmail && user.emailVerified;
+      if (!(uidOk || emailOk)) {
         lock('Access is restricted to the verified owner account. Choose a different account.');
         if (signOutButton) signOutButton.hidden = false;
         return;

@@ -31,7 +31,11 @@ function load() {
     async fetch(url, options = {}) {
       calls.push({ url, options });
       const denied = denySession && url.endsWith('/api/auth/session');
-      return { ok: !denied, status: denied ? 401 : 200, json: async () => ({ mode: 'owner', required: true }) };
+      return { ok: !denied, status: denied ? 401 : 200, json: async () => ({
+        mode: 'owner', required: true,
+        parentOrigins: ['https://dashboard.subjectivetechnologies.com'],
+        dashboardUrl: 'https://dashboard.subjectivetechnologies.com/dashboard/st-backend/my-agents',
+      }) };
     },
     WebSocket: class {
       constructor(url) { this.url = url; this.listeners = {}; this.sent = []; sockets.push(this); }
