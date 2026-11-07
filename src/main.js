@@ -1449,37 +1449,64 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('llm:get-identities', async () => {
-    // Return available language model identities
-    // For now, return a default structure based on configured CLIs
-    // This can be enhanced later to query actual CLI capabilities
-    const identities = [];
-    const providers = ['codex', 'claude', 'cursor', 'grok'];
-    const models = {
-      codex: ['codex-default'],
-      claude: ['claude-sonnet-4-5', 'claude-opus', 'claude-haiku'],
-      cursor: ['cursor-default'],
-      grok: ['grok-beta']
-    };
+    // Fetch available language model identities from the DevAgents FastAPI backend
+    const apiUrl = process.env.DEVAGENTS_API_URL || 'https://127.0.0.1:8080';
+    const endpoint = `${apiUrl}/api/language-model/identities`;
     
-    for (const provider of providers) {
-      for (const model of models[provider] || []) {
-        identities.push({
-          id: `${provider}-${model}`,
-          provider,
-          model,
-          strategy: 'cli',
-          remote: false,
-          capabilities: {
-            text: true,
-            attachments: provider === 'claude',
-            interactive_approvals: false,
-            native_resume: true
-          }
+    try {
+      const https = require('https');
+      const { URL } = require('url');
+      const parsedUrl = new URL(endpoint);
+      
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port,
+        path: parsedUrl.pathname,
+        method: 'GET',
+        rejectUnauthorized: false, // Allow self-signed certificates
+        headers: {
+          'Accept': 'application/json'
+        }
+      };
+      
+      return new Promise((resolve, reject) => {
+        const req = https.request(options, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try {
+              if (res.statusCode !== 200) {
+                log('error', 'Failed to fetch language model identities', { statusCode: res.statusCode, endpoint });
+                resolve({ identities: [] });
+                return;
+              }
+              const response = JSON.parse(data);
+              log('info', 'Loaded LLM model identities from API', { count: response.identities?.length || 0, endpoint });
+              resolve(response);
+            } catch (error) {
+              log('error', 'Failed to parse language model identities response', { error: error.message, endpoint });
+              resolve({ identities: [] });
+            }
+          });
         });
-      }
+        
+        req.on('error', (error) => {
+          log('error', 'Failed to connect to language model API', { error: error.message, endpoint });
+          resolve({ identities: [] });
+        });
+        
+        req.setTimeout(5000, () => {
+          req.destroy();
+          log('error', 'Language model API request timed out', { endpoint });
+          resolve({ identities: [] });
+        });
+        
+        req.end();
+      });
+    } catch (error) {
+      log('error', 'Failed to fetch language model identities', { error: error.message, endpoint });
+      return { identities: [] };
     }
-    
-    return { identities };
   });
 
   ipcMain.handle('llm:send-message', async (_event, payload) => {

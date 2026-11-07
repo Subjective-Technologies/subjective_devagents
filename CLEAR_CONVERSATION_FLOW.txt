@@ -1,0 +1,149 @@
+═══════════════════════════════════════════════════════════════════════════════
+CLEAR CONVERSATION BUTTON - WHAT ACTUALLY HAPPENS
+═══════════════════════════════════════════════════════════════════════════════
+
+EXPECTED BEHAVIOR (What user thinks will happen):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. User has chat with messages                [Frontend Memory]  [Disk Files]
+   Conversation: "llm:cursor:local:abc123"    [5 messages]       [5 messages]
+                                               
+2. User clicks × (clear button)                     ↓                  ↓
+                                               [CLEARED! ✅]      [5 messages]
+                                               
+3. Messages are gone forever                   [0 messages]       [0 messages] ✅
+   (Both in UI and storage)
+
+
+ACTUAL BEHAVIOR (What really happens):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. User has chat with messages                [Frontend Memory]  [Disk Files]
+   Conversation: "llm:cursor:local:abc123"    [5 messages]       [5 messages]
+                                               
+2. User clicks × (clear button)                     ↓                  ↓
+   → clearConversationMessages() called        [CLEARED! ✅]      [5 messages] ❌
+   → Only clears conversations Map                                  UNCHANGED!
+   → NO backend API call made                                       
+                                               
+3. UI shows empty transcript                   [0 messages]       [5 messages]
+   (But disk files still have all messages)         ✅                 ❌
+
+4. User reopens conversation                        ↓                  ↓
+   (Drag & drop same user again)               [0 messages]       [5 messages]
+                                                     ↓                  ↓
+5. Frontend calls backend API                       ↓                  ↓
+   GET /api/llm/conversation?target=abc123    [0 messages]       [5 messages]
+                                                     ↓                  ↓
+6. Backend reloads from disk                        ↓                  ↓
+   llmService.reloadConversation(target)      [0 messages] ← ← ← [5 messages]
+                                                     ↓                  
+7. ALL MESSAGES ARE BACK! ❌                   [5 messages] ❌    [5 messages]
+   User is confused                                  ↑                  ↑
+                                                RELOADED FROM DISK!
+
+
+CODE FLOW DETAIL:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STEP 2: Clear button clicked
+┌─────────────────────────────────────────────────────────────────────────┐
+│ renderer.js:382                                                         │
+│                                                                         │
+│  frame.querySelector('.frame-clear').addEventListener('click', () => {  │
+│    const target = frameTargets[index];                                 │
+│    clearConversationMessages(target);  ← ← ← ONLY THIS RUNS            │
+│  });                                                                    │
+│                                                                         │
+│ renderer.js:2185                                                        │
+│                                                                         │
+│  function clearConversationMessages(target) {                          │
+│    const conversation = conversations.get(target);                     │
+│    conversation.events = [];           ← ← ← CLEARS IN-MEMORY ONLY     │
+│    renderVisibleFrameTranscripts();    ← ← ← UPDATES UI                │
+│    // ❌ NO BACKEND CALL!                                              │
+│  }                                                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+
+STEP 4-7: Reopening conversation
+┌─────────────────────────────────────────────────────────────────────────┐
+│ renderer.js: assignChatFrame(index, target)                             │
+│                         ↓                                               │
+│ webBridge.js: bridge.getLlmConversation(target)                         │
+│                         ↓                                               │
+│ HTTP: GET /api/llm/conversation?target=llm:cursor:local:abc123          │
+│                         ↓                                               │
+│ webServer.js: routes['GET /api/llm/conversation']                       │
+│                         ↓                                               │
+│ llmService.js: reloadConversation(target)                               │
+│   - Re-parses ~/.cursor/ SQLite databases                               │
+│   - Re-parses ~/.subjective_chat_history/cursor/                        │
+│   - Loads ALL messages from disk                                        │
+│                         ↓                                               │
+│ Returns: { messages: [msg1, msg2, msg3, msg4, msg5] }                   │
+│                         ↓                                               │
+│ renderer.js: conversation.messages = response.messages                  │
+│                         ↓                                               │
+│ BOOM! All 5 messages are back in the UI! 💥                             │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+STORAGE LOCATIONS (Where messages actually live):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+LLM Conversations (PERSISTENT):
+  ~/.subjective_chat_history/
+  ~/.cursor/
+  ~/.cursor/workspaceStorage/*/state.vscdb (SQLite)
+  ~/.claude/ (JSON files)
+  ~/.codex/ (unknown format)
+  
+  ↑ ↑ ↑ THESE ARE NEVER TOUCHED BY clearConversationMessages() ↑ ↑ ↑
+
+IRC Conversations (EPHEMERAL):
+  In-memory only: conversations Map in renderer.js
+  No disk storage → clear works correctly ✅
+
+
+THE FIX NEEDED:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Option A: Add backend API to actually delete disk files
+┌─────────────────────────────────────────────────────────────────────────┐
+│ renderer.js: clearConversationMessages(target)                          │
+│   ↓                                                                     │
+│ webBridge.js: bridge.clearLlmConversation(target)  ← ← ← NEW METHOD     │
+│   ↓                                                                     │
+│ HTTP: POST /api/llm/clear-conversation                ← ← ← NEW ROUTE   │
+│   ↓                                                                     │
+│ llmService.js: clearConversationMessages(target)      ← ← ← NEW METHOD  │
+│   - Deletes conversation files from disk                                │
+│   - Removes from llmService.local[]                                     │
+│   - Clears cached messages                                              │
+│   ↓                                                                     │
+│ Returns: { ok: true }                                                   │
+│   ↓                                                                     │
+│ Frontend: conversation.events = []                                      │
+│           renderVisibleFrameTranscripts()                               │
+│   ↓                                                                     │
+│ Result: Messages cleared from BOTH memory AND disk ✅                   │
+│                                                                         │
+│ When reopened:                                                          │
+│   - reloadConversation() finds no files                                 │
+│   - Returns empty or error                                              │
+│   - Messages stay cleared! ✅                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Option B: Just improve UX (current behavior, better messaging)
+  - Change button label: "Clear from view"
+  - Add tooltip: "Messages will reload from history"
+  - Show warning icon when messages are hidden
+  
+Option C: Use existing delete API (more drastic)
+  - Call bridge.deleteLlmConversation(target)
+  - Conversation disappears from list entirely
+  - User has to create new conversation to continue
+
+═══════════════════════════════════════════════════════════════════════════════
+BOTTOM LINE: Clear button is cosmetic only. Messages live on disk and reload.
+═══════════════════════════════════════════════════════════════════════════════

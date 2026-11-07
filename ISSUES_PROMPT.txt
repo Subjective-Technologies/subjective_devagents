@@ -1,0 +1,410 @@
+I need help resolving critical blockers and accumulated technical debt in the Subjective DevAgents platform. Here's a comprehensive list of issues we've been unable to fix:
+
+═══════════════════════════════════════════════════════════════════════════════
+🚨 CRITICAL DEPLOYMENT BLOCKERS
+═══════════════════════════════════════════════════════════════════════════════
+
+BLOCKER A: Cloudflare D1 Database Access Failure
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Issue: All wrangler D1 commands fail with authentication error (status 400, code 9106)
+- Error on /memberships API call happens before database resolution
+- Affects all 4 available Cloudflare API tokens
+- Both database name and UUID variations fail identically
+
+Root Cause: Missing permission "User → Memberships → Read" on Cloudflare tokens
+Impact: 
+- Cannot apply Phase 2 migration for unified-user-identity feature
+- Phase 4 implementation gated on Phase 2 migration completion
+- Schema regeneration scripts blocked (extract_schema.py, generate_api.py)
+
+Workaround: HTTP API endpoint works BUT is blocked by Blocker B (permission layer)
+
+BLOCKER B: Production Command Execution Restrictions
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Issue: Session permission layer refuses production deployment commands
+- Wrangler pages deploy → [Production Deploy] blocked
+- D1 HTTP query scripts → [Auto-Mode Bypass] blocked
+- Wrangler from scratch directory → [Auto-Mode Bypass] blocked
+
+Inconsistency: Read-only SELECT queries sometimes pass, sometimes fail
+Resolution Needed: Add Bash permission rules for production deployment commands OR manual execution
+
+BLOCKER C: GitHub Actions Budget Exhaustion
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Issue: GitHub Actions stopped org-wide since 2026-09-20
+- Runs showing "startup_failure", "BuildFailed", zero jobs
+- Org Actions spend: $29.70 (consistent with $30 cap)
+- Workflows enabled and active → indicates billing issue not configuration
+
+CRITICAL ORDERING ISSUE:
+- Dashboard code on main references user_kind column that doesn't exist in production D1 yet
+- If Actions cap raised BEFORE D1 migration applied:
+  → Auto-deploy will ship code expecting migrated schema
+  → /api/public-profiles will break for real users
+  → Affects: Find User, Team Design rail, /chat/directory
+
+REQUIRED ORDER:
+1. Apply D1 migration first
+2. THEN raise Actions spending cap
+3. OR disable workflows until migration completes
+
+═══════════════════════════════════════════════════════════════════════════════
+🏗️ ARCHITECTURE DRIFT - Code Exists But Not in Canonical Architecture
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Unified Identity & AI Users (DATA_MODEL_DRIFT)
+   - RU/AI user types with user_kind column implemented
+   - creator_fk foreign key relationship exists
+   - AI user profiles table and routes working
+   - Files: migrations/2026_09_23_unified_user_identity_user_kind.sql, routers/domain/ai_users.py
+   - Already in provisional v4.2.0 model but NOT in selected baseline
+
+2. Named Channels with Multi-Member Support (DATA_MODEL_DRIFT)
+   - Old model: "no name/title and single target"
+   - Current implementation: channel names, topics, multi-member request/roster routes
+   - Evidence: schema.sql:11, models.py:10, main.py:259
+
+3. Saved-Team Membership to Design-Specific Channel (NEW RELATIONSHIP)
+   - Specific membership endpoint exists
+   - Composite key/team_key mapping working
+   - Missing from architecture model entirely
+
+4. Browser-Orchestrated AI Channel Interactions (INTERFACE_DRIFT)
+   - Browser orchestrates AI channel turns
+   - @ mentions system implemented
+   - Posts replies as AI
+   - Evidence: ChatWidget.tsx:313, channelAgents.ts, main.py:387
+   - Missing: Concrete trust/call boundary specification in architecture
+
+5. Nested Teams & Design Chat via UML2Code Proxy (DEPENDENCY_DRIFT)
+   - parentTeamId support working
+   - Generate endpoint exists
+   - UML2Code service dependency active
+   - Evidence: TeamMapEditor.tsx:383,:893, team-design-chat.ts:46, next.config.ts:81
+
+6. UML2Code Checkout Mismatch (DEPENDENCY_DRIFT)
+   - Root pins UML2Code at 42b15e5 (has Team Design endpoint)
+   - Current checkout HEAD: b7e83c6 (lacks Team Design endpoint)
+   - Dirty files: app.py, r2_export.py
+   - Untracked files: code_sync.py, xmi_diff.py
+   - Unknown if local edits are committed, deployed, or approved
+
+═══════════════════════════════════════════════════════════════════════════════
+🧪 TESTING BLOCKERS
+═══════════════════════════════════════════════════════════════════════════════
+
+Selenium Tests Socket Permission Denied
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Affected Tests:
+- tests/test_selenium_chat_names.py
+- Unified user identity feature verification tests
+
+Failure: PermissionError: [Errno 1] Operation not permitted
+Location: socket.socket(AF_INET, SOCK_STREAM) at Python socket.py:232
+Occurs in: _free_port() during test server fixture setup (BEFORE app/browser start)
+
+Verification:
+- Tests collected successfully (1+ tests found)
+- Browser binary and chromedriver exist
+- No production impacts (tests never reached execution phase)
+
+Required: Test execution in environment permitting local test-server and WebDriver sockets
+
+═══════════════════════════════════════════════════════════════════════════════
+💬 USER INTERFACE ISSUES
+═══════════════════════════════════════════════════════════════════════════════
+
+Clear Conversation Button Not Persisting Changes
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Issue: "Clear conversation" (×) button only clears messages from UI temporarily
+- Clears messages from in-memory conversations Map ✅
+- Does NOT clear messages from persistent storage (disk/database) ❌
+- Messages reload when conversation is reopened (drag & drop user again) ❌
+
+Root Cause:
+- clearConversationMessages() only modifies renderer.js in-memory state
+- LLM conversations reload from disk via /api/llm/conversation
+- Backend calls llmService.reloadConversation() which re-parses history files
+- No backend API to actually delete/clear conversation messages
+
+Storage Locations:
+1. LLM Conversations:
+   - Files: ~/.subjective_chat_history/ + provider-specific dirs
+   - Cursor: SQLite databases in .cursor/ and workspaceStorage/*/state.vscdb
+   - Claude: JSON conversation files
+   - Codex: Unknown format (TBD)
+   - Loaded via: Python pipeline historyRuntime (refreshHistory())
+   
+2. IRC Conversations:
+   - In-memory only (ephemeral, standard IRC behavior)
+   - No persistence → clear works correctly ✅
+
+Current Behavior:
+1. User clicks × button
+2. Frontend clears conversation.events array
+3. UI shows empty transcript
+4. User drags same conversation back to pane
+5. Frontend calls /api/llm/conversation?target=...
+6. Backend reloads from disk files
+7. All messages are back!
+
+Solutions Available:
+
+Option A: Delete Conversation Entirely
+- Use existing deleteLlmConversation API
+- Marks as hidden (hiddenTargets)
+- Removes from llmService.local[]
+- Still doesn't delete disk files (safety by design)
+- Messages return on refreshHistory() unless disk files deleted
+
+Option B: Add "Clear Messages" Backend API ⭐ RECOMMENDED
+- New endpoint: POST /api/llm/clear-conversation
+- For local conversations: Delete conversation file/record
+- For Cursor/Claude/Codex: Return error (read-only provider history)
+- Broadcast llm-conversation-cleared event
+- Frontend handles read-only gracefully
+
+Option C: Client-Side Only (IRC Pattern)
+- Only allow clearing IRC conversations
+- Show error for LLM: "Provider history is read-only"
+- Explain conversation is backed by Cursor/Claude/Codex files
+
+Option D: "Hide Until Refresh" Pattern
+- Current behavior with better UX
+- Show indicator: "Messages hidden (will reload from history)"
+- Button label: "Clear from view" instead of "Clear messages"
+
+Files Requiring Changes:
+- src/llmService.js - Add clearConversationMessages(target) method
+- src/webServer.js - Add POST /api/llm/clear-conversation route
+- src/main.js - Add IPC handler for Electron app
+- web/webBridge.js - Add clearLlmConversation client method
+- src/renderer.js - Update clearConversationMessages() to call backend
+- src/renderer.js - Add UI feedback for read-only conversations
+
+Decision Required: Which solution matches user expectations?
+- Permanent deletion (irreversible)
+- Temporary hide (current behavior, needs better UX)
+- Hybrid (delete local, hide provider history)
+
+Documentation: CLEAR_CHAT_ANALYSIS.md
+
+═══════════════════════════════════════════════════════════════════════════════
+💾 DATABASE & SCHEMA ISSUES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. D1 Migration Ready But Not Applied
+   - Forward migration written: 2026_09_23_unified_user_identity_user_kind.sql
+   - Rollback migration written: 2026_09_23_unified_user_identity_user_kind_rollback.sql
+   - Verified on populated copy: 34 assertions, 0 failures
+   - Round-trip tested successfully
+   - Production D1 still has 34 columns (pre-migration state)
+   - Missing: user_kind, created_by_user_id, ai_user_profiles table
+   - Migration: 5 additive statements (cannot lose data)
+   - BLOCKED BY: Blockers A & B
+
+2. Hand-Maintained Column Lists in Code (HIGH RISK)
+   - _USER_COLS and _SELECT_ALL are hand-maintained string literals
+   - Location: services/subjective_user_service/src/subjective_user_service/routers/domain/users.py:21,:30
+   - generate_api.py does NOT rewrite routers/domain/
+   - After migration: new columns will be invisible/unwritable via /api/users
+   - Risk: AI creation route that doesn't update these tuples will silently create incorrect data
+
+3. Schema Regeneration Blocked
+   - Scripts: extract_schema.py, generate_api.py
+   - schema/schema.sql deliberately left untouched (correct)
+   - Running scripts now would regenerate pre-migration state
+   - Would create schema/migration disagreement
+   - Required order: Apply D1 migration → extract_schema.py → generate_api.py
+
+═══════════════════════════════════════════════════════════════════════════════
+🌐 INFRASTRUCTURE & DEPLOYMENT STATE
+═══════════════════════════════════════════════════════════════════════════════
+
+1. User Service Not Answering HTTP (UNCONFIRMED / NOT DEPLOYED)
+   - Code on main branch
+   - Container not deployed
+   - HTTP health status unverified
+
+2. Chat Service Litestream Replication Unconfirmed
+   - Configuration: Worker → singleton Durable Object/container → FastAPI/SQLite
+   - Litestream replicates to R2 (configured)
+   - max_instances: 1, container port 8080, health /health
+   - Startup permits ephemeral-only operation if R2 credentials absent
+   - Production credential presence: UNKNOWN
+   - Replication status: UNKNOWN
+
+3. Deployment Parity Verification Needed
+   - Design Chat introduces /team-design-api proxy to uml2code.subjectivetechnologies.com
+   - Backend route exists in root-pinned UML2Code revision
+   - Route MISSING in current UML2Code checkout
+   - Deployment parity needs separate verification
+
+4. Missing Deployment Configuration Files
+   - /subjective/clients/subjective.conf (absent)
+   - Root DEPLOYING.md (absent)
+   - Note: Deploy guidance now in workflow/agents/roles/devops_agent.md
+
+═══════════════════════════════════════════════════════════════════════════════
+📐 ARCHITECTURE VALIDATION ISSUES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Architecture Validator Fails on Current Checkout
+   - Published v0.1.11 architecture validator now fails: 195/211 (was 211/211)
+   - Failures: F1 F2 F4 F9 F10 F24 F25 F26 F41b F53 F52 F41c F41d F49 F44b F39
+   - Root cause: Wave-1 CON-06 remediation landed (2026-09-21 15:35-15:38)
+   - Changed files: auth.py, analytics.py, d1_client.py, new redaction.py
+   - v0.1.12 validator built and verified (223/223) against pre-remediation snapshot
+   - Cannot publish v0.1.12 against current checkout (would be red immediately)
+   - Mechanism cannot distinguish "Wave 1 shipped" from "architecture drifted"
+
+   BLOCKER DECISION REQUIRED:
+   1. Publish v0.1.12 as-is (red on current checkout from day 1)
+   2. Hold until security_agent reports, then re-derive
+   3. Publish as-is AND open re-derivation as next task
+
+   MISSING FEATURE:
+   - Need assertion distinguishing planned remediation from drift
+   - Requires declared, dated expectation for each Wave-1 site
+
+2. Baseline Ambiguity
+   - CURRENT_ARCHITECTURE points to xmi/SubjectiveAppsV4.xmi (43-class skeleton)
+   - Newest timestamped model: provisional v4.2.0 (September 23)
+   - v4.2.0 models unified identity and channels
+   - File chronology alone doesn't authorize pointer change
+   - Both models parsed and compared; canonical files untouched
+   - DECISION NEEDED: Which model is authoritative?
+
+═══════════════════════════════════════════════════════════════════════════════
+🔒 SECURITY & PERMISSION CONCERNS
+═══════════════════════════════════════════════════════════════════════════════
+
+SELECT * Fitness Function Needs Automation
+- Current state: No SELECT * FROM users in codebase (manually verified)
+- system_prompt in separate table (safe)
+- /public-profiles cannot reach sensitive data by accident
+- Recommendation: Create automated assertion instead of manual checks
+- Risk: One future SELECT * could silently break security boundary
+
+═══════════════════════════════════════════════════════════════════════════════
+🛠️ KNOWN TECHNICAL DEBT
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Subscript/Slice Language Bound Not Proven Sound
+   - Subscript and slice kept in CONSUMED list although they dispatch
+   - Measured impact: residualizing them gives 176 entries vs current 37
+   - 140 of the difference is framework Depends(...) in annotations
+   - This version does NOT claim bound is sound
+
+2. Artifact Delivery Path Issues
+   - Requested destination /subjective/docs/architecture/as-is/ outside writable root
+   - Durable inbox /subjective/workflow/messages/ outside writable root
+   - Files staged in architecture artifacts directory
+   - Handoff notes prepared but not delivered
+   - No permission bypass attempted
+   - Resolution: Architect must resolve authoritative baseline
+
+═══════════════════════════════════════════════════════════════════════════════
+❓ UNVERIFIED STATES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Production Environment Variables Not Retrieved
+   - Root and 3 nested .gitmodules inspected
+   - No environment-file values retrieved
+   - Production credential presence unknown
+
+2. No Production Probes or Application Tests Run
+   - No production probes executed
+   - No migration execution
+   - No application test runs
+   - Source inspection only for:
+     • Recent identity changes
+     • Collaboration features
+     • Team-design features
+     • UML2Code integration
+     • Deployment changes
+
+═══════════════════════════════════════════════════════════════════════════════
+🔀 CROSS-CUTTING ISSUES
+═══════════════════════════════════════════════════════════════════════════════
+
+Concurrent Assignment Collision
+- Three concurrent assignments shared same derived subject:
+  • Assignment 255: architect_agent (architecture v0.1.12)
+  • Assignment 256: coder_agent (CON-06 remediation)
+  • Assignment 257: security_agent (gate verification)
+- Assignment 256 modified container while 255 was measuring it
+- No mechanism to coordinate dependent work on shared subjects
+- Timeline:
+  • 14:41: Review 11 confirmed 6 sites unremediated
+  • 14:45: v0.1.12 work began
+  • 15:35-15:38: CON-06 remediation landed
+- Result: v0.1.12 verified against snapshot that no longer exists in repo
+
+═══════════════════════════════════════════════════════════════════════════════
+🚫 MISSING CAPABILITIES
+═══════════════════════════════════════════════════════════════════════════════
+
+Native Binary Generation Not Implemented
+- Component: Pipeline Exports
+- pipelines/codex, pipelines/claude, pipelines/history are Python bundle exports
+- native_executable_generated: false in bundle manifest
+- Feature supported by exporter but not implemented
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 SUMMARY BY SEVERITY
+═══════════════════════════════════════════════════════════════════════════════
+
+CRITICAL (Blocks Production):
+  • Cloudflare D1 token permissions
+  • Production command execution restrictions
+  • GitHub Actions budget exhaustion
+  • D1 migration ready but not applied
+
+HIGH (Blocks Features/Testing):
+  • Selenium test execution blocked
+  • Hand-maintained column lists (future bug risk)
+  • User service deployment status unknown
+  • Clear conversation button not persisting (UX broken)
+
+MEDIUM (Technical Debt/Documentation):
+  • Architecture drift items 2.1-2.6 (working but undocumented)
+  • Litestream replication unconfirmed
+  • Deployment parity needs verification
+  • Architecture validator requires re-derivation
+  • SELECT * fitness function needs automation
+
+LOW (Process Improvements):
+  • Baseline ambiguity decision needed
+  • Language bound soundness unproven
+  • Concurrent assignment collision (process gap)
+  • Native binary generation not implemented
+
+═══════════════════════════════════════════════════════════════════════════════
+🎯 RECOMMENDED ACTIONS
+═══════════════════════════════════════════════════════════════════════════════
+
+IMMEDIATE ACTIONS REQUIRED:
+1. [Owner/Admin] Grant Cloudflare token "User → Memberships → Read" permission
+2. [Owner/Admin] Raise GitHub Actions spending cap (AFTER migration applied)
+3. [DevOps] Apply D1 migration via approved path
+4. [DevOps] Run schema regeneration scripts post-migration
+5. [DevOps] Update _USER_COLS and _SELECT_ALL in users.py
+6. [Product] Decide on clear conversation behavior (delete vs hide vs hybrid)
+
+PROCESS IMPROVEMENTS NEEDED:
+1. Implement coordination mechanism for concurrent assignments on shared subjects
+2. Create automated fitness functions for security boundaries
+3. Resolve baseline architecture ambiguity (v4.xmi vs v4.2.0)
+4. Establish validator re-derivation trigger for planned remediations
+5. Verify and document all production service states
+
+ARCHITECTURE UPDATES REQUIRED:
+1. Document all drift items (2.1-2.6) in canonical architecture
+2. Resolve UML2Code checkout/pin mismatch
+3. Update deployment documentation locations
+4. Specify trust/call boundaries for browser-orchestrated AI interactions
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Please help prioritize and resolve these issues, particularly the critical blockers preventing database migration and deployment.
