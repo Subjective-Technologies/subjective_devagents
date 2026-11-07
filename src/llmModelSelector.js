@@ -21,7 +21,7 @@
       const response = await window.subjectiveChat.getLanguageModelIdentities();
       if (response && response.identities) {
         allIdentities = response.identities;
-        populateProviders();
+        populateModelsHierarchical();
       } else {
         useLegacyProviderMode();
       }
@@ -36,6 +36,7 @@
    */
   function useLegacyProviderMode() {
     llmProviderSelect.innerHTML = `
+      <option value="">Select provider...</option>
       <option value="codex">Codex</option>
       <option value="claude">Claude</option>
       <option value="cursor">Cursor</option>
@@ -46,12 +47,69 @@
   }
 
   /**
-   * Populate the provider dropdown with unique providers from identities
+   * Populate hierarchical model selector with providers as optgroups
+   */
+  function populateModelsHierarchical() {
+    console.log('[llmModelSelector] Populating hierarchical model selector with', allIdentities.length, 'identities');
+    
+    if (!allIdentities || allIdentities.length === 0) {
+      llmModelSelect.innerHTML = '<option value="">No models available</option>';
+      llmModelSelect.disabled = false;
+      return;
+    }
+
+    // Group identities by provider
+    const providerGroups = {};
+    allIdentities.forEach(identity => {
+      if (!providerGroups[identity.provider]) {
+        providerGroups[identity.provider] = [];
+      }
+      providerGroups[identity.provider].push(identity);
+    });
+
+    console.log('[llmModelSelector] Provider groups:', Object.keys(providerGroups).join(', '));
+
+    // Clear and populate the hierarchical model selector
+    llmModelSelect.innerHTML = '<option value="">Select a model...</option>';
+    
+    // Sort providers alphabetically
+    const sortedProviders = Object.keys(providerGroups).sort();
+    
+    sortedProviders.forEach(provider => {
+      const optgroup = document.createElement('optgroup');
+      optgroup.label = capitalize(provider);
+      
+      const models = [];
+      providerGroups[provider].forEach(identity => {
+        const option = document.createElement('option');
+        option.value = identity.id;
+        option.textContent = getModelDisplayName(identity);
+        optgroup.appendChild(option);
+        models.push(identity.model || identity.id);
+      });
+      
+      console.log(`[llmModelSelector] Added ${provider} with models:`, models.join(', '));
+      llmModelSelect.appendChild(optgroup);
+    });
+
+    llmModelSelect.disabled = false;
+    
+    // Auto-select if only one model available across all providers
+    if (allIdentities.length === 1) {
+      llmModelSelect.value = allIdentities[0].id;
+      selectedIdentityId = allIdentities[0].id;
+      console.log('[llmModelSelector] Auto-selected single model:', allIdentities[0].id);
+    } else {
+      selectedIdentityId = null;
+    }
+  }
+
+  /**
+   * Populate the provider dropdown (for backward compatibility)
    */
   function populateProviders() {
     if (!allIdentities || allIdentities.length === 0) {
       llmProviderSelect.innerHTML = '<option value="">No providers available</option>';
-      llmModelSelect.innerHTML = '<option value="">No models available</option>';
       return;
     }
 
@@ -65,14 +123,10 @@
       option.textContent = capitalize(provider);
       llmProviderSelect.appendChild(option);
     });
-
-    // Reset model select
-    llmModelSelect.innerHTML = '<option value="">Select a brand first</option>';
-    llmModelSelect.disabled = true;
   }
 
   /**
-   * Populate the model dropdown based on selected provider
+   * Populate the model dropdown based on selected provider (for backward compatibility)
    */
   function populateModels(provider) {
     if (!provider) {
@@ -158,13 +212,27 @@
   // Event listeners
   if (llmProviderSelect) {
     llmProviderSelect.addEventListener('change', (e) => {
-      populateModels(e.target.value);
+      // Filter model selector based on provider selection
+      const provider = e.target.value;
+      if (provider) {
+        populateModels(provider);
+      } else {
+        // Reset to show all models hierarchically
+        populateModelsHierarchical();
+      }
     });
   }
 
   if (llmModelSelect) {
     llmModelSelect.addEventListener('change', (e) => {
       selectedIdentityId = e.target.value || null;
+      // Auto-update provider selector if model is selected from hierarchical view
+      if (selectedIdentityId && llmProviderSelect) {
+        const identity = allIdentities.find(id => id.id === selectedIdentityId);
+        if (identity && llmProviderSelect.value !== identity.provider) {
+          llmProviderSelect.value = identity.provider;
+        }
+      }
     });
   }
 

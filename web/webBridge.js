@@ -361,6 +361,7 @@
     createLlmConversation: (payload) => post('/api/llm/create-conversation', payload),
     renameLlmConversation: (target, name) => post('/api/llm/rename-conversation', { target, name }),
     deleteLlmConversation: (target) => post('/api/llm/delete-conversation', { target }),
+    clearLlmConversation: (target) => post('/api/llm/clear-conversation', { target }),
     // LocalChats scan can take minutes on a cold archive; treat like an agent turn.
     refreshLlmHistory: () => post('/api/llm/refresh-history', {}, { longRunning: true }),
     // A zip of another workstation's exported chat JSON files — no agent or sync setup
