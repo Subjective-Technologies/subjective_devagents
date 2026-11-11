@@ -12,7 +12,6 @@
   let parentOrigin = '';
   let dashboardUrl = '';
   let ownerEmail = '';
-  let ownerUid = '';
   let parentOrigins = new Set();
   let parentToken = '';
   let parentExpiry = 0;
@@ -92,16 +91,16 @@
     const token = event.data.token;
     if (typeof token !== 'string' || !token || token.length > 16384) {
       parentToken = '';
-      lock('Sign in to the dashboard with the owner account.');
+      lock('Sign in to the dashboard.');
       if (started) window.location.reload();
-      else lock('Sign in to the dashboard with the owner account.');
+      else lock('Sign in to the dashboard.');
       return;
     }
     try {
       const response = await fetch(url('/api/auth/session'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       if (current !== generation) return;
       if (!response.ok) { lock('The server denied access to this dashboard account.'); return; }
-      // Parsing expiry only schedules refresh. The API verifies signature and owner.
+      // Parsing expiry only schedules refresh. The API verifies the Firebase signature.
       const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
       const expiry = JSON.parse(atob(encoded)).exp;
       if (typeof expiry !== 'number') throw new Error('Missing expiry');
@@ -137,7 +136,7 @@
       token = await getToken(true);
       response = await send();
     }
-    if (response.status === 401) lock('Session expired or access denied. Sign in with the owner account.');
+    if (response.status === 401) lock('Session expired or access denied. Sign in again.');
     return response;
   }
 
@@ -175,7 +174,6 @@
     const config = await response.json();
     mode = config.mode;
     ownerEmail = String(config.ownerEmail || '').trim().toLowerCase();
-    ownerUid = String(config.ownerUid || '').trim();
     dashboardUrl = String(config.dashboardUrl || '').trim();
     parentOrigins = new Set(Array.isArray(config.parentOrigins) ? config.parentOrigins : []);
     try {
@@ -239,21 +237,14 @@
       const current = ++generation;
       if (!user) {
         if (started) { window.location.reload(); return; }
-        lock('Sign in with the owner account to open your chats.');
-        return;
-      }
-      const uidOk = Boolean(ownerUid) && user.uid === ownerUid;
-      const emailOk = Boolean(ownerEmail) && user.email?.toLowerCase() === ownerEmail && user.emailVerified;
-      if (!(uidOk || emailOk)) {
-        lock('Access is restricted to the verified owner account. Choose a different account.');
-        if (signOutButton) signOutButton.hidden = false;
+        lock('Sign in to open your chats.');
         return;
       }
       try {
         const token = await user.getIdToken();
         const result = await fetch(url('/api/auth/session'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
         if (current !== generation) return;
-        if (!result.ok) { lock('The server denied access. Sign in with the owner account.'); return; }
+        if (!result.ok) { lock('The server denied access. Sign in again.'); return; }
         unlock();
         for (const listener of tokenListeners) listener();
       } catch (_error) { lock('Unable to verify your session. Check your connection and reload.'); }

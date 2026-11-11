@@ -90,7 +90,7 @@
     // The backend rejected the shared secret. Say so plainly: without this the UI just
     // renders an empty chat list and looks broken rather than locked.
     if (response.status === 401) {
-      if (window.devagentsAuth) return { ok: false, unauthorized: true, error: 'Sign in with the owner account to continue.' };
+      if (window.devagentsAuth) return { ok: false, unauthorized: true, error: 'Sign in to continue.' };
       return { ok: false, unauthorized: true, error: API_TOKEN
         ? 'The API rejected this token. Re-open with ?token=... to set a new one.'
         : 'This backend needs an API token. Open the page once with ?token=...' };
