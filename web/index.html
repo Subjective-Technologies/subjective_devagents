@@ -22,7 +22,7 @@
     <meta name="devagents-api" content="https://devagents-api.subjectivetechnologies.com:8080">
     <!-- connect-src must name the API origin explicitly: 'self' is the page's origin, so a
          cross-origin fetch to the API is blocked by CSP before it is ever sent. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://devagents-api.subjectivetechnologies.com:8080 https://cloudflareinsights.com https://taggy.subjectivetechnologies.com; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://www.gstatic.com/firebasejs/12.19.0/ https://apis.google.com https://static.cloudflareinsights.com; frame-src https://apis.google.com; object-src 'none'; base-uri 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://devagents-api.subjectivetechnologies.com:8080 https://cloudflareinsights.com https://taggy.subjectivetechnologies.com; img-src 'self' data: blob:; style-src 'self'; script-src 'self' https://static.cloudflareinsights.com; frame-src 'none'; object-src 'none'; base-uri 'none';">
     <meta name="referrer" content="no-referrer">
     <link rel="stylesheet" href="/auth.css?v=DEVAGENTS_DEPLOY_VERSION">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -44,16 +44,13 @@
       <div class="owner-auth-card">
         <h1 id="ownerAuthTitle">Sign in to DevAgents</h1>
         <p id="ownerAuthStatus" role="status" aria-live="polite">Checking sign-in…</p>
-        <button id="ownerGoogleSignIn" type="button" disabled>Continue with Google</button>
+        <form id="ownerIdentitySignIn">
+          <label>User id<input id="ownerUserId" name="user_id" autocomplete="username" required disabled></label>
+          <label>Firebase token<input id="ownerFirebaseToken" name="firebase_token" autocomplete="off" spellcheck="false" required disabled></label>
+          <label>Company name<input id="ownerCompanyName" name="company_name" autocomplete="organization" required disabled></label>
+          <button type="submit" disabled>Continue</button>
+        </form>
         <a href="https://dashboard.subjectivetechnologies.com/dashboard/st-backend/my-agents" target="_top">Continue in dashboard</a>
-        <details>
-          <summary>Use email and password</summary>
-          <form id="ownerEmailSignIn">
-            <label>Email<input id="ownerEmail" type="email" autocomplete="username" required disabled></label>
-            <label>Password<input id="ownerPassword" type="password" autocomplete="current-password" required disabled></label>
-            <button type="submit" disabled>Sign in</button>
-          </form>
-        </details>
       </div>
     </section>
     <button id="ownerSignOut" class="secondary-button owner-auth-signout" type="button" hidden>Sign out</button>

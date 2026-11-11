@@ -10,7 +10,7 @@
   color: #e7e9ee;
   font-family: system-ui, sans-serif;
 }
-.owner-auth-card { width: min(100%, 390px); display: grid; gap: 16px; }
+.owner-auth-card { width: min(100%, 420px); display: grid; gap: 16px; }
 .owner-auth-card h1, .owner-auth-card p { margin: 0; }
 .owner-auth-card p { color: #b6bdc9; line-height: 1.5; }
 .owner-auth-card form, .owner-auth-card label { display: grid; gap: 10px; }

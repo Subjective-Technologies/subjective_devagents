@@ -1,23 +1,24 @@
-// Shared by the chat and terminal pages. Firebase owns credential persistence and
-// refresh; this module never copies ID/refresh tokens into URLs or localStorage.
+// Shared by the chat and terminal pages. Sign-in is the same three values CLIProxy
+// takes: user id, Firebase token, and company name. This module keeps them in
+// memory for the page lifetime. It never copies them into URLs or localStorage.
 (function () {
   'use strict';
   const apiBase = String(document.querySelector('meta[name="devagents-api"]')?.content || '').replace(/\/+$/, '');
   const shell = document.querySelector('.app-shell, .terminal-shell');
   const panel = document.getElementById('ownerAuthPanel');
   const status = document.getElementById('ownerAuthStatus');
-  const googleButton = document.getElementById('ownerGoogleSignIn');
-  const form = document.getElementById('ownerEmailSignIn');
+  const form = document.getElementById('ownerIdentitySignIn');
+  const userField = document.getElementById('ownerUserId');
+  const tokenField = document.getElementById('ownerFirebaseToken');
+  const companyField = document.getElementById('ownerCompanyName');
   const signOutButton = document.getElementById('ownerSignOut');
   let parentOrigin = '';
-  let dashboardUrl = '';
-  let ownerEmail = '';
   let parentOrigins = new Set();
-  let parentToken = '';
-  let parentExpiry = 0;
+  let configuredCompany = '';
+  let userId = '';
+  let firebaseToken = '';
+  let companyName = '';
   let parentPending = null;
-  let sdk;
-  let firebaseAuth;
   let mode = 'owner';
   let started = false;
   let allowed = false;
@@ -49,34 +50,38 @@
     settleReady();
   }
 
-  function errorText(error) {
-    const messages = {
-      'auth/unauthorized-domain': 'Google sign-in is not enabled for this hostname. Use the main chat address or contact the operator.',
-      'auth/popup-blocked': 'Your browser blocked the sign-in window. Allow popups, then try again.',
-      'auth/popup-closed-by-user': 'Sign-in window closed. Try again when ready.',
-      'auth/invalid-credential': 'Sign-in failed. Check your email and password.',
-      'auth/too-many-requests': 'Too many sign-in attempts. Wait, then try again.',
-      'auth/network-request-failed': 'Sign-in could not reach Firebase. Check your connection and retry.',
+  function identityHeaders(token) {
+    if (!token) return {};
+    return {
+      Authorization: `Bearer ${token}`,
+      'X-User-Id': userId,
+      'X-Company-Name': companyName,
     };
-    return messages[error?.code] || 'Sign-in failed. Please try again.';
   }
 
   async function signOut() {
     lock('Signed out. Sign in to continue.');
-    parentToken = '';
-    if (parentOrigin) {
-      window.parent.postMessage({ type: 'devagents:sign-out' }, parentOrigin);
-    }
-    if (firebaseAuth) await sdk.signOut(firebaseAuth);
-    // Unload transcripts, terminal output, sockets, and outstanding UI state.
+    userId = '';
+    firebaseToken = '';
+    companyName = '';
+    if (parentOrigin) window.parent.postMessage({ type: 'devagents:sign-out' }, parentOrigin);
     window.location.reload();
   }
 
-  function requestParentToken(forceRefresh = false) {
+  function requestParentAuth(forceRefresh = false) {
     if (!parentPending) {
       parentPending = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { tokenListeners.delete(onToken); parentPending = null; reject(new Error('Dashboard sign-in unavailable.')); }, 15000);
-        const onToken = () => { clearTimeout(timer); tokenListeners.delete(onToken); parentPending = null; resolve(parentToken); };
+        const timer = setTimeout(() => {
+          tokenListeners.delete(onToken);
+          parentPending = null;
+          reject(new Error('Dashboard sign-in unavailable.'));
+        }, 15000);
+        const onToken = () => {
+          clearTimeout(timer);
+          tokenListeners.delete(onToken);
+          parentPending = null;
+          resolve(firebaseToken);
+        };
         tokenListeners.add(onToken);
         window.parent.postMessage({ type: 'devagents:request-auth', forceRefresh }, parentOrigin);
       });
@@ -84,44 +89,68 @@
     return parentPending;
   }
 
-  window.addEventListener('message', async (event) => {
-    if (!parentOrigin || event.origin !== parentOrigin || event.source !== window.parent) return;
-    if (event.data?.type !== 'devagents:auth-token') return;
+  async function signIn(nextUserId, nextToken, nextCompany) {
     const current = ++generation;
-    const token = event.data.token;
-    if (typeof token !== 'string' || !token || token.length > 16384) {
-      parentToken = '';
-      lock('Sign in to the dashboard.');
-      if (started) window.location.reload();
-      else lock('Sign in to the dashboard.');
-      return;
+    nextUserId = String(nextUserId || '').trim();
+    nextToken = String(nextToken || '').trim();
+    nextCompany = String(nextCompany || '').trim() || configuredCompany;
+    if (!nextUserId || !nextToken || !nextCompany || nextToken.length > 16384) {
+      lock('User id, Firebase token, and company name are required.');
+      return false;
     }
     try {
-      const response = await fetch(url('/api/auth/session'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
-      if (current !== generation) return;
-      if (!response.ok) { lock('The server denied access to this dashboard account.'); return; }
-      // Parsing expiry only schedules refresh. The API verifies the Firebase signature.
-      const encoded = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      const expiry = JSON.parse(atob(encoded)).exp;
-      if (typeof expiry !== 'number') throw new Error('Missing expiry');
-      parentToken = token;
-      parentExpiry = expiry;
+      const response = await fetch(url('/api/auth/session'), {
+        headers: {
+          Authorization: `Bearer ${nextToken}`,
+          'X-User-Id': nextUserId,
+          'X-Company-Name': nextCompany,
+        },
+        cache: 'no-store',
+      });
+      if (current !== generation) return false;
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        lock(body.error || 'The server denied this sign-in.');
+        return false;
+      }
+      userId = nextUserId;
+      firebaseToken = nextToken;
+      companyName = nextCompany;
+      if (tokenField) tokenField.value = '';
       unlock();
       for (const listener of tokenListeners) listener();
-    } catch (_error) { lock('Unable to verify dashboard sign-in. Reload to retry.'); }
+      return true;
+    } catch (_error) {
+      if (current === generation) lock('Unable to verify your session. Check your connection and reload.');
+      return false;
+    }
+  }
+
+  window.addEventListener('message', (event) => {
+    if (!parentOrigin || event.origin !== parentOrigin || event.source !== window.parent) return;
+    const data = event.data;
+    if (!data || data.type !== 'devagents:auth') return;
+    const token = data.firebaseToken;
+    if (typeof token !== 'string' || !token) {
+      userId = '';
+      firebaseToken = '';
+      companyName = '';
+      lock('Sign in to the dashboard to continue.');
+      if (started) window.location.reload();
+      return;
+    }
+    return signIn(data.userId, token, data.companyName);
   });
 
   async function getToken(forceRefresh = false) {
     if (!allowed) throw new Error('Authentication required.');
-    if (mode === 'development' && !firebaseAuth) return '';
-    if (parentOrigin) {
-      if (forceRefresh || !parentToken || parentExpiry < Date.now() / 1000 + 60) return requestParentToken(forceRefresh);
-      return parentToken;
+    if (mode === 'development' && !firebaseToken) return '';
+    if (parentOrigin && (forceRefresh || !firebaseToken)) await requestParentAuth(forceRefresh);
+    if (!firebaseToken) {
+      lock('Sign in to continue.');
+      throw new Error('Authentication required.');
     }
-    const user = firebaseAuth?.currentUser;
-    if (!user) { lock('Sign in to continue.'); throw new Error('Authentication required.'); }
-    try { return await user.getIdToken(forceRefresh); }
-    catch (_error) { lock('Session could not refresh. Sign in again.'); throw new Error('Authentication required.'); }
+    return firebaseToken;
   }
 
   async function request(path, options = {}) {
@@ -129,10 +158,10 @@
     let token = await getToken();
     const send = () => fetch(url(path), {
       ...options,
-      headers: { ...(options.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { ...(options.headers || {}), ...identityHeaders(token) },
     });
     let response = await send();
-    if (response.status === 401 && (firebaseAuth?.currentUser || parentOrigin)) {
+    if (response.status === 401 && parentOrigin) {
       token = await getToken(true);
       response = await send();
     }
@@ -146,109 +175,77 @@
     const connection = new WebSocket(base);
     connections.add(connection);
     connection.addEventListener('close', () => connections.delete(connection));
-    if (token) connection.addEventListener('open', () => connection.send(JSON.stringify({ type: 'auth', token })));
+    if (token) {
+      connection.addEventListener('open', () => connection.send(JSON.stringify({
+        type: 'auth', token, user_id: userId, company_name: companyName,
+      })));
+    }
     return connection;
   }
 
-  window.devagentsAuth = { ready, apiBase, request, socket, getToken, signOut,
+  window.devagentsAuth = {
+    ready, apiBase, request, socket, getToken, signOut,
     onTokenChanged(callback) { tokenListeners.add(callback); return () => tokenListeners.delete(callback); },
     get mode() { return mode; },
   };
 
   lock('Checking sign-in…');
   if (signOutButton) signOutButton.addEventListener('click', () => signOut().catch(() => lock('Sign-out failed. Try again.')));
-  // Older manual-token links are retired in this browser flow. Remove only the
-  // credential parameter, preserving ordinary navigation/query state.
+  // Credential query parameters are retired as soon as the page reads them.
+  // The API never sees them; the values move into the sign-in request headers.
+  let pendingSignIn = null;
   try {
     const current = new URL(location.href);
-    if (current.searchParams.has('token')) {
-      current.searchParams.delete('token');
-      history.replaceState(null, '', current.pathname + current.search + current.hash);
+    const queryUser = current.searchParams.get('user_id') || '';
+    const queryToken = current.searchParams.get('firebase_token') || '';
+    const queryCompany = current.searchParams.get('company_name') || '';
+    let stripped = false;
+    for (const name of ['token', 'user_id', 'firebase_token', 'company_name']) {
+      if (current.searchParams.has(name)) { current.searchParams.delete(name); stripped = true; }
     }
+    if (stripped) history.replaceState(null, '', current.pathname + current.search + current.hash);
     localStorage.removeItem('devagents.apiToken');
+    if (queryUser && queryToken && queryCompany) pendingSignIn = [queryUser, queryToken, queryCompany];
   } catch (_error) { /* Browser storage can be unavailable in embedded pages. */ }
+
+  function enableForm() {
+    if (!form) return;
+    for (const field of [userField, tokenField, companyField]) if (field) field.disabled = false;
+    const submit = form.querySelector ? form.querySelector('button') : null;
+    if (submit) submit.disabled = false;
+    if (companyField && !companyField.value && configuredCompany) companyField.value = configuredCompany;
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const submitButton = form.querySelector ? form.querySelector('button') : null;
+      if (submitButton) submitButton.disabled = true;
+      return signIn(userField && userField.value, tokenField && tokenField.value, companyField && companyField.value)
+        .finally(() => { if (submitButton) submitButton.disabled = false; });
+    });
+  }
 
   async function initialize() {
     const response = await fetch(url('/api/auth/config'), { cache: 'no-store' });
     if (!response.ok) throw new Error('Auth configuration unavailable');
     const config = await response.json();
     mode = config.mode;
-    ownerEmail = String(config.ownerEmail || '').trim().toLowerCase();
-    dashboardUrl = String(config.dashboardUrl || '').trim();
+    configuredCompany = String(config.companyName || '').trim();
     parentOrigins = new Set(Array.isArray(config.parentOrigins) ? config.parentOrigins : []);
     try {
       const origin = new URL(document.referrer).origin;
       if (window.parent !== window && parentOrigins.has(origin)) parentOrigin = origin;
     } catch (_error) { /* Standalone page. */ }
     if (mode === 'development' && config.required === false) { unlock(); return; }
+    enableForm();
+    if (pendingSignIn) {
+      await signIn(...pendingSignIn);
+      if (allowed) return;
+    }
     if (parentOrigin) {
-      googleButton.textContent = 'Open dashboard sign-in';
-      googleButton.disabled = false;
-      googleButton.addEventListener('click', () => { if (dashboardUrl) window.open(dashboardUrl, '_top'); });
-      form.closest('details').hidden = true;
       lock('Waiting for dashboard sign-in…');
-      requestParentToken().catch(() => lock('Dashboard sign-in unavailable. Open dashboard sign-in, then return to My Agents.'));
+      requestParentAuth().catch(() => lock('Dashboard sign-in unavailable. Enter the user id, Firebase token, and company name.'));
       return;
     }
-    // Version pinned to the official Firebase CDN; no analytics or other products.
-    const [appSdk, authSdk] = await Promise.all([
-      import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),
-      import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js'),
-    ]);
-    sdk = authSdk;
-    const firebase = config.firebase || {};
-    if (!firebase.apiKey || !firebase.authDomain || !firebase.projectId || !firebase.appId) {
-      lock('Sign-in is not configured on this server.');
-      return;
-    }
-    const app = appSdk.initializeApp({
-      apiKey: firebase.apiKey,
-      authDomain: firebase.authDomain,
-      projectId: firebase.projectId,
-      appId: firebase.appId,
-    });
-    firebaseAuth = sdk.getAuth(app);
-    const provider = new sdk.GoogleAuthProvider();
-    provider.setCustomParameters(ownerEmail
-      ? { prompt: 'select_account', login_hint: ownerEmail }
-      : { prompt: 'select_account' });
-    googleButton.disabled = false;
-    for (const field of form.elements) field.disabled = false;
-    googleButton.addEventListener('click', async () => {
-      googleButton.disabled = true;
-      try { await sdk.signInWithPopup(firebaseAuth, provider); }
-      catch (error) {
-        if (error?.code === 'auth/unauthorized-domain' && dashboardUrl) { window.location.assign(dashboardUrl); return; }
-        lock(errorText(error));
-      }
-      finally { googleButton.disabled = false; }
-    });
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const password = document.getElementById('ownerPassword');
-      const email = document.getElementById('ownerEmail');
-      const submit = form.querySelector('button');
-      submit.disabled = true;
-      try { await sdk.signInWithEmailAndPassword(firebaseAuth, email.value.trim(), password.value); }
-      catch (error) { lock(errorText(error)); }
-      finally { password.value = ''; submit.disabled = false; }
-    });
-    sdk.onIdTokenChanged(firebaseAuth, async (user) => {
-      const current = ++generation;
-      if (!user) {
-        if (started) { window.location.reload(); return; }
-        lock('Sign in to open your chats.');
-        return;
-      }
-      try {
-        const token = await user.getIdToken();
-        const result = await fetch(url('/api/auth/session'), { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
-        if (current !== generation) return;
-        if (!result.ok) { lock('The server denied access. Sign in again.'); return; }
-        unlock();
-        for (const listener of tokenListeners) listener();
-      } catch (_error) { lock('Unable to verify your session. Check your connection and reload.'); }
-    });
+    if (!allowed) lock('Enter the user id, Firebase token, and company name.');
   }
   initialize().catch(() => lock('Sign-in could not start. Check your connection and reload.'));
 }());
