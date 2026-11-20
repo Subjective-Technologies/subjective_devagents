@@ -2067,7 +2067,46 @@ function conversationSearchText(conversation) {
   ].join(' ').toLocaleLowerCase();
 }
 
-// IRC channels/DMs are listed above AI chats, most-recent-first within each group.
+// Pinned conversations (TAGGY-3531): stored per browser, listed before everything else.
+const PINNED_CONVERSATIONS_STORAGE = 'subjective-pinned-conversations';
+
+function loadPinnedConversations() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PINNED_CONVERSATIONS_STORAGE) || '[]');
+    return new Set(Array.isArray(saved) ? saved.filter((item) => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+const pinnedConversations = loadPinnedConversations();
+
+function isConversationPinned(target) {
+  return pinnedConversations.has(target);
+}
+
+function toggleConversationPin(target) {
+  if (pinnedConversations.has(target)) pinnedConversations.delete(target);
+  else pinnedConversations.add(target);
+  try {
+    localStorage.setItem(PINNED_CONVERSATIONS_STORAGE, JSON.stringify([...pinnedConversations]));
+  } catch {
+    // Storage unavailable (private mode / quota): the pin still applies for this session.
+  }
+  renderConversationsNow();
+}
+
+// Pinned first; then IRC channels/DMs above AI chats, most-recent-first within each group.
+function compareConversations(left, right) {
+  const pinDifference = Number(isConversationPinned(right.target)) - Number(isConversationPinned(left.target));
+  if (pinDifference) return pinDifference;
+  const groupDifference = conversationGroupRank(left) - conversationGroupRank(right);
+  if (groupDifference) return groupDifference;
+  const timestampDifference = conversationTimestamp(right) - conversationTimestamp(left);
+  if (timestampDifference) return timestampDifference;
+  return String(left.label || '').localeCompare(String(right.label || ''));
+}
+
 function conversationGroupRank(conversation) {
   return conversation.kind === 'llm' ? 1 : 0;
 }
@@ -2092,13 +2131,7 @@ function conversationUserPillHtml(conversation) {
 
 function renderConversationsNow() {
   conversationList.replaceChildren();
-  const ordered = [...conversations.values()].sort((left, right) => {
-    const groupDifference = conversationGroupRank(left) - conversationGroupRank(right);
-    if (groupDifference) return groupDifference;
-    const timestampDifference = conversationTimestamp(right) - conversationTimestamp(left);
-    if (timestampDifference) return timestampDifference;
-    return String(left.label || '').localeCompare(String(right.label || ''));
-  });
+  const ordered = [...conversations.values()].sort(compareConversations);
   const query = String(conversationSearch?.value || '').trim().toLocaleLowerCase();
   const visible = query
     ? ordered.filter((conversation) => conversationSearchText(conversation).includes(query))
@@ -2123,7 +2156,7 @@ function renderConversationsNow() {
   const table = document.createElement('table');
   table.className = 'conversation-table';
   const colgroup = document.createElement('colgroup');
-  for (const name of ['col-user', 'col-icon', 'col-name', 'col-unread']) {
+  for (const name of ['col-user', 'col-icon', 'col-name', 'col-unread', 'col-pin']) {
     const col = document.createElement('col');
     col.className = name;
     colgroup.appendChild(col);
@@ -2157,7 +2190,25 @@ function renderConversationsNow() {
       <td class="conversation-icon-cell">${icon}</td>
       <td class="conversation-name-cell"><span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span></td>
       <td class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</td>
+      <td class="conversation-pin-cell"></td>
     `;
+    const pinned = isConversationPinned(conversation.target);
+    row.classList.toggle('pinned', pinned);
+    const pinButton = document.createElement('button');
+    pinButton.type = 'button';
+    pinButton.className = 'conversation-pin-button';
+    pinButton.classList.toggle('is-pinned', pinned);
+    pinButton.textContent = '📌';
+    pinButton.title = pinned ? 'Unpin' : 'Pin to top';
+    pinButton.setAttribute('aria-label', `${pinned ? 'Unpin' : 'Pin'} ${conversation.label}`);
+    pinButton.setAttribute('aria-pressed', String(pinned));
+    pinButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleConversationPin(conversation.target);
+    });
+    pinButton.addEventListener('keydown', (event) => event.stopPropagation());
+    pinButton.addEventListener('dblclick', (event) => event.stopPropagation());
+    row.querySelector('.conversation-pin-cell').appendChild(pinButton);
     row.addEventListener('click', () => setActiveTarget(conversation.target));
     row.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
