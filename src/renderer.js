@@ -1118,6 +1118,7 @@ function addEvent(kind, data) {
     const messageTimestamp = Number(data.time || Date.now());
     conversation.updatedAt = Math.max(Number(conversation.updatedAt || 0), messageTimestamp);
     conversation.sortAt = Math.max(Number(conversation.sortAt || 0), messageTimestamp);
+    noteConversationActivity(conversation, messageTimestamp);
   }
   if (!isTargetOnScreen(target) || (framesEnabled() && target !== activeTarget)) conversation.unread += 1;
   if (isTargetOnScreen(target) && !appendTranscriptEntry(conversation)) renderTranscript();
@@ -2096,6 +2097,39 @@ function toggleConversationPin(target) {
   renderConversationsNow();
 }
 
+// Channel activity (TAGGY-3533): a ring spins left of a conversation's name while an
+// agent is working in it (LLM busy) or messages arrived in the last ACTIVITY_WINDOW_MS.
+// Replayed backlog carries old timestamps, so it never lights the ring.
+const ACTIVITY_WINDOW_MS = 60 * 1000;
+let activityExpiryTimer = 0;
+
+function noteConversationActivity(conversation, timestamp, now = Date.now()) {
+  const at = Number(timestamp) || now;
+  if (now - at > ACTIVITY_WINDOW_MS) return;
+  conversation.lastActivityAt = Math.max(Number(conversation.lastActivityAt || 0), Math.min(at, now));
+}
+
+function isConversationActive(conversation, now = Date.now()) {
+  if (conversation.busy) return true;
+  const last = Number(conversation.lastActivityAt || 0);
+  return last > 0 && now - last < ACTIVITY_WINDOW_MS;
+}
+
+// Redraw the list when the soonest message-activity window runs out, so rings stop on their own.
+function scheduleActivityExpiry(list, now = Date.now()) {
+  if (typeof setTimeout !== 'function') return; // headless list harnesses have no timers
+  clearTimeout(activityExpiryTimer);
+  activityExpiryTimer = 0;
+  let soonest = Infinity;
+  for (const conversation of list) {
+    const last = Number(conversation.lastActivityAt || 0);
+    if (!last || conversation.busy) continue;
+    const remaining = last + ACTIVITY_WINDOW_MS - now;
+    if (remaining > 0) soonest = Math.min(soonest, remaining);
+  }
+  if (soonest !== Infinity) activityExpiryTimer = setTimeout(() => renderConversationsNow(), soonest + 50);
+}
+
 // Pinned first; then IRC channels/DMs above AI chats, most-recent-first within each group.
 function compareConversations(left, right) {
   const pinDifference = Number(isConversationPinned(right.target)) - Number(isConversationPinned(left.target));
@@ -2132,6 +2166,7 @@ function conversationUserPillHtml(conversation) {
 function renderConversationsNow() {
   conversationList.replaceChildren();
   const ordered = [...conversations.values()].sort(compareConversations);
+  scheduleActivityExpiry(ordered);
   const query = String(conversationSearch?.value || '').trim().toLocaleLowerCase();
   const visible = query
     ? ordered.filter((conversation) => conversationSearchText(conversation).includes(query))
@@ -2175,6 +2210,8 @@ function renderConversationsNow() {
     row.classList.toggle('active', conversation.target === activeTarget);
     row.classList.toggle('in-frame', framesEnabled() && frameTargets.includes(conversation.target));
     row.classList.toggle('busy', Boolean(conversation.busy));
+    const active = isConversationActive(conversation);
+    row.classList.toggle('has-activity', active);
     if (framesEnabled()) {
       row.draggable = true;
       row.addEventListener('dragstart', (event) => {
@@ -2187,7 +2224,7 @@ function renderConversationsNow() {
       : `<span class="conversation-icon">${conversation.kind === 'channel' ? '#' : '@'}</span>`;
     row.innerHTML = `
       <td class="conversation-user-cell">${conversationUserPillHtml(conversation)}</td>
-      <td class="conversation-icon-cell">${icon}</td>
+      <td class="conversation-icon-cell"><span class="conversation-icon-wrap">${active ? '<span class="conversation-activity-ring" role="img" aria-label="Activity in progress" title="Activity in progress"></span>' : ''}${icon}</span></td>
       <td class="conversation-name-cell"><span class="conversation-label">${escapeHtml(conversation.label.replace(/^#/, ''))}</span></td>
       <td class="conversation-unread-cell">${conversation.unread ? `<b>${conversation.unread}</b>` : ''}</td>
       <td class="conversation-pin-cell"></td>

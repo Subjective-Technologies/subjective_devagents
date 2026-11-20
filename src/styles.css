@@ -498,6 +498,49 @@ img.provider-avatar[src$="cursor.svg"] {
   to { filter: drop-shadow(0 0 8px var(--accent)); }
 }
 
+/* TAGGY-3533: rounded progress ring around the icon left of the channel name while activity is going on. */
+.conversation-icon-wrap {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  vertical-align: middle;
+}
+
+.conversation-activity-ring {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  animation: conversation-activity-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+.conversation-row.has-activity .conversation-provider-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.conversation-row.has-activity .conversation-icon {
+  font-size: 0.8em;
+}
+
+@keyframes conversation-activity-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-activity-ring {
+    animation: none;
+    border-color: var(--accent);
+    opacity: 0.7;
+  }
+}
+
 .accent-grid {
   display: grid;
   grid-template-columns: repeat(4, 34px);
